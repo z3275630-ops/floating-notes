@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "status": "design_baseline_pending_device_validation",
+  "units": {
+    "space": "dp",
+    "radius": "dp",
+    "type": "sp",
+    "duration": "ms"
+  },
+  "colors": {
+    "light": {
+      "canvas": "#F7F8FC",
+      "surface": "#FFFFFF",
+      "text": "#202431",
+      "secondary": "#596274",
+      "accent": "#6356D9"
+    },
+    "dark": {
+      "canvas": "#11131B",
+      "surface": "#1A1E2A",
+      "text": "#EEF1F8",
+      "secondary": "#AAB4C9",
+      "accent": "#B9AEFF"
+    },
+    "ambient": [
+      "#E4DCFF",
+      "#D9ECFF",
+      "#DDF4ED"
+    ]
+  },
+  "space": [
+    4,
+    8,
+    12,
+    16,
+    20,
+    24,
+    32
+  ],
+  "radius": {
+    "card": 20,
+    "sheet": 28
+  },
+  "type": {
+    "title": 30,
+    "body": 16,
+    "body_line": 26,
+    "caption": 13
+  },
+  "touch_target_min": 48,
+  "motion": {
+    "micro_ms": 100,
+    "enter_ms": 220,
+    "exit_ms": 180,
+    "press_scale": 0.985,
+    "spring_damping_ratio": 0.85,
+    "spring_stiffness": 500,
+    "enter_curve": [
+      0.2,
+      0,
+      0,
+      1
+    ],
+    "exit_curve": [
+      0.4,
+      0,
+      1,
+      1
+    ],
+    "background_loop": false,
+    "interruptible": true,
+    "ime": "system_progress",
+    "predictive_back": "system_progress"
+  },
+  "glass": {
+    "G0": {
+      "backdrop": false,
+      "refraction": false
+    },
+    "G1": {
+      "light_tint_alpha": 0.78,
+      "dark_tint_alpha": 0.84
+    },
+    "G2": {
+      "light_tint_alpha": 0.62,
+      "dark_tint_alpha": 0.76,
+      "light_blur_dp": 20,
+      "dark_blur_dp": 24,
+      "refraction_max_dp": 2,
+      "foreground_blur": false
+    },
+    "tiers": [
+      "standard",
+      "enhanced",
+      "reduced"
+    ]
+  }
+}

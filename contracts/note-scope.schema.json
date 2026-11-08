@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoteScope v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "time_axis": {
+      "enum": [
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "from_inclusive": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "to_exclusive": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "include_tag_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "uniqueItems": true
+    },
+    "exclude_tag_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "uniqueItems": true
+    },
+    "include_descendants": {
+      "type": "boolean"
+    },
+    "tag_match_mode": {
+      "enum": [
+        "any",
+        "all"
+      ]
+    },
+    "untagged_only": {
+      "type": "boolean"
+    },
+    "notebook_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "uniqueItems": true
+    },
+    "source_types": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "manual",
+          "voice",
+          "share",
+          "import",
+          "agent",
+          "insight",
+          "web"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "media_types": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "image",
+          "audio",
+          "video"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "include_archived": {
+      "type": "boolean"
+    },
+    "include_deleted": {
+      "const": false
+    },
+    "explicit_note_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "uniqueItems": true
+    },
+    "ai_access": {
+      "enum": [
+        "allowed_only",
+        "not_applicable"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "time_axis",
+    "include_tag_ids",
+    "exclude_tag_ids",
+    "include_descendants",
+    "tag_match_mode",
+    "untagged_only",
+    "notebook_ids",
+    "source_types",
+    "media_types",
+    "include_archived",
+    "include_deleted",
+    "explicit_note_ids",
+    "ai_access"
+  ],
+  "additionalProperties": false
+}

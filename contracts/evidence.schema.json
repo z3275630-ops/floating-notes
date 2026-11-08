@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvidenceBundle v1",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "scope": {
+      "$ref": "note-scope.schema.json"
+    },
+    "grant_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "eligible_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "processed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sampled": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "index_watermark": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eligible_count",
+        "processed_count",
+        "failed_count",
+        "sampled",
+        "truncated",
+        "index_watermark"
+      ],
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "citation_id": {
+            "type": "string",
+            "pattern": "^E[0-9]+$"
+          },
+          "note_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "block_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "source_type": {
+            "enum": [
+              "user_note",
+              "ai_note",
+              "import",
+              "web"
+            ]
+          },
+          "status": {
+            "enum": [
+              "valid",
+              "stale",
+              "deleted",
+              "blocked"
+            ]
+          }
+        },
+        "required": [
+          "citation_id",
+          "note_id",
+          "revision",
+          "block_ids",
+          "excerpt",
+          "source_type",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "id",
+    "scope",
+    "grant_version",
+    "created_at",
+    "coverage",
+    "sources"
+  ],
+  "additionalProperties": false
+}

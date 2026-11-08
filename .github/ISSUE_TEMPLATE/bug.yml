@@ -1,0 +1,27 @@
+name: 缺陷
+description: 记录可复现问题，使用合成数据
+title: "[Bug] "
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤、预期与实际结果
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: App 版本、设备、Android、刷新率、构建 SHA
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏截图、录屏或日志
+      description: 不上传真实笔记、令牌、密码和签名文件
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重程度
+      options:
+        - 数据损失或权限问题（不在此贴敏感详情）
+        - 核心功能不可用或明显卡顿
+        - 视觉、文案或非核心问题

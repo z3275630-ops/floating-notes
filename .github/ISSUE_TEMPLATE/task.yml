@@ -1,0 +1,28 @@
+name: 开发任务
+description: 按既定功能和验收要求推进实现
+title: "[Txx] "
+body:
+  - type: input
+    id: scope
+    attributes:
+      label: 任务与功能编号
+      placeholder: T02 / F01 / A01
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 用户可见结果与交付物
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依赖与文件边界
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收条件与证据
+      description: 包含失败、离线、恢复、视觉和性能要求中的适用项
+    validations:
+      required: true

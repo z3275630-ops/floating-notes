@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "status": "design_contract_not_runtime_implementation",
+  "tools": [
+    {
+      "name": "search_notes",
+      "permission": "read:notes",
+      "required_arguments": [
+        "query",
+        "scope",
+        "limit"
+      ],
+      "kind": "read",
+      "idempotency_required": false,
+      "scope_enforced": true
+    },
+    {
+      "name": "read_note",
+      "permission": "read:notes",
+      "required_arguments": [
+        "note_id"
+      ],
+      "kind": "read",
+      "idempotency_required": false,
+      "scope_enforced": true
+    },
+    {
+      "name": "get_related",
+      "permission": "read:notes",
+      "required_arguments": [
+        "note_id",
+        "scope",
+        "limit"
+      ],
+      "kind": "read",
+      "idempotency_required": false,
+      "scope_enforced": true
+    },
+    {
+      "name": "get_memory",
+      "permission": "read:memory",
+      "required_arguments": [
+        "conversation_id",
+        "query",
+        "limit"
+      ],
+      "kind": "read",
+      "idempotency_required": false,
+      "scope_enforced": true
+    },
+    {
+      "name": "create_note",
+      "permission": "write:notes",
+      "required_arguments": [
+        "document",
+        "provenance",
+        "action_id"
+      ],
+      "kind": "write",
+      "idempotency_required": true,
+      "scope_enforced": true
+    },
+    {
+      "name": "propose_note_patch",
+      "permission": "write:notes",
+      "required_arguments": [
+        "note_id",
+        "base_revision",
+        "patch"
+      ],
+      "kind": "proposal",
+      "idempotency_required": false,
+      "scope_enforced": true
+    },
+    {
+      "name": "create_task",
+      "permission": "write:tasks",
+      "required_arguments": [
+        "task_fields",
+        "action_id"
+      ],
+      "kind": "write",
+      "idempotency_required": true,
+      "scope_enforced": true
+    },
+    {
+      "name": "schedule_job",
+      "permission": "write:schedules",
+      "required_arguments": [
+        "spec",
+        "timezone",
+        "scope",
+        "tools",
+        "budget"
+      ],
+      "kind": "write",
+      "idempotency_required": true,
+      "scope_enforced": true
+    },
+    {
+      "name": "fetch_user_url",
+      "permission": "network:fetch",
+      "required_arguments": [
+        "url",
+        "max_bytes"
+      ],
+      "kind": "network",
+      "idempotency_required": false,
+      "scope_enforced": true
+    },
+    {
+      "name": "search_web",
+      "permission": "network:search",
+      "required_arguments": [
+        "public_query"
+      ],
+      "kind": "network",
+      "idempotency_required": false,
+      "scope_enforced": true
+    }
+  ],
+  "initial_limits": {
+    "max_tool_calls": 8,
+    "run_timeout_seconds": 120,
+    "retrieval_max_candidates": 100,
+    "typical_max_notes": 12
+  },
+  "notes": "参数的完整类型 schema 由 T06/T19 按 api.md/ai.md 补齐；本清单用于能力与权限追踪，不能直接当可执行工具定义。"
+}
