@@ -37,7 +37,7 @@
 
 ## 验证证据
 
-文档检查：`python3 scripts/check_docs.py`。Android 工程建立后，按 docs/delivery/workflow.md 的检查矩阵新增编译、单元测试、迁移测试、UI 和真机性能测试。当前不存在 Gradle 工程，不能报告“Android 构建通过”。
+文档检查：`python3 scripts/check_docs.py`。Android 工程建立后，按 docs/delivery/workflow.md 的检查矩阵新增编译、单元测试、迁移测试、UI 和真机性能测试。Gradle 工程已建立，真实命令见 docs/engineering/android-build.md；通过范围必须引用对应提交的实际结果。
 
 测试失败必须说明命令、环境、输出摘要和影响。未做的测试明确标为未做。模型自己评价自己不能代替 AI 引用与越权测试的人审样本。
 
