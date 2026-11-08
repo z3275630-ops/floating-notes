@@ -27,6 +27,7 @@ android {
             matchingFallbacks += "release"
         }
     }
+    sourceSets.getByName("benchmark").java.srcDir("src/release/java")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
