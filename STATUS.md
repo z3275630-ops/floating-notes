@@ -1,11 +1,11 @@
 # 项目实际状态
 
-更新时间：2026-11-08。规格版本 3.0。
+更新时间：2026-11-08。规格版本 3.1。
 
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
-- 34 项开发任务、90 项验收用例、7 份 ADR、Agent/贡献/安全/发布流程。
+- 37 项开发任务、102 项验收用例、9 份 ADR（0008 为 proposed）、Agent/贡献/安全/发布流程。
 - 机器可读状态/设计参数、结构 schema、合成 fixtures、PR/Issue 模板及文档 CI 配置。
 
 ## 未完成
@@ -16,16 +16,24 @@
 
 ## 仓库与任务状态
 
-- 仓库：[z3275630-ops/floating-notes](https://github.com/z3275630-ops/floating-notes)，私有，默认分支 main。
-- T01–T34 已分别建立为 GitHub Issues #1–#34，路线图与 task-catalog 中有对应链接；当前均未开工。
+- 仓库：[z3275630-ops/floating-notes](https://github.com/z3275630-ops/floating-notes)，公开（Public），默认分支 main。
+- T01–T34 对应 Issues #1–#34，新增 T35/T36/T37 对应 #37/#38/#39；路线图与 task-catalog 已关联，当前均未开工。
 - 设计基线按 docs/project-baseline 分支 → PR → docs-contracts 检查 → 合并流程交付。
 - 自动检查配置见 .github/workflows/docs.yml；实际运行结果在 [Actions](https://github.com/z3275630-ops/floating-notes/actions)，需按提交核对。
 - 分支保护未启用；PR 和检查要求目前由协作流程约束，不声称已强制执行。
 
+## 已采纳的 v3.1 开发计划
+
+- [v3.1 产品评审](docs/product/v3.1-evolution-review.md) 与 [首个 APK 切片](docs/delivery/first-apk-vertical-slice.md) 已由所有者授权采纳；当前产品规格为 v3.1，继承 v3.0 完整范围和数据 schema。
+- [ADR 0008](docs/decisions/0008-progressive-local-ai.md) 为 proposed 的技术候选；[ADR 0009](docs/decisions/0009-public-repository-private-data.md) 为 accepted 的公开仓库决策。
+- 此次仅文档与任务变更：新增 T35–T37、Q091–Q102，所有功能和任务仍为 planned；现有数据 schema、Android 和服务端实现未更改；docs-contracts 的实际 CI 结果以 PR 页面为准。
+
 ## 下一步
 
-从 [T01 / #1](https://github.com/z3275630-ops/floating-notes/issues/1) 开始建立原生工程，按 T02–T04 验证玻璃材质、中文输入和四入口动效；T05–T06 验证检索与 Agent 执行协议。设备型号、模型预算和服务区域在对应任务开始前核对，不妨碍先做本地工程。
+从 [T01 / #1](https://github.com/z3275630-ops/floating-notes/issues/1) 开始建立原生工程，建议 T02/T03 并行、随后 T04/T07/T08 跑通本地记录 APK（维持原有任务依赖）；T05–T06 可继续独立验证检索与 Agent 执行协议。设备型号、模型预算和服务区域在对应任务开始前核对，不妨碍先做本地工程。
 
 ## 验证记录
 
 本地文档检查结果见 docs/quality/documentation-validation.md。该结果不代表 Android/服务端或真机性能验证。
+
+开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。交接分支 docs/T01-v31-design-review-20261108；PR #36；最终合并提交以 PR 页面为准。

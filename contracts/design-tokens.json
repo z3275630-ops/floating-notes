@@ -94,5 +94,14 @@
       "enhanced",
       "reduced"
     ]
+  },
+  "v31_interactions": {
+    "status": "pending_device_validation",
+    "echo_debounce_ms": 800,
+    "echo_auto_interval_ms": 30000,
+    "echo_enter_ms": 220,
+    "echo_exit_ms": 180,
+    "echo_translation_max_dp": 8,
+    "reduced_motion_translation_dp": 0
   }
 }

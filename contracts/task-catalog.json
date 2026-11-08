@@ -330,7 +330,10 @@
         "T27",
         "T28",
         "T29",
-        "T30"
+        "T30",
+        "T35",
+        "T36",
+        "T37"
       ],
       "title": "跨功能完整闭环",
       "status": "planned",
@@ -366,6 +369,38 @@
       "title": "内测与发布候选",
       "status": "planned",
       "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/34"
+    },
+    {
+      "id": "T35",
+      "milestone": "M1",
+      "dependencies": [
+        "T08"
+      ],
+      "title": "跨应用文本收集",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/37"
+    },
+    {
+      "id": "T36",
+      "milestone": "M2",
+      "dependencies": [
+        "T08",
+        "T17"
+      ],
+      "title": "编辑边缘历史回响",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/38"
+    },
+    {
+      "id": "T37",
+      "milestone": "M3",
+      "dependencies": [
+        "T18",
+        "T20"
+      ],
+      "title": "随机漫步双卡概念对撞",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/39"
     }
   ]
 }
