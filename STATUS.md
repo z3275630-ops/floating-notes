@@ -2,6 +2,13 @@
 
 更新时间：2026-11-08。规格版本 3.1。
 
+## 当前开发轮次
+
+- T01 工程启动已 verified（仅工程/安装范围），分支 `feat/T01-native-bootstrap`，源码 `8550e76`，[PR #40](https://github.com/z3275630-ops/floating-notes/pull/40)。
+- 原生 debug/release/benchmark、lint、测试 APK 编译通过；API35 模拟器安装启动与 1 项 Compose 测试通过。JVM 测试为 NO-SOURCE。
+- 产物、命令、失败修复与未测项见 [T01 报告](docs/quality/T01-validation.md)，交接见 [本轮记录](docs/handoffs/2026-11-08-T01.md)。
+- T02/T03/T04/T07/T08/T35 及后续任务待执行，全部 F 状态仍 planned。没有把安装样例计作 F01 完成。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -10,14 +17,14 @@
 
 ## 未完成
 
-- Android、服务端、数据库 migrations、真实模型接入均未实现。
-- APK、真机视觉验收、帧/热/电性能、模型质量及数据恢复演练均未执行。
+- Android 工程正在启动；本地记录、服务端、数据库 migrations、真实模型接入均未实现。
+- 已产出工程样例 APK 并完成模拟器安装；真机视觉、帧/热/电性能、模型质量及数据恢复演练未执行。
 - 所有 F 项为 planned；没有运行时功能被标为 verified。
 
 ## 仓库与任务状态
 
 - 仓库：[z3275630-ops/floating-notes](https://github.com/z3275630-ops/floating-notes)，公开（Public），默认分支 main。
-- T01–T34 对应 Issues #1–#34，新增 T35/T36/T37 对应 #37/#38/#39；路线图与 task-catalog 已关联，当前均未开工。
+- T01–T34 对应 Issues #1–#34，新增 T35/T36/T37 对应 #37/#38/#39；路线图与 task-catalog 已关联，T01 已完成工程验证，其余以 task-catalog 为准。
 - 设计基线按 docs/project-baseline 分支 → PR → docs-contracts 检查 → 合并流程交付。
 - 自动检查配置见 .github/workflows/docs.yml；实际运行结果在 [Actions](https://github.com/z3275630-ops/floating-notes/actions)，需按提交核对。
 - 分支保护未启用；PR 和检查要求目前由协作流程约束，不声称已强制执行。
@@ -30,7 +37,7 @@
 
 ## 下一步
 
-从 [T01 / #1](https://github.com/z3275630-ops/floating-notes/issues/1) 开始建立原生工程，建议 T02/T03 并行、随后 T04/T07/T08 跑通本地记录 APK（维持原有任务依赖）；T05–T06 可继续独立验证检索与 Agent 执行协议。设备型号、模型预算和服务区域在对应任务开始前核对，不妨碍先做本地工程。
+T01 原生工程已通过，从 T02、T03 顺序继续、随后 T04/T07/T08 跑通本地记录 APK（维持原有任务依赖）；T05–T06 可继续独立验证检索与 Agent 执行协议。设备型号、模型预算和服务区域在对应任务开始前核对，不妨碍先做本地工程。
 
 ## 验证记录
 
