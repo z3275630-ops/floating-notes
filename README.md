@@ -8,6 +8,14 @@
 
 仓库：[z3275630-ops/floating-notes](https://github.com/z3275630-ops/floating-notes) · [开发任务](https://github.com/z3275630-ops/floating-notes/issues) · [自动检查](https://github.com/z3275630-ops/floating-notes/actions)
 
+## v3.1 改进提案（待评审）
+
+- [功能与交互取舍](docs/product/v3.1-evolution-review.md)：优先跨应用捕获、边缘 AI 回响气泡和双卡概念对撞，保留四个主入口。
+- [首个 APK 垂直切片](docs/delivery/first-apk-vertical-slice.md)：按 T01/T02/T03/T04/T07/T08 的依赖先做本地记录闭环。
+- [ADR 0008：渐进式端侧检索](docs/decisions/0008-progressive-local-ai.md)（proposed）；[ADR 0009：公开仓库边界](docs/decisions/0009-public-repository-private-data.md)（accepted）。
+
+**当前规格仍为 v3.0。以上是待审议设计，不代表已修改既有 F/T/Q、schema 或已实现功能。**
+
 ## 从这里开始
 
 | 读者 / 任务 | 文件 |
