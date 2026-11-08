@@ -1,0 +1,371 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "T01",
+      "milestone": "M0",
+      "dependencies": [],
+      "title": "工具链与工程启动",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/1"
+    },
+    {
+      "id": "T02",
+      "milestone": "M0",
+      "dependencies": [
+        "T01"
+      ],
+      "title": "玻璃材质与帧预算样例",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/2"
+    },
+    {
+      "id": "T03",
+      "milestone": "M0",
+      "dependencies": [
+        "T01"
+      ],
+      "title": "原生编辑与键盘样例",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/3"
+    },
+    {
+      "id": "T04",
+      "milestone": "M0",
+      "dependencies": [
+        "T02",
+        "T03"
+      ],
+      "title": "四入口与动效原型",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/4"
+    },
+    {
+      "id": "T05",
+      "milestone": "M0",
+      "dependencies": [],
+      "title": "资料、检索与证据可行性",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/5"
+    },
+    {
+      "id": "T06",
+      "milestone": "M0",
+      "dependencies": [
+        "T05"
+      ],
+      "title": "Agent 工具持久状态样例",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/6"
+    },
+    {
+      "id": "T07",
+      "milestone": "M1",
+      "dependencies": [
+        "T01",
+        "T03"
+      ],
+      "title": "文档模型与本地事务",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/7"
+    },
+    {
+      "id": "T08",
+      "milestone": "M1",
+      "dependencies": [
+        "T07",
+        "T04"
+      ],
+      "title": "记录编辑闭环",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/8"
+    },
+    {
+      "id": "T09",
+      "milestone": "M1",
+      "dependencies": [
+        "T07"
+      ],
+      "title": "标签、笔记本与引用",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/9"
+    },
+    {
+      "id": "T10",
+      "milestone": "M1",
+      "dependencies": [
+        "T07"
+      ],
+      "title": "附件可靠导入",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/10"
+    },
+    {
+      "id": "T11",
+      "milestone": "M1",
+      "dependencies": [
+        "T10",
+        "T08"
+      ],
+      "title": "录音和转写",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/11"
+    },
+    {
+      "id": "T12",
+      "milestone": "M1",
+      "dependencies": [
+        "T07",
+        "T09"
+      ],
+      "title": "中文搜索与范围",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/12"
+    },
+    {
+      "id": "T13",
+      "milestone": "M1",
+      "dependencies": [
+        "T07",
+        "T08"
+      ],
+      "title": "待办与本地提醒",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/13"
+    },
+    {
+      "id": "T14",
+      "milestone": "M1",
+      "dependencies": [
+        "T07",
+        "T10"
+      ],
+      "title": "历史、回收站与本地备份",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/14"
+    },
+    {
+      "id": "T15",
+      "milestone": "M2",
+      "dependencies": [
+        "T12",
+        "T14"
+      ],
+      "title": "每日回顾",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/15"
+    },
+    {
+      "id": "T16",
+      "milestone": "M2",
+      "dependencies": [
+        "T05",
+        "T07",
+        "T12"
+      ],
+      "title": "共享检索索引",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/16"
+    },
+    {
+      "id": "T17",
+      "milestone": "M2",
+      "dependencies": [
+        "T16"
+      ],
+      "title": "相关笔记与找一找",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/17"
+    },
+    {
+      "id": "T18",
+      "milestone": "M2",
+      "dependencies": [
+        "T15",
+        "T17"
+      ],
+      "title": "随机漫步与路径",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/18"
+    },
+    {
+      "id": "T19",
+      "milestone": "M3",
+      "dependencies": [
+        "T06",
+        "T16"
+      ],
+      "title": "服务 API 与鉴权基础",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/19"
+    },
+    {
+      "id": "T20",
+      "milestone": "M3",
+      "dependencies": [
+        "T19",
+        "T17"
+      ],
+      "title": "洞察与证据工作区",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/20"
+    },
+    {
+      "id": "T21",
+      "milestone": "M3",
+      "dependencies": [
+        "T19",
+        "T20"
+      ],
+      "title": "Agent 对话与工具执行",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/21"
+    },
+    {
+      "id": "T22",
+      "milestone": "M3",
+      "dependencies": [
+        "T21"
+      ],
+      "title": "记忆中心",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/22"
+    },
+    {
+      "id": "T23",
+      "milestone": "M3",
+      "dependencies": [
+        "T21",
+        "T22"
+      ],
+      "title": "定时 AI 与通知",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/23"
+    },
+    {
+      "id": "T24",
+      "milestone": "M3",
+      "dependencies": [
+        "T20",
+        "T21",
+        "T22",
+        "T23"
+      ],
+      "title": "AI 质量与预算基线",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/24"
+    },
+    {
+      "id": "T25",
+      "milestone": "M4",
+      "dependencies": [
+        "T16",
+        "T19"
+      ],
+      "title": "2D 认知地图",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/25"
+    },
+    {
+      "id": "T26",
+      "milestone": "M4",
+      "dependencies": [
+        "T07",
+        "T09"
+      ],
+      "title": "统计和热力图",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/26"
+    },
+    {
+      "id": "T27",
+      "milestone": "M4",
+      "dependencies": [
+        "T14",
+        "T19"
+      ],
+      "title": "增量同步与冲突",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/27"
+    },
+    {
+      "id": "T28",
+      "milestone": "M4",
+      "dependencies": [
+        "T27",
+        "T14"
+      ],
+      "title": "迁移与恢复体验",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/28"
+    },
+    {
+      "id": "T29",
+      "milestone": "M4",
+      "dependencies": [
+        "T15",
+        "T08"
+      ],
+      "title": "桌面组件和分享",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/29"
+    },
+    {
+      "id": "T30",
+      "milestone": "M4",
+      "dependencies": [
+        "T21",
+        "T27"
+      ],
+      "title": "MCP/API 开放授权",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/30"
+    },
+    {
+      "id": "T31",
+      "milestone": "M4",
+      "dependencies": [
+        "T25",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "title": "跨功能完整闭环",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/31"
+    },
+    {
+      "id": "T32",
+      "milestone": "M5",
+      "dependencies": [
+        "T31",
+        "T24"
+      ],
+      "title": "性能与审美定稿",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/32"
+    },
+    {
+      "id": "T33",
+      "milestone": "M5",
+      "dependencies": [
+        "T32"
+      ],
+      "title": "数据、安全与升级演练",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/33"
+    },
+    {
+      "id": "T34",
+      "milestone": "M5",
+      "dependencies": [
+        "T33"
+      ],
+      "title": "内测与发布候选",
+      "status": "planned",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/34"
+    }
+  ]
+}

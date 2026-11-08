@@ -1,0 +1,26 @@
+name: 设计或范围变更
+description: 说明变更理由、证据与影响，防止悄悄删功能
+title: "[Design] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 当前问题与证据
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 推荐方案及替代选择
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 功能、视觉、数据、费用、兼容与工期影响
+    validations:
+      required: true
+  - type: textarea
+    id: decision
+    attributes:
+      label: 决策与相关 ADR

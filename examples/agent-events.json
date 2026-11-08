@@ -1,0 +1,46 @@
+{
+  "fixture_only": true,
+  "events": [
+    {
+      "event_seq": 1,
+      "type": "run.started",
+      "run_id": "40000000-0000-4000-8000-000000000001",
+      "payload": {}
+    },
+    {
+      "event_seq": 2,
+      "type": "retrieval.completed",
+      "run_id": "40000000-0000-4000-8000-000000000001",
+      "payload": {
+        "evidence_id": "30000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "event_seq": 3,
+      "type": "message.delta",
+      "run_id": "40000000-0000-4000-8000-000000000001",
+      "payload": {
+        "message_id": "m1",
+        "offset": 0,
+        "text": "这条记录提到你尝试缩短表达。"
+      }
+    },
+    {
+      "event_seq": 4,
+      "type": "citation.ready",
+      "run_id": "40000000-0000-4000-8000-000000000001",
+      "payload": {
+        "message_id": "m1",
+        "citation_id": "E1"
+      }
+    },
+    {
+      "event_seq": 5,
+      "type": "run.completed",
+      "run_id": "40000000-0000-4000-8000-000000000001",
+      "payload": {
+        "completed_actions": []
+      }
+    }
+  ]
+}
