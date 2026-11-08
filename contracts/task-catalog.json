@@ -6,8 +6,13 @@
       "milestone": "M0",
       "dependencies": [],
       "title": "工具链与工程启动",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/1"
+      "status": "in_progress",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/1",
+      "branch": "feat/T01-native-bootstrap",
+      "owner": "Codex",
+      "evidence": [
+        "docs/quality/T01-validation.md"
+      ]
     },
     {
       "id": "T02",

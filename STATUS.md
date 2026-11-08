@@ -2,6 +2,13 @@
 
 更新时间：2026-11-08。规格版本 3.1。
 
+## 当前开发轮次
+
+- 已从 main `a65913e` 建立 `feat/T01-native-bootstrap`，T01 in_progress，执行者 Codex。
+- 新增原生工程、固定工具链、debug 合成列表与 Android 构建/安装 CI；尚未获得构建成功证据。
+- 实际验证见 [T01 报告](docs/quality/T01-validation.md)，交接见 [本轮记录](docs/handoffs/2026-11-08-T01.md)。
+- T02/T03/T04/T07/T08/T35 及后续任务仍待执行，全部 F 状态仍 planned。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -10,7 +17,7 @@
 
 ## 未完成
 
-- Android、服务端、数据库 migrations、真实模型接入均未实现。
+- Android 工程正在启动；本地记录、服务端、数据库 migrations、真实模型接入均未实现。
 - APK、真机视觉验收、帧/热/电性能、模型质量及数据恢复演练均未执行。
 - 所有 F 项为 planned；没有运行时功能被标为 verified。
 

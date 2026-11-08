@@ -4,7 +4,7 @@
 
 **液态玻璃、柔和渐变、动画跟手感属于发布要求。功能完整与视觉质量必须同时验收。**
 
-当前为 **v3.1 工程设计与协作基线**，已准备详细文档、契约样例、任务拆分和文档检查。Android 应用及服务端尚未实现，没有可安装 APK，没有已通过的真机性能报告。
+当前为 **v3.1 工程设计与协作基线**，已准备详细文档、契约样例、任务拆分和文档检查。Android 工程已开始 T01 原生启动，构建结果见 [实际验证](docs/quality/T01-validation.md)；本地记录与服务端尚未实现，没有已通过的真机性能报告。
 
 仓库：[z3275630-ops/floating-notes](https://github.com/z3275630-ops/floating-notes) · [开发任务](https://github.com/z3275630-ops/floating-notes/issues) · [自动检查](https://github.com/z3275630-ops/floating-notes/actions)
 
@@ -51,3 +51,5 @@ python3 scripts/check_docs.py
 该命令检查文档内部文件链接、JSON 契约、功能映射和示例的关键一致性。它不构建 Android，不代表 UI、AI 或性能已实现。Android 构建命令在 M0 完成可运行工程后写入开发指南。
 
 所有样例均为虚构测试数据。仓库不含账户密钥、用户真实笔记、签名文件或生产部署。当前未授予开源许可证；公开与开源授权由所有者另行决定。
+
+Android 工程启动与安装命令见 [构建说明](docs/engineering/android-build.md)。完整记录闭环按原定依赖推进，状态以 STATUS 为准。

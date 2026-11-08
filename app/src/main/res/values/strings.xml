@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">浮记</string>
+    <string name="prototype_notice">工程样例 · 内容仅存内存，关闭后不会保存</string>
+    <string name="load_samples">载入合成示例</string>
+</resources>
