@@ -1,0 +1,13 @@
+# T04 四入口和输入面板验证
+
+2026-11-09。原生四入口、选中胶囊弹簧、玻璃导航、快速记录面板。拖拽仅绑定面板把手，按位移更新位置，松手按距离与速度收起或回弹。重新抓取取消当前弹簧。预测返回跟随进度，取消时回弹。系统动画关闭时直接到达目标。面板采用系统 IME Insets 并保留本次会话草稿。
+
+本轮覆盖 A01–A03。A04–A12 随对应业务交互完成，T04 的全套动效验收仍未结束。CI 测试切换四入口、拖拽关闭、重开保留正文，结果见下。连点中断、预测返回取消、减少动画、真实键盘以及 60/120Hz 帧预算待测。
+
+源码 `5c64777` 的 [CI 42543398917](https://github.com/z3275630-ops/floating-notes/actions/runs/42543398917) 三种构建、lint 与测试 APK 通过。API35 安装成功，前 4 项通过，导航测试执行中模拟器失联，JUnit 未收到完整结果。本轮降低模拟器分辨率、录屏码率，关闭模拟 Vulkan，并收集 logcat 继续诊断。重跑待补。
+
+[集成 CI 42543663684](https://github.com/z3275630-ops/floating-notes/actions/runs/42543663684) 的 8 项测试通过，含 T04 四入口和拖拽重开。随后 [独立 CI 42544090712](https://github.com/z3275630-ops/floating-notes/actions/runs/42544090712) 构建通过，模拟器在系统键盘显示期间再次失联。已显式启用预测返回，把玻璃背景留在固定画布，键盘出现时用清晰档。数据与拖拽测试使用 Compose 注入正文，独立 T03 保留输入法实验。
+
+源码 `960406b` 的 [Android CI 42545058280](https://github.com/z3275630-ops/floating-notes/actions/runs/42545058280) 通过。debug、release、benchmark、lint、测试 APK 和签名验证通过。API35 Android 15 模拟器安装并通过 5 项 Compose 测试，含四入口切换、拖拽关闭和草稿恢复。测试对数据流程使用语义输入。真实键盘与预测返回手势、A04–A12、60/120Hz 仍待测。
+
+[录屏及测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42545058280/artifacts/13643675227)。

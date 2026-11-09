@@ -12,6 +12,7 @@ junit = "4.13.2"
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
+compose-animation = { module = "androidx.compose.animation:animation" }
 compose-tooling = { module = "androidx.compose.ui:ui-tooling" }
 compose-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 compose-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }

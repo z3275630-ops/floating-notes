@@ -61,6 +61,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -feature -Vulkan
           script: bash scripts/android-smoke.sh
       - uses: actions/upload-artifact@v4
         if: always()

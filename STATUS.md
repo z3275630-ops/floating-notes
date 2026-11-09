@@ -9,7 +9,8 @@
 - 产物、命令、失败修复与未测项见 [T01 报告](docs/quality/T01-validation.md)，交接见 [本轮记录](docs/handoffs/2026-11-08-T01.md)。
 - T02 玻璃材质已通过构建和 2 项 API35 模拟器测试，真机性能待测。见 [T02 验证记录](docs/quality/T02-validation.md) 与 [交接](docs/handoffs/2026-11-09-T02.md)。
 - T03 原生输入样例通过构建和 API35 自动化，真实输入法待测。见 [T03 验证](docs/quality/T03-validation.md) 与 [交接](docs/handoffs/2026-11-09-T03.md)。
-- T04/T07/T08/T35 待执行，F01–F20 仍为 planned。
+- T04 四入口与可拖拽输入面板已实现，A04–A12 与真机验收待做。见 [验证](docs/quality/T04-validation.md) 和 [交接](docs/handoffs/2026-11-09-T04.md)。
+- T07/T08/T35 待执行，F01–F20 仍为 planned。
 
 ## 已完成
 
