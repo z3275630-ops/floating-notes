@@ -10,12 +10,17 @@ android {
         applicationId = "io.github.z3275630ops.floatingnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-t01"
+        versionCode = 2
+        versionName = "0.1.1-t02"
+        buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
-        debug { applicationIdSuffix = ".debug"; versionNameSuffix = "-debug" }
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            buildConfigField("boolean", "MATERIAL_LAB", "true")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -23,6 +28,7 @@ android {
         create("benchmark") {
             initWith(getByName("release"))
             applicationIdSuffix = ".benchmark"
+            buildConfigField("boolean", "MATERIAL_LAB", "true")
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
         }
