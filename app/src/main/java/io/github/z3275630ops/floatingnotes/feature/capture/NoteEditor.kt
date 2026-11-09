@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.TextFieldDecorator
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,6 +18,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesSearchField
 
 @Composable
 internal fun ColumnScope.NoteEditor(
@@ -110,14 +112,15 @@ internal fun ColumnScope.NoteEditor(
         ) { Text("保存") }
     }
     picker?.let { mode ->
-        var query by remember(mode) { mutableStateOf("") }
+        val filter = key(mode) { rememberTextFieldState() }
+        val query = filter.text.toString()
         val candidates = if (mode == "引用笔记") notes.filter { it.id != session.draft.noteId } else backlinks
         AlertDialog(
             onDismissRequest = { picker = null },
             title = { Text(mode) },
             text = {
-                Column {
-                    OutlinedTextField(query, { query = it }, label = { Text("筛选笔记") }, singleLine = true)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ComposablesSearchField(filter, "筛选笔记")
                     LazyColumn(Modifier.heightIn(max = 280.dp)) {
                         items(candidates.filter { referenceLabel(it).contains(query, ignoreCase = true) }, key = { it.id }) { note ->
                             TextButton(onClick = {

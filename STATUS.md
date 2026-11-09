@@ -18,6 +18,8 @@
 
 - 薄荷绿主题、笔记侧栏和玻璃调整通过构建与 18 项 API 35 模拟器测试，[PR #48](https://github.com/z3275630-ops/floating-notes/pull/48)。见 [验证记录](docs/quality/mint-glass-validation.md) 与 [交接](docs/handoffs/2026-11-09-mint-glass.md)。
 
+- T09 已移植 Composables UI 的笔记菜单与引用筛选，见 [选型记录](docs/decisions/0011-composables-ui-source.md) 与 [交接](docs/handoffs/2026-11-09-composables-ui.md)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。

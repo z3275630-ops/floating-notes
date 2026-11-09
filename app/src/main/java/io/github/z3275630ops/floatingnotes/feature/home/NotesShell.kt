@@ -315,13 +315,14 @@ private fun NoteCard(note: NoteEntity, onOpen: () -> Unit, onPin: () -> Unit, on
                     style = MaterialTheme.typography.bodyLarge)
             }
             Box {
-                TextButton(onClick = { menu = true }) { Text("更多") }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("整理笔记") }, onClick = { menu = false; onOrganize() })
-                    DropdownMenuItem(text = { Text(if (note.pinned) "取消置顶" else "置顶") },
-                        onClick = { menu = false; onPin() })
-                    DropdownMenuItem(text = { Text(if (note.archivedAt == null) "归档" else "取消归档") },
-                        onClick = { menu = false; onArchive() })
+                NoteMenuTrigger { menu = true }
+                ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
+                    ComposablesMenuItem("整理笔记") { menu = false; onOrganize() }
+                    ComposablesMenuItem(if (note.pinned) "取消置顶" else "置顶") { menu = false; onPin() }
+                    ComposablesMenuItem(if (note.archivedAt == null) "归档" else "取消归档") {
+                        menu = false
+                        onArchive()
+                    }
                 }
             }
         }
