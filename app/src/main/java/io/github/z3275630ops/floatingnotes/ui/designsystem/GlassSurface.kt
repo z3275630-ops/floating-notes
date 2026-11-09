@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -33,6 +35,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 
@@ -71,6 +74,7 @@ fun GlassSurface(
     tier: GlassTier,
     dark: Boolean,
     modifier: Modifier = Modifier,
+    sampleTopHeight: Dp? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val effective = tier.supportedOn(Build.VERSION.SDK_INT)
@@ -105,8 +109,10 @@ fun GlassSurface(
             .clip(shape)
     ) {
         if (effective != GlassTier.Reduced) {
+            val sample = if (sampleTopHeight == null) Modifier.matchParentSize()
+                else Modifier.fillMaxWidth().height(sampleTopHeight)
             Box(
-                Modifier.matchParentSize().onSizeChanged { viewport = it }
+                sample.onSizeChanged { viewport = it }
                     .graphicsLayer { renderEffect = effect }
                     .drawWithContent {
                         val offset = backdrop.origin - position
@@ -114,9 +120,13 @@ fun GlassSurface(
                     }
             )
         }
+        val surface = if (sampleTopHeight == null) Modifier.background(tint.copy(alpha = alpha))
+        else Modifier.background(Brush.verticalGradient(
+            colors = listOf(tint.copy(alpha = alpha), tint),
+            endY = with(density) { sampleTopHeight.toPx() },
+        ))
         Box(
-            Modifier.matchParentSize()
-                .background(tint.copy(alpha = alpha))
+            Modifier.matchParentSize().then(surface)
                 .background(Brush.verticalGradient(listOf(
                     Color.White.copy(alpha = if (dark) .04f else .14f), Color.Transparent,
                 )))

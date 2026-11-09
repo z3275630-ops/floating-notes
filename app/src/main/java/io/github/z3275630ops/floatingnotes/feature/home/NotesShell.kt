@@ -60,7 +60,9 @@ internal fun NotesShell(labs: @Composable RowScope.() -> Unit) {
 
     Surface(color = scheme.background) {
         Box(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
+            Modifier.fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .navigationBarsPadding(),
         ) {
             Box(
                 Modifier.fillMaxSize().glassSource(backdrop).background(ambient(dark))
@@ -103,64 +105,66 @@ internal fun NotesShell(labs: @Composable RowScope.() -> Unit) {
                 }
             }
 
-            if (!motion.visible) {
-                Column(
-                    Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp)
-                        .fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    FloatingActionButton(
-                        onClick = { open = true; motion.settle(true) },
-                        modifier = Modifier.align(Alignment.End).testTag("new-note"),
-                        containerColor = scheme.primary,
-                        contentColor = scheme.onPrimary,
-                    ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
-                    GlassSurface(backdrop, GlassTier.Standard, dark, Modifier.fillMaxWidth()) {
-                        BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
-                            val tabWidth = maxWidth / Page.entries.size
-                            val position by animateDpAsState(
-                                tabWidth * page.ordinal,
-                                spring(dampingRatio = .85f, stiffness = 500f),
-                                label = "tab-selection",
-                            )
-                            Box(
-                                Modifier.offset { IntOffset(position.roundToPx(), 0) }.width(tabWidth).height(48.dp)
-                                    .background(scheme.primary.copy(alpha = .13f), RoundedCornerShape(24.dp)),
-                            )
-                            Row(Modifier.fillMaxWidth().selectableGroup()) {
-                                for (target in Page.entries) {
-                                    Box(
-                                        Modifier.weight(1f).heightIn(min = 48.dp)
-                                            .testTag("tab-${target.name}")
-                                            .selectable(page == target, role = Role.Tab) { page = target }
-                                            .padding(vertical = 8.dp),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Text(
-                                            target.label,
-                                            color = if (page == target) scheme.primary else scheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.labelLarge,
-                                        )
+            Box(Modifier.matchParentSize().imePadding()) {
+                if (!motion.visible) {
+                    Column(
+                        Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp)
+                            .fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        FloatingActionButton(
+                            onClick = { open = true; motion.settle(true) },
+                            modifier = Modifier.align(Alignment.End).testTag("new-note"),
+                            containerColor = scheme.primary,
+                            contentColor = scheme.onPrimary,
+                        ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
+                        GlassSurface(backdrop, GlassTier.Standard, dark, Modifier.fillMaxWidth()) {
+                            BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
+                                val tabWidth = maxWidth / Page.entries.size
+                                val position by animateDpAsState(
+                                    tabWidth * page.ordinal,
+                                    spring(dampingRatio = .85f, stiffness = 500f),
+                                    label = "tab-selection",
+                                )
+                                Box(
+                                    Modifier.offset { IntOffset(position.roundToPx(), 0) }.width(tabWidth).height(48.dp)
+                                        .background(scheme.primary.copy(alpha = .13f), RoundedCornerShape(24.dp)),
+                                )
+                                Row(Modifier.fillMaxWidth().selectableGroup()) {
+                                    for (target in Page.entries) {
+                                        Box(
+                                            Modifier.weight(1f).heightIn(min = 48.dp)
+                                                .testTag("tab-${target.name}")
+                                                .selectable(page == target, role = Role.Tab) { page = target }
+                                                .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                target.label,
+                                                color = if (page == target) scheme.primary else scheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.labelLarge,
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-            CaptureSheet(motion, open, backdrop, dark, { close() }, { close(it) }, { open = true }) {
-                BasicTextField(
-                    state = draft,
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)
-                        .testTag("capture-editor"),
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
-                    cursorBrush = SolidColor(scheme.primary),
-                )
-                Text(
-                    "输入面板原型 · 草稿保留在本次会话",
-                    Modifier.padding(vertical = 12.dp), color = scheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelMedium,
-                )
+                CaptureSheet(motion, open, backdrop, dark, { close() }, { close(it) }, { open = true }) {
+                    BasicTextField(
+                        state = draft,
+                        modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)
+                            .testTag("capture-editor"),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
+                        cursorBrush = SolidColor(scheme.primary),
+                    )
+                    Text(
+                        "输入面板原型 · 草稿保留在本次会话",
+                        Modifier.padding(vertical = 12.dp), color = scheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
             }
         }
     }
