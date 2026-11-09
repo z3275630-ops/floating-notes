@@ -14,7 +14,7 @@
 - T08 已通过新建、待办混排、保存重开和自动保存的 API35 验证。见 [验证](docs/quality/T08-validation.md) 和 [交接](docs/handoffs/2026-11-09-T08.md)。
 - T35 的签名 APK、系统分享和选区预览通过验证，联合回归 13 项全通过。见 [验证](docs/quality/T35-validation.md) 和 [交接](docs/handoffs/2026-11-09-T35.md)。
 
-- T09 已提交标签、笔记本、引用与 Room v2 迁移，构建与迁移证据见 [T09 验证](docs/quality/T09-validation.md) 和 [交接](docs/handoffs/2026-11-09-T09.md)。
+- T09 标签、笔记本、引用与 Room v2 迁移已通过构建和 16 项模拟器测试，[PR #47](https://github.com/z3275630-ops/floating-notes/pull/47)。验证证据见 [T09 验证](docs/quality/T09-validation.md) 和 [交接](docs/handoffs/2026-11-09-T09.md)。
 
 ## 已完成
 
@@ -26,7 +26,7 @@
 
 - Android 首个本地记录切片与跨应用收集已提交。服务端、真实模型、完整标签检索与后续业务待实现。Room v1 已归档，后续 schema 变更需要迁移测试。
 - 已产出 T01 工程 APK 与 T08/T35 开发 APK。真机视觉、帧/热/电性能、模型质量、真实强杀与磁盘满演练未执行。
-- F01、F18、F20 为 in_progress，已有部分自动化证据。F01–F20 的完整验收尚未结束。
+- F01、F03、F12、F18、F20 为 in_progress，已有部分自动化证据。F01–F20 的完整验收尚未结束。
 
 ## 仓库与任务状态
 
@@ -44,7 +44,7 @@
 
 ## 下一步
 
-[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。继续 T09 标签、笔记本与引用，按既定路线推进 T10–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
+[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐，按既定路线推进 T10–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
 
 ## 验证记录
 
