@@ -14,7 +14,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.Color
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintColorScheme
 
 class MainActivity : ComponentActivity() {
     private val notes by viewModels<NotesViewModel>()
@@ -49,15 +49,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun FloatingNotesTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    MaterialTheme(
-        colorScheme = if (dark) darkColorScheme(
-            primary = Color(0xFFB9AEFF), background = Color(0xFF11131B),
-            surface = Color(0xFF1A1E2A), onSurface = Color(0xFFEEF1F8)
-        ) else lightColorScheme(
-            primary = Color(0xFF6356D9), background = Color(0xFFF7F8FC),
-            surface = Color.White, onSurface = Color(0xFF202431)
-        ), content = content
-    )
+    MaterialTheme(colorScheme = mintColorScheme(dark), content = content)
 }
 
 private enum class Lab { Material, Input }

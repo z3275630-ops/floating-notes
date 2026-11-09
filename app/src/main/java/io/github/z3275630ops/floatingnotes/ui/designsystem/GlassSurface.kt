@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -87,24 +88,27 @@ fun GlassSurface(
         if (effective == GlassTier.Reduced || viewport == IntSize.Zero || Build.VERSION.SDK_INT < 31) {
             null
         } else with(density) {
-            val blur = (if (dark) 24.dp else 20.dp).toPx()
+            val blur = when (effective) {
+                GlassTier.Enhanced -> 16.dp
+                else -> 22.dp
+            }.toPx()
             val blurred = RenderEffect.createBlurEffect(blur, blur, Shader.TileMode.CLAMP)
             if (effective == GlassTier.Enhanced && Build.VERSION.SDK_INT >= 33) {
-                refract(viewport, radius.toPx(), 2.dp.toPx(), 10.dp.toPx(), blurred)
+                refract(viewport, radius.toPx(), 4.dp.toPx(), 15.dp.toPx(), blurred)
             } else {
                 blurred.asComposeRenderEffect()
             }
         }
     }
-    val tint = if (dark) Color(0xFF1A1E2A) else Color.White
+    val tint = MaterialTheme.colorScheme.surface
     val alpha = when (effective) {
         GlassTier.Reduced -> 1f
         GlassTier.Standard -> if (dark) .84f else .78f
-        GlassTier.Enhanced -> if (dark) .76f else .62f
+        GlassTier.Enhanced -> if (dark) .80f else .58f
     }
     Box(
         modifier
-            .shadow(12.dp, shape, ambientColor = Color(0x14202431), spotColor = Color(0x14202431))
+            .shadow(12.dp, shape, ambientColor = Color(0x44214735), spotColor = Color(0x44214735))
             .onGloballyPositioned { position = it.positionInRoot() }
             .clip(shape)
     ) {
@@ -128,12 +132,14 @@ fun GlassSurface(
         Box(
             Modifier.matchParentSize().then(surface)
                 .background(Brush.verticalGradient(listOf(
-                    Color.White.copy(alpha = if (dark) .04f else .14f), Color.Transparent,
-                )))
-                .border(.75.dp, Brush.verticalGradient(listOf(
-                    Color.White.copy(alpha = if (dark) .20f else .65f),
+                    Color.White.copy(alpha = if (dark) .07f else .27f),
                     Color.Transparent,
-                    Color(0xFF6356D9).copy(alpha = .08f),
+                    Color(0xFF92DFC2).copy(alpha = if (dark) .09f else .17f),
+                )))
+                .border(1.dp, Brush.verticalGradient(listOf(
+                    Color.White.copy(alpha = if (dark) .34f else .94f),
+                    Color.Transparent,
+                    Color(0xFF3A8567).copy(alpha = if (dark) .32f else .27f),
                 )), shape)
         )
         content()

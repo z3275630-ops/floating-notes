@@ -54,7 +54,7 @@
       "id": "F03",
       "name": "多级标签",
       "milestone": "M1",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/capture-editor.md",
       "screens": [
         "S05",
@@ -65,7 +65,9 @@
         "Q008",
         "Q009"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/quality/T09-validation.md"
+      ]
     },
     {
       "id": "F04",
@@ -217,7 +219,7 @@
       "id": "F12",
       "name": "引用与反链",
       "milestone": "M1",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/capture-editor.md",
       "screens": [
         "S03",
@@ -228,7 +230,9 @@
         "Q036",
         "Q037"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/quality/T09-validation.md"
+      ]
     },
     {
       "id": "F13",

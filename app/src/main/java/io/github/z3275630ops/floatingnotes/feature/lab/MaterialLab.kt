@@ -12,8 +12,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -28,18 +26,13 @@ fun MaterialLab(onBack: () -> Unit) {
     var tier by rememberSaveable { mutableStateOf(GlassTier.Standard) }
     val backdrop = rememberGlassBackdrop()
     val effective = tier.supportedOn(Build.VERSION.SDK_INT)
-    val scheme = if (dark) darkColorScheme(primary = Color(0xFFB9AEFF),
-        surface = Color(0xFF1A1E2A), background = Color(0xFF11131B))
-        else lightColorScheme(primary = Color(0xFF6356D9), background = Color(0xFFF7F8FC))
+    val scheme = mintColorScheme(dark)
     var panelHeight by remember { mutableIntStateOf(0) }
     val bottomInset = with(LocalDensity.current) { panelHeight.toDp() }
-    val ambient = Brush.verticalGradient(if (dark) listOf(
-        Color(0xFF30263F), Color(0xFF11131B), Color(0xFF19332F),
-    ) else listOf(Color(0xFFE4DCFF), Color(0xFFF7F8FC), Color(0xFFD9ECFF)))
 
     MaterialTheme(colorScheme = scheme) {
         Surface(color = scheme.background) {
-            Column(Modifier.fillMaxSize().background(ambient).safeDrawingPadding()) {
+            Column(Modifier.fillMaxSize().background(mintAmbient(dark)).safeDrawingPadding()) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                     TextButton(onClick = onBack) { Text("返回工程样例") }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -62,7 +55,7 @@ fun MaterialLab(onBack: () -> Unit) {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.fillMaxSize().then(
                         if (effective == GlassTier.Reduced) Modifier else Modifier.glassSource(backdrop)
-                    ).background(ambient)) {
+                    ).background(mintAmbient(dark))) {
                         LazyColumn(
                             Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(

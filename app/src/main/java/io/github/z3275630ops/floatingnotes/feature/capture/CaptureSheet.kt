@@ -112,7 +112,7 @@ internal fun BoxScope.CaptureSheet(
 
     if (!motion.visible) return
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    val tier = if (imeVisible) GlassTier.Reduced else GlassTier.Standard
+    val tier = if (imeVisible) GlassTier.Reduced else GlassTier.Enhanced
     var panelHeight by remember { mutableIntStateOf(0) }
     Box(
         Modifier.matchParentSize().graphicsLayer { alpha = motion.progress }
