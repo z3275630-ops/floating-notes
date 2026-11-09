@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -83,6 +84,8 @@ internal fun BoxScope.CaptureSheet(
     onDismiss: () -> Unit,
     onDragClose: (Float) -> Unit,
     onDragStart: () -> Unit,
+    title: String = "快速记录",
+    dismissLabel: String = "关闭",
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val dismiss by rememberUpdatedState(onDismiss)
@@ -108,6 +111,8 @@ internal fun BoxScope.CaptureSheet(
     }
 
     if (!motion.visible) return
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val tier = if (imeVisible) GlassTier.Reduced else GlassTier.Standard
     var panelHeight by remember { mutableIntStateOf(0) }
     Box(
         Modifier.matchParentSize().graphicsLayer { alpha = motion.progress }
@@ -115,7 +120,7 @@ internal fun BoxScope.CaptureSheet(
             .clickable { dismiss() }.clearAndSetSemantics { },
     )
     GlassSurface(
-        backdrop, GlassTier.Standard, dark,
+        backdrop, tier, dark,
         Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp)
             .widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight(.82f)
             .onSizeChanged { panelHeight = it.height }
@@ -155,8 +160,8 @@ internal fun BoxScope.CaptureSheet(
                 ))
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("快速记录", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                TextButton(onClick = { dismiss() }) { Text("关闭") }
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                TextButton(onClick = { dismiss() }) { Text(dismissLabel) }
             }
             content()
         }
