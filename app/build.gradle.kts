@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.z3275630ops.floatingnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.1.4-t07"
+        versionCode = 6
+        versionName = "0.1.5-t08"
         buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -55,6 +55,7 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.lifecycle.viewmodel)
     debugImplementation(libs.compose.tooling)
     debugImplementation(libs.compose.test.manifest)
     testImplementation(libs.junit)

@@ -11,7 +11,8 @@
 - T03 原生输入样例已实现，CI 待验证。见 [T03 验证](docs/quality/T03-validation.md) 与 [交接](docs/handoffs/2026-11-09-T03.md)。
 - T04 四入口与可拖拽输入面板已实现，A04–A12 与真机验收待做。见 [验证](docs/quality/T04-validation.md) 和 [交接](docs/handoffs/2026-11-09-T04.md)。
 - T07 已接 Room 草稿、笔记版本、待办索引和 Outbox 事务。见 [验证](docs/quality/T07-validation.md) 和 [交接](docs/handoffs/2026-11-09-T07.md)。
-- T08/T35 待执行，F01–F20 仍为 planned。
+- T08 已接新建、段落和待办、本地保存与重开，CI 待验证。见 [验证](docs/quality/T08-validation.md) 和 [交接](docs/handoffs/2026-11-09-T08.md)。
+- T35 待 T08 基础记录验证通过后推进。
 
 ## 已完成
 
