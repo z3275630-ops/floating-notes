@@ -6,6 +6,7 @@ import androidx.compose.ui.text.TextRange
 import org.junit.Rule
 import org.junit.Test
 
+@OptIn(ExperimentalTestApi::class)
 class InputLabTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 

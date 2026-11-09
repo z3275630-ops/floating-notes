@@ -10,7 +10,8 @@
 - T02 已实现玻璃材质实验，CI 待验证，真机性能待测。见 [T02 验证记录](docs/quality/T02-validation.md) 与 [交接](docs/handoffs/2026-11-09-T02.md)。
 - T03 原生输入样例已实现，CI 待验证。见 [T03 验证](docs/quality/T03-validation.md) 与 [交接](docs/handoffs/2026-11-09-T03.md)。
 - T04 四入口与可拖拽输入面板已实现，A04–A12 与真机验收待做。见 [验证](docs/quality/T04-validation.md) 和 [交接](docs/handoffs/2026-11-09-T04.md)。
-- T07/T08/T35 待执行，F01–F20 仍为 planned。
+- T07 已接 Room 草稿、笔记版本、待办索引和 Outbox 事务。见 [验证](docs/quality/T07-validation.md) 和 [交接](docs/handoffs/2026-11-09-T07.md)。
+- T08/T35 待执行，F01–F20 仍为 planned。
 
 ## 已完成
 

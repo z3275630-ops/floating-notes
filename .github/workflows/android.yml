@@ -39,6 +39,7 @@ jobs:
             app/build/outputs/apk/
             app/build/reports/
             app/build/test-results/
+            app/schemas/
           if-no-files-found: error
   smoke:
     runs-on: ubuntu-24.04

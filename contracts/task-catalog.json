@@ -87,8 +87,13 @@
         "T03"
       ],
       "title": "文档模型与本地事务",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/7"
+      "status": "in_progress",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/7",
+      "branch": "feat/T07-room-transactions",
+      "owner": "Codex",
+      "evidence": [
+        "docs/quality/T07-validation.md"
+      ]
     },
     {
       "id": "T08",
