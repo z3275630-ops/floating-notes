@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
 import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureMotion
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureSheet
@@ -59,7 +60,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
     val focus = LocalFocusManager.current
 
     fun launchEditor(noteId: String? = null, captureSlot: String? = null) {
-        scope.launch {
+        scope.launch(Dispatchers.Main.immediate) {
             if (model.openNote(noteId, captureSlot)) {
                 requestedNoteId = noteId
                 requestedCaptureSlot = captureSlot
@@ -77,7 +78,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
     }
 
     fun close(velocity: Float? = null, save: Boolean = false, discard: Boolean = false) {
-        scope.launch {
+        scope.launch(Dispatchers.Main.immediate) {
             if (model.finishEditor(save = save, discard = discard)) {
                 keyboard?.hide()
                 focus.clearFocus()

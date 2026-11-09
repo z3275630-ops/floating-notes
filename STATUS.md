@@ -1,6 +1,6 @@
 # 项目实际状态
 
-更新时间：2026-11-08。规格版本 3.1。
+更新时间：2026-11-09。规格版本 3.1。
 
 ## 当前开发轮次
 
@@ -22,14 +22,14 @@
 
 ## 未完成
 
-- Android 工程正在启动；本地记录、服务端、数据库 migrations、真实模型接入均未实现。
-- 已产出工程样例 APK 并完成模拟器安装；真机视觉、帧/热/电性能、模型质量及数据恢复演练未执行。
+- Android 首个本地记录切片与跨应用收集已提交。服务端、真实模型、完整标签检索与后续业务待实现。Room v1 已归档，后续 schema 变更需要迁移测试。
+- 已产出 T01 工程 APK 与 T08/T35 开发 APK。真机视觉、帧/热/电性能、模型质量、真实强杀与磁盘满演练未执行。
 - 所有 F 项为 planned；没有运行时功能被标为 verified。
 
 ## 仓库与任务状态
 
 - 仓库：[z3275630-ops/floating-notes](https://github.com/z3275630-ops/floating-notes)，公开（Public），默认分支 main。
-- T01–T34 对应 Issues #1–#34，新增 T35/T36/T37 对应 #37/#38/#39；路线图与 task-catalog 已关联，T01 已完成工程验证，其余以 task-catalog 为准。
+- T01–T34 对应 Issues #1–#34，新增 T35/T36/T37 对应 #37/#38/#39；路线图与 task-catalog 已关联，T01 工程验证通过。原生任务实际状态以本页、task-catalog 和对应 PR 为准。
 - 设计基线按 docs/project-baseline 分支 → PR → docs-contracts 检查 → 合并流程交付。
 - 自动检查配置见 .github/workflows/docs.yml；实际运行结果在 [Actions](https://github.com/z3275630-ops/floating-notes/actions)，需按提交核对。
 - 分支保护未启用；PR 和检查要求目前由协作流程约束，不声称已强制执行。
@@ -42,7 +42,7 @@
 
 ## 下一步
 
-T01 原生工程已通过，从 T02、T03 顺序继续、随后 T04/T07/T08 跑通本地记录 APK（维持原有任务依赖）；T05–T06 可继续独立验证检索与 Agent 执行协议。设备型号、模型预算和服务区域在对应任务开始前核对，不妨碍先做本地工程。
+先核对 [T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装测试。随后继续 T09 标签、笔记本与引用，按既定路线推进 T10–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
 
 ## 验证记录
 

@@ -19,6 +19,7 @@ import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.feature.capture.*
 import io.github.z3275630ops.floatingnotes.ui.designsystem.glassSource
 import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class ShareCaptureActivity : ComponentActivity() {
@@ -82,7 +83,7 @@ private fun SharePreview(
     }
 
     fun end(save: Boolean, velocity: Float? = null) {
-        scope.launch {
+        scope.launch(Dispatchers.Main.immediate) {
             if (model.finishEditor(save = save, discard = !save)) {
                 open = false
                 done = true
