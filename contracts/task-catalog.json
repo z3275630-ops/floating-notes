@@ -37,8 +37,13 @@
         "T01"
       ],
       "title": "原生编辑与键盘样例",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/3"
+      "status": "in_progress",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/3",
+      "branch": "feat/T03-native-input",
+      "owner": "Codex",
+      "evidence": [
+        "docs/quality/T03-validation.md"
+      ]
     },
     {
       "id": "T04",
