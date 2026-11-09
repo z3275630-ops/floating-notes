@@ -18,6 +18,8 @@
 
 - 薄荷绿主题、笔记侧栏和玻璃调整通过构建与 18 项 API 35 模拟器测试，[PR #48](https://github.com/z3275630-ops/floating-notes/pull/48)。见 [验证记录](docs/quality/mint-glass-validation.md) 与 [交接](docs/handoffs/2026-11-09-mint-glass.md)。
 
+- T09 已移植 Composables UI 的笔记菜单与引用筛选，构建和 18 项模拟器测试通过，已发 [v0.1.8-composables.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.8-composables.1)。见 [选型记录](docs/decisions/0011-composables-ui-source.md) 与 [交接](docs/handoffs/2026-11-09-composables-ui.md)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -50,6 +52,6 @@
 
 ## 验证记录
 
-最新集成构建源码 `fd97fb7`。[Android CI](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495)、[APK 归档](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495/artifacts/13660465236)、[录屏与测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495/artifacts/13659189891)。文档检查通过，计 69 Markdown、13 JSON、20 features、37 tasks。0.1.6 的 [GitHub 预发布](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.6-alpha.1) 提供之前的 Android 调试 APK。
+最新集成构建源码 `d100102`。[Android CI](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221)、[APK 归档](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221/artifacts/13687622074)、[录屏与测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221/artifacts/13688141493)。文档检查通过，计 71 Markdown、13 JSON、20 features、37 tasks。
 
-开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。当前集成分支 feat/T09-mint-glass-navigation，PR #48。
+开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。当前集成分支 feat/T09-composables-ui，PR #49。
