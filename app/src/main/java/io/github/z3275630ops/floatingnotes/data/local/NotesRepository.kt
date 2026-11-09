@@ -14,6 +14,7 @@ internal class EmptyNoteException : IllegalArgumentException("The note is blank"
 internal class NotesRepository(private val database: NotesDatabase) {
     private val dao = database.notes()
     val notes = dao.observeNotes()
+    val captureDrafts = dao.observeCaptureDrafts()
 
     suspend fun loadNote(id: String): NoteEntity? = dao.note(id)
     suspend fun loadDraft(slot: String): DraftEntity? = dao.draft(slot)

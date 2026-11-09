@@ -48,19 +48,22 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
     val backdrop = rememberGlassBackdrop()
     var page by rememberSaveable { mutableStateOf(Page.Record) }
     var requestedNoteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var requestedCaptureSlot by rememberSaveable { mutableStateOf<String?>(null) }
     var open by rememberSaveable { mutableStateOf(false) }
     var showArchive by rememberSaveable { mutableStateOf(false) }
     val notes by model.notes.collectAsStateWithLifecycle()
+    val captures by model.captureDrafts.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val motion = remember { CaptureMotion(scope, open) }
     var samples by remember { mutableStateOf(emptyList<String>()) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
 
-    fun launchEditor(noteId: String? = null) {
+    fun launchEditor(noteId: String? = null, captureSlot: String? = null) {
         scope.launch(Dispatchers.Main.immediate) {
-            if (model.openNote(noteId)) {
+            if (model.openNote(noteId, captureSlot)) {
                 requestedNoteId = noteId
+                requestedCaptureSlot = captureSlot
                 open = true
                 motion.settle(true)
             }
@@ -68,7 +71,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
     }
 
     LaunchedEffect(Unit) {
-        if (open && !model.openNote(requestedNoteId)) {
+        if (open && !model.openNote(requestedNoteId, requestedCaptureSlot)) {
             open = false
             motion.settle(false)
         }
@@ -80,6 +83,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                 keyboard?.hide()
                 focus.clearFocus()
                 requestedNoteId = null
+                requestedCaptureSlot = null
                 open = false
                 if (velocity == null) motion.settle(false) else motion.settle(false, velocity)
             } else if (open) {
@@ -122,6 +126,12 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                 }
                                 model.error?.let { Text(it, color = scheme.error) }
                                 DebugSampleAction { samples = it }
+                            }
+                            if (!showArchive) items(captures, key = { it.id }) { draft ->
+                                TextButton(onClick = { launchEditor(captureSlot = draft.slot) }) {
+                                    Text("继续收集草稿" + (draft.sourceUrl?.let { " · $it" } ?: ""),
+                                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
                             }
                             items(notes.filter { (it.archivedAt != null) == showArchive }, key = { it.id }) { note ->
                                 NoteCard(note, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) })

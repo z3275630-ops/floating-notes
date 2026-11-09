@@ -78,6 +78,9 @@ internal interface NotesDao {
     @Query("SELECT * FROM drafts WHERE slot = :slot")
     suspend fun draft(slot: String): DraftEntity?
 
+    @Query("SELECT * FROM drafts WHERE source_type = 'share' ORDER BY updated_at DESC")
+    fun observeCaptureDrafts(): Flow<List<DraftEntity>>
+
     @Upsert suspend fun putDraft(draft: DraftEntity)
 
     @Query("DELETE FROM drafts WHERE id = :id AND edit_seq <= :throughSeq")

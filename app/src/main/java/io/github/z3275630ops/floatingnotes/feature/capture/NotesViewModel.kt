@@ -52,6 +52,8 @@ internal class EditorSession(val draft: DraftEntity, document: NoteDocument, val
     }
 }
 
+internal enum class IncomingCapture { Opened, AlreadySaved, Failed }
+
 internal class NotesViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = NotesRepository(NotesDatabase.open(application))
     var editor by mutableStateOf<EditorSession?>(null)
@@ -65,20 +67,26 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         emit(emptyList())
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val captureDrafts = repository.captureDrafts.catch {
+        error = "无法读取跨应用草稿"
+        emit(emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private var watcher: Job? = null
     private var stopCheckpoint: Job? = null
 
-    suspend fun openNote(noteId: String? = null): Boolean {
+    suspend fun openNote(noteId: String? = null, captureSlot: String? = null): Boolean {
         if (editor != null) return true
         if (opening) return false
         opening = true
         return try {
-            val slot = noteId?.let { "note:$it" } ?: "manual"
+            val slot = captureSlot ?: noteId?.let { "note:$it" } ?: "manual"
             val note = noteId?.let {
                 repository.loadNote(it)?.takeIf { item -> item.deletedAt == null }
                     ?: throw IllegalStateException("Missing note")
             }
-            val draft = repository.loadDraft(slot) ?: repository.newDraft(slot, note)
+            val draft = repository.loadDraft(slot) ?: if (captureSlot == null) repository.newDraft(slot, note)
+                else throw IllegalStateException("Missing capture draft")
             startEditor(draft, note != null)
             error = null
             true
@@ -89,6 +97,44 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             false
         } finally {
             opening = false
+        }
+    }
+
+    suspend fun openIncomingCapture(id: String, body: String, sourceUrl: String?): IncomingCapture {
+        if (editor?.draft?.id == id) return IncomingCapture.Opened
+        return try {
+            if (repository.loadNote(id) != null) return IncomingCapture.AlreadySaved
+            val slot = "capture:$id"
+            val restored = repository.loadDraft(slot)
+            val draft = restored ?: repository.newDraft(slot).copy(
+                id = id,
+                noteId = id,
+                documentJson = withContext(Dispatchers.Default) {
+                    NoteDocument(listOf(NoteBlock.paragraph(body))).encode()
+                },
+                editSeq = 1,
+                sourceType = "share",
+                sourceUrl = sourceUrl,
+            )
+            val checkpointed = try {
+                repository.checkpoint(draft)
+                true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            startEditor(draft, existingNote = false)
+            editor?.status = when {
+                !checkpointed -> "草稿写入失败，正文仍保留。可重试保存。"
+                restored != null -> "草稿已恢复"
+                else -> "草稿已存到本机"
+            }
+            IncomingCapture.Opened
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            IncomingCapture.Failed
         }
     }
 

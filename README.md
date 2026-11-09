@@ -4,7 +4,9 @@
 
 **液态玻璃、柔和渐变、动画跟手感属于发布要求。功能完整与视觉质量必须同时验收。**
 
-当前为 **v3.1 工程设计与协作基线**，已准备详细文档、契约样例、任务拆分和文档检查。Android 工程已开始 T01 原生启动，构建结果见 [实际验证](docs/quality/T01-validation.md)；本地记录与服务端尚未实现，没有已通过的真机性能报告。
+当前为 **v3.1 工程设计与协作基线**，已准备详细文档、契约样例、任务拆分和文档检查。Android 原生开发包已构建，包含本地记录、玻璃输入面板和系统文字收集。构建、模拟器用例和未测项见 [项目状态](STATUS.md)。服务端尚未实现，真机性能待测。
+
+[0.1.6 Android 开发包与测试](https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905)。安装归档内的 debug/app-debug.apk。
 
 仓库：[z3275630-ops/floating-notes](https://github.com/z3275630-ops/floating-notes) · [开发任务](https://github.com/z3275630-ops/floating-notes/issues) · [自动检查](https://github.com/z3275630-ops/floating-notes/actions)
 
@@ -14,7 +16,7 @@
 - [首个 APK 垂直切片](docs/delivery/first-apk-vertical-slice.md)：按 T01/T02/T03/T04/T07/T08 的依赖先做本地记录闭环。
 - [ADR 0008：渐进式端侧检索](docs/decisions/0008-progressive-local-ai.md)（proposed）；[ADR 0009：公开仓库边界](docs/decisions/0009-public-repository-private-data.md)（accepted）。
 
-**当前产品规格为 v3.1，沿用 v3.0 完整功能与数据 schema。新增任务 T35–T37 和用例 Q091–Q102 均待实现/执行。**
+**当前产品规格为 v3.1，沿用 v3.0 完整功能与数据 schema。T35 已接入系统文字收集。T36/T37 及其用例按依赖继续。**
 
 开发从 [下一位 Agent 开工说明](docs/delivery/next-agent.md) 开始；新增交互按 [实施合同](docs/features/evolution-v31.md) 验收。
 
@@ -40,7 +42,7 @@
 - 可选服务端使用 Python / FastAPI、PostgreSQL 与 pgvector、S3 兼容附件存储。同步与云端 AI 明确开关；纯本地模式不会伪装成具备全天候任务。
 - 工作名为“浮记”；应用标识暂定 `io.github.z3275630ops.floatingnotes`。首次分发可安装版本前冻结标识和签名策略。
 
-## 本仓库现在能运行什么
+## 构建与验证
 
 需要 Python 3.11 或更新版本，执行：
 
@@ -48,7 +50,7 @@
 python3 scripts/check_docs.py
 ```
 
-该命令检查文档内部文件链接、JSON 契约、功能映射和示例的关键一致性。它不构建 Android，不代表 UI、AI 或性能已实现。Android 构建命令在 M0 完成可运行工程后写入开发指南。
+该命令检查文档内部文件链接、JSON 契约、功能映射和示例的关键一致性。它不构建 Android，不代表 UI、AI 或性能已实现。Android 安装包和模拟器用例通过 CI 构建，具体命令见文末构建说明。
 
 所有样例均为虚构测试数据。仓库不含账户密钥、用户真实笔记、签名文件或生产部署。当前未授予开源许可证；公开与开源授权由所有者另行决定。
 

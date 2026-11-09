@@ -13,7 +13,7 @@
       "id": "F01",
       "name": "快速记录",
       "milestone": "M1",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/capture-editor.md",
       "screens": [
         "S01",
@@ -29,7 +29,10 @@
         "Q093",
         "Q094"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/quality/T08-validation.md",
+        "docs/quality/T35-validation.md"
+      ]
     },
     {
       "id": "F02",
@@ -313,7 +316,7 @@
       "id": "F18",
       "name": "桌面组件与分享",
       "milestone": "M4",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/map-library-integrations.md",
       "screens": [
         "S19",
@@ -329,7 +332,10 @@
         "Q093",
         "Q094"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/quality/T02-validation.md",
+        "docs/quality/T35-validation.md"
+      ]
     },
     {
       "id": "F19",
@@ -352,7 +358,7 @@
       "id": "F20",
       "name": "长文、清单、待办与提醒",
       "milestone": "M1",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/capture-editor.md",
       "screens": [
         "S03",
@@ -364,7 +370,10 @@
         "Q062",
         "Q063"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/quality/T07-validation.md",
+        "docs/quality/T08-validation.md"
+      ]
     }
   ]
 }

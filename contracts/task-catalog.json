@@ -60,7 +60,8 @@
       "branch": "feat/T04-navigation-motion",
       "owner": "Codex",
       "evidence": [
-        "docs/quality/T04-validation.md"
+        "docs/quality/T04-validation.md",
+        "https://github.com/z3275630-ops/floating-notes/actions/runs/42545058280"
       ]
     },
     {
@@ -412,8 +413,14 @@
         "T08"
       ],
       "title": "跨应用文本收集",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/37"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/37",
+      "branch": "feat/T35-cross-app-capture",
+      "owner": "Codex",
+      "evidence": [
+        "docs/quality/T35-validation.md",
+        "https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905"
+      ]
     },
     {
       "id": "T36",
