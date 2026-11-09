@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.room)
 }
 android {
     namespace = "io.github.z3275630ops.floatingnotes"
@@ -42,8 +43,8 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
 }
-kapt {
-    arguments { arg("room.schemaLocation", layout.projectDirectory.dir("schemas").asFile.absolutePath) }
+room {
+    schemaDirectory(layout.projectDirectory.dir("schemas").asFile.absolutePath)
 }
 dependencies {
     implementation(libs.room.runtime)

@@ -26,7 +26,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - run: python3 scripts/check_docs.py
-      - run: ./gradlew --no-daemon assembleDebug assembleRelease assembleBenchmark lintDebug testDebugUnitTest assembleDebugAndroidTest
+      - run: ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease assembleBenchmark lintDebug testDebugUnitTest assembleDebugAndroidTest
       - name: Package identity and checksums
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk
