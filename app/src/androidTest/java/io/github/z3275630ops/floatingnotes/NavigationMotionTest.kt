@@ -16,7 +16,7 @@ class NavigationMotionTest {
         compose.onNodeWithTag("new-note").performClick()
         compose.onNodeWithTag("capture-editor").performClick().performTextInput("留下这段草稿")
         compose.onNodeWithTag("capture-handle").performTouchInput {
-            swipe(center, center + Offset(0f, 800f), durationMillis = 350)
+            swipe(center, center + Offset(0f, 460f), durationMillis = 350)
         }
         compose.onNodeWithTag("new-note").assertIsDisplayed().performClick()
         compose.onNodeWithTag("capture-editor").assertTextEquals("留下这段草稿")
