@@ -27,7 +27,7 @@ class NotesRepositoryTest {
         try {
             NotesRepository(first).checkpoint(draft)
             first.close()
-            Room.databaseBuilder(context, NotesDatabase::class.java, file).build().use { second ->
+            Room.databaseBuilder(context, NotesDatabase::class.java, file).build().withClose { second ->
                 val repository = NotesRepository(second)
                 assertEquals(draft, repository.loadDraft("manual"))
                 val note = repository.commit(draft)
@@ -48,7 +48,7 @@ class NotesRepositoryTest {
     @Test fun outboxFailureRollsBackNoteAndKeepsDraft() = runBlocking {
         Room.inMemoryDatabaseBuilder(
             ApplicationProvider.getApplicationContext(), NotesDatabase::class.java,
-        ).build().use { db ->
+        ).build().withClose { db ->
             val repository = NotesRepository(db)
             val draft = repository.newDraft("manual").copy(
                 editSeq = 1, documentJson = NoteDocument(listOf(NoteBlock.paragraph("保留原文"))).encode(),
@@ -71,7 +71,7 @@ class NotesRepositoryTest {
     @Test fun delayedCheckpointCannotOverwriteNewerText() = runBlocking {
         Room.inMemoryDatabaseBuilder(
             ApplicationProvider.getApplicationContext(), NotesDatabase::class.java,
-        ).build().use { db ->
+        ).build().withClose { db ->
             val repository = NotesRepository(db)
             val block = NoteBlock.paragraph("旧文字")
             val draft = repository.newDraft("manual").copy(
@@ -88,3 +88,6 @@ class NotesRepositoryTest {
         Unit
     }
 }
+
+private inline fun <T> NotesDatabase.withClose(block: (NotesDatabase) -> T): T =
+    try { block(this) } finally { close() }
