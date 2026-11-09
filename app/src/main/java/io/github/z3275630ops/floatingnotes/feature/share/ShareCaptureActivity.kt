@@ -94,7 +94,11 @@ private fun SharePreview(
     }
 
     Surface(color = scheme.background) {
-        Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+        Box(
+            Modifier.fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .navigationBarsPadding(),
+        ) {
             Box(
                 Modifier.fillMaxSize().glassSource(backdrop)
                     .background(Brush.verticalGradient(listOf(scheme.primary.copy(alpha = .2f), scheme.background))),
@@ -105,14 +109,16 @@ private fun SharePreview(
                     Text("跨应用收集", Modifier.padding(24.dp), style = MaterialTheme.typography.headlineSmall)
                 }
             }
-            CaptureSheet(motion, open, backdrop, dark, { end(false) }, { end(false, it) }, { open = true },
-                title = "收集到浮记", dismissLabel = "取消") {
-                model.editor?.let { session ->
-                    session.draft.sourceUrl?.let {
-                        Text("来源链接 · $it", maxLines = 2, modifier = Modifier.padding(bottom = 8.dp),
-                            style = MaterialTheme.typography.labelMedium)
+            Box(Modifier.matchParentSize().imePadding()) {
+                CaptureSheet(motion, open, backdrop, dark, { end(false) }, { end(false, it) }, { open = true },
+                    title = "收集到浮记", dismissLabel = "取消") {
+                    model.editor?.let { session ->
+                        session.draft.sourceUrl?.let {
+                            Text("来源链接 · $it", maxLines = 2, modifier = Modifier.padding(bottom = 8.dp),
+                                style = MaterialTheme.typography.labelMedium)
+                        }
+                        NoteEditor(session, onSave = { end(true) }, onDiscard = { end(false) })
                     }
-                    NoteEditor(session, onSave = { end(true) }, onDiscard = { end(false) })
                 }
             }
         }

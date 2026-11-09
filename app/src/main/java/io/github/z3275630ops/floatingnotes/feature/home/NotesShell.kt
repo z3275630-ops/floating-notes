@@ -93,7 +93,9 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
 
     Surface(color = scheme.background) {
         Box(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
+            Modifier.fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .navigationBarsPadding(),
         ) {
             Box(
                 Modifier.fillMaxSize().glassSource(backdrop).background(ambient(dark))
@@ -149,57 +151,59 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                 }
             }
 
-            if (!motion.visible) {
-                Column(
-                    Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp)
-                        .fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    FloatingActionButton(
-                        onClick = { launchEditor() },
-                        modifier = Modifier.align(Alignment.End).testTag("new-note"),
-                        containerColor = scheme.primary,
-                        contentColor = scheme.onPrimary,
-                    ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
-                    GlassSurface(backdrop, GlassTier.Standard, dark, Modifier.fillMaxWidth()) {
-                        BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
-                            val tabWidth = maxWidth / Page.entries.size
-                            val position by animateDpAsState(
-                                tabWidth * page.ordinal,
-                                spring(dampingRatio = .85f, stiffness = 500f),
-                                label = "tab-selection",
-                            )
-                            Box(
-                                Modifier.offset { IntOffset(position.roundToPx(), 0) }.width(tabWidth).height(48.dp)
-                                    .background(scheme.primary.copy(alpha = .13f), RoundedCornerShape(24.dp)),
-                            )
-                            Row(Modifier.fillMaxWidth().selectableGroup()) {
-                                for (target in Page.entries) {
-                                    Box(
-                                        Modifier.weight(1f).heightIn(min = 48.dp)
-                                            .testTag("tab-${target.name}")
-                                            .selectable(page == target, role = Role.Tab) { page = target }
-                                            .padding(vertical = 8.dp),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Text(
-                                            target.label,
-                                            color = if (page == target) scheme.primary else scheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.labelLarge,
-                                        )
+            Box(Modifier.matchParentSize().imePadding()) {
+                if (!motion.visible) {
+                    Column(
+                        Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp)
+                            .fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        FloatingActionButton(
+                            onClick = { launchEditor() },
+                            modifier = Modifier.align(Alignment.End).testTag("new-note"),
+                            containerColor = scheme.primary,
+                            contentColor = scheme.onPrimary,
+                        ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
+                        GlassSurface(backdrop, GlassTier.Standard, dark, Modifier.fillMaxWidth()) {
+                            BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
+                                val tabWidth = maxWidth / Page.entries.size
+                                val position by animateDpAsState(
+                                    tabWidth * page.ordinal,
+                                    spring(dampingRatio = .85f, stiffness = 500f),
+                                    label = "tab-selection",
+                                )
+                                Box(
+                                    Modifier.offset { IntOffset(position.roundToPx(), 0) }.width(tabWidth).height(48.dp)
+                                        .background(scheme.primary.copy(alpha = .13f), RoundedCornerShape(24.dp)),
+                                )
+                                Row(Modifier.fillMaxWidth().selectableGroup()) {
+                                    for (target in Page.entries) {
+                                        Box(
+                                            Modifier.weight(1f).heightIn(min = 48.dp)
+                                                .testTag("tab-${target.name}")
+                                                .selectable(page == target, role = Role.Tab) { page = target }
+                                                .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                target.label,
+                                                color = if (page == target) scheme.primary else scheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.labelLarge,
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-            CaptureSheet(motion, open, backdrop, dark, { close() }, { close(it) }, { open = true }) {
-                val session = model.editor
-                if (session != null) {
-                    NoteEditor(session, { close(save = true) }, { close(discard = true) })
-                } else if (open) {
-                    CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+                CaptureSheet(motion, open, backdrop, dark, { close() }, { close(it) }, { open = true }) {
+                    val session = model.editor
+                    if (session != null) {
+                        NoteEditor(session, { close(save = true) }, { close(discard = true) })
+                    } else if (open) {
+                        CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+                    }
                 }
             }
         }

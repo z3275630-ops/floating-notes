@@ -15,7 +15,7 @@ class NavigationMotionTest {
         }
         compose.onNodeWithTag("new-note").performClick()
         waitForEditor()
-        compose.onNodeWithTag("capture-editor").performClick().performTextReplacement("留下这段草稿")
+        compose.onNodeWithTag("capture-editor").performTextReplacement("留下这段草稿")
         compose.onNodeWithTag("capture-handle").performTouchInput {
             swipe(center, center + Offset(0f, 460f), durationMillis = 350)
         }

@@ -45,7 +45,7 @@ class ShareCaptureTest {
             try {
                 await(hasTestTag("capture-editor"))
                 compose.onNodeWithText("来源链接 · $url").assertIsDisplayed()
-                compose.onNodeWithTag("capture-editor").performClick().performTextReplacement(text)
+                compose.onNodeWithTag("capture-editor").performTextReplacement(text)
                 scenario.recreate()
                 await(hasTestTag("capture-editor"))
                 compose.onNodeWithTag("capture-editor").assertTextEquals(text)
