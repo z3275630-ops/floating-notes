@@ -5,3 +5,5 @@
 Android 集成测试覆盖关闭并重新打开同一数据库、草稿恢复、重复保存、迟到写入、同事务 Outbox 失败回滚并重试。后者通过 SQLite 触发器注入，真实磁盘写满与系统强杀另测。首版没有旧 schema 迁移路径，构建导出的 v1 schema 将归档作为后续迁移基线。实际 Android CI 结果待补。
 
 首轮 CI 42542798438 的测试 APK 编译失败。RoomDatabase 不实现 Closeable，测试改为 try/finally 调用 close()，重新执行。
+
+多变体构建 42543240307 在 kaptBenchmarkKotlin 失败。将共享 schemaLocation 迁移至 Room Gradle 插件管理的变体输出，并开启失败堆栈，待重跑验证。
