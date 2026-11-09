@@ -6,6 +6,8 @@
 
 当前为 **v3.1 工程设计与协作基线**，已准备详细文档、契约样例、任务拆分和文档检查。Android 原生开发包已构建，包含本地记录、玻璃输入面板和系统文字收集。构建、模拟器用例和未测项见 [项目状态](STATUS.md)。服务端尚未实现，真机性能待测。
 
+[0.1.6 Android 开发包与测试](https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905)。安装归档内的 debug/app-debug.apk。
+
 仓库：[z3275630-ops/floating-notes](https://github.com/z3275630-ops/floating-notes) · [开发任务](https://github.com/z3275630-ops/floating-notes/issues) · [自动检查](https://github.com/z3275630-ops/floating-notes/actions)
 
 ## v3.1 已采纳的开发计划
@@ -14,7 +16,7 @@
 - [首个 APK 垂直切片](docs/delivery/first-apk-vertical-slice.md)：按 T01/T02/T03/T04/T07/T08 的依赖先做本地记录闭环。
 - [ADR 0008：渐进式端侧检索](docs/decisions/0008-progressive-local-ai.md)（proposed）；[ADR 0009：公开仓库边界](docs/decisions/0009-public-repository-private-data.md)（accepted）。
 
-**当前产品规格为 v3.1，沿用 v3.0 完整功能与数据 schema。新增任务 T35–T37 和用例 Q091–Q102 均待实现/执行。**
+**当前产品规格为 v3.1，沿用 v3.0 完整功能与数据 schema。T35 已接入系统文字收集。T36/T37 及其用例按依赖继续。**
 
 开发从 [下一位 Agent 开工说明](docs/delivery/next-agent.md) 开始；新增交互按 [实施合同](docs/features/evolution-v31.md) 验收。
 

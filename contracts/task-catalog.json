@@ -60,7 +60,8 @@
       "branch": "feat/T04-navigation-motion",
       "owner": "Codex",
       "evidence": [
-        "docs/quality/T04-validation.md"
+        "docs/quality/T04-validation.md",
+        "https://github.com/z3275630-ops/floating-notes/actions/runs/42545058280"
       ]
     },
     {
@@ -106,12 +107,13 @@
         "T04"
       ],
       "title": "记录编辑闭环",
-      "status": "in_progress",
+      "status": "implemented",
       "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/8",
       "branch": "feat/T08-local-recording",
       "owner": "Codex",
       "evidence": [
-        "docs/quality/T08-validation.md"
+        "docs/quality/T08-validation.md",
+        "https://github.com/z3275630-ops/floating-notes/actions/runs/42545680400"
       ]
     },
     {
@@ -411,12 +413,13 @@
         "T08"
       ],
       "title": "跨应用文本收集",
-      "status": "in_progress",
+      "status": "implemented",
       "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/37",
       "branch": "feat/T35-cross-app-capture",
       "owner": "Codex",
       "evidence": [
-        "docs/quality/T35-validation.md"
+        "docs/quality/T35-validation.md",
+        "https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905"
       ]
     },
     {
