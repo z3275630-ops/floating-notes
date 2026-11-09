@@ -2,6 +2,8 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.room)
 }
 android {
     namespace = "io.github.z3275630ops.floatingnotes"
@@ -10,8 +12,8 @@ android {
         applicationId = "io.github.z3275630ops.floatingnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3-t04"
+        versionCode = 5
+        versionName = "0.1.4-t07"
         buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -41,7 +43,12 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
 }
+room {
+    schemaDirectory(layout.projectDirectory.dir("schemas").asFile.absolutePath)
+}
 dependencies {
+    implementation(libs.room.runtime)
+    kapt(libs.room.compiler)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.foundation)
