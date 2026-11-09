@@ -14,9 +14,9 @@
 - T08 已通过新建、待办混排、保存重开和自动保存的 API35 验证。见 [验证](docs/quality/T08-validation.md) 和 [交接](docs/handoffs/2026-11-09-T08.md)。
 - T35 的签名 APK、系统分享和选区预览通过验证，联合回归 13 项全通过。见 [验证](docs/quality/T35-validation.md) 和 [交接](docs/handoffs/2026-11-09-T35.md)。
 
-- T09 已提交标签、笔记本、引用与 Room v2 迁移，构建与迁移证据见 [T09 验证](docs/quality/T09-validation.md) 和 [交接](docs/handoffs/2026-11-09-T09.md)。
+- T09 标签、笔记本、引用与 Room v2 迁移已通过构建和 16 项模拟器测试，[PR #47](https://github.com/z3275630-ops/floating-notes/pull/47)。验证证据见 [T09 验证](docs/quality/T09-validation.md) 和 [交接](docs/handoffs/2026-11-09-T09.md)。
 
-- 薄荷绿主题、笔记侧栏和玻璃调整已实现，见 [验证记录](docs/quality/mint-glass-validation.md) 与 [交接](docs/handoffs/2026-11-09-mint-glass.md)。
+- 薄荷绿主题、笔记侧栏和玻璃调整通过构建与 18 项 API 35 模拟器测试，[PR #48](https://github.com/z3275630-ops/floating-notes/pull/48)。见 [验证记录](docs/quality/mint-glass-validation.md) 与 [交接](docs/handoffs/2026-11-09-mint-glass.md)。
 
 ## 已完成
 
@@ -46,10 +46,10 @@
 
 ## 下一步
 
-[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。继续 T09 标签、笔记本与引用，按既定路线推进 T10–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
+[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐，按既定路线推进 T10–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
 
 ## 验证记录
 
-最新集成构建源码 `36335d3`。[Android CI](https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905)、[APK 归档](https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905/artifacts/13643766110)、[录屏与测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905/artifacts/13643930489)。本轮文档检查通过，计 65 Markdown、12 JSON、20 features、37 tasks。
+最新集成构建源码 `fd97fb7`。[Android CI](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495)、[APK 归档](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495/artifacts/13660465236)、[录屏与测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495/artifacts/13659189891)。文档检查通过，计 69 Markdown、13 JSON、20 features、37 tasks。0.1.6 的 [GitHub 预发布](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.6-alpha.1) 提供之前的 Android 调试 APK。
 
-开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。当前集成分支 feat/T35-cross-app-capture，PR #46。
+开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。当前集成分支 feat/T09-mint-glass-navigation，PR #48。
