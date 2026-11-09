@@ -9,3 +9,5 @@ CI 运行原生构建、lint、Room 集成测试和 UI 流程。端到端用例�
 源码 8e9e7ad 的 [CI 42543668016](https://github.com/z3275630-ops/floating-notes/actions/runs/42543668016) 三种构建、lint 与 APK 签名验证通过。API35 安装后跑到记录流程时模拟器失联，前 3 项通过，记录流程未取得有效结果。降低模拟器负载，输入面板仅在顶部 112dp 采样模糊，正文区使用稳定实底，保持玻璃边缘与原生跟手转场。修正后重跑。
 
 第二轮 [CI 42544355801](https://github.com/z3275630-ops/floating-notes/actions/runs/42544355801) 的 build 通过，模拟器仍在记录用例中失联。后续将背景采样源移出 IME 动画布局，键盘可见时面板使用稳定的实色渐变档。持久化 UI 流程使用 Compose 语义直接写文本，T03 保留独立的编辑与键盘测试。
+
+集成源码 `cbbab63` 的 [CI 42544982334](https://github.com/z3275630-ops/floating-notes/actions/runs/42544982334) 通过构建、lint 和签名。API35 安装后，LocalRecordingTest 的新建、混排、保存、重开与自动保存通过。联合测试中拖拽关闭回调在测试调度器下从 Room 线程恢复，焦点清理触发 CalledFromWrongThreadException。已显式把打开/关闭动作调度到主线程，等待重跑。
