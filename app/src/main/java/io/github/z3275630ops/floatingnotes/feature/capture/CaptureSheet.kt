@@ -120,6 +120,7 @@ internal fun BoxScope.CaptureSheet(
             .widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight(.82f)
             .onSizeChanged { panelHeight = it.height }
             .offset { IntOffset(0, ((1f - motion.progress) * (panelHeight + 32.dp.toPx())).roundToInt()) },
+        sampleTopHeight = 112.dp,
     ) {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             Box(
