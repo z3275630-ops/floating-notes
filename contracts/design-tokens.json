@@ -9,24 +9,28 @@
   },
   "colors": {
     "light": {
-      "canvas": "#F7F8FC",
-      "surface": "#FFFFFF",
-      "text": "#202431",
-      "secondary": "#596274",
-      "accent": "#6356D9"
+      "canvas": "#F4F8F2",
+      "surface": "#FAFDF9",
+      "text": "#182B21",
+      "secondary": "#435B4D",
+      "accent": "#126543"
     },
     "dark": {
-      "canvas": "#11131B",
-      "surface": "#1A1E2A",
-      "text": "#EEF1F8",
-      "secondary": "#AAB4C9",
-      "accent": "#B9AEFF"
+      "canvas": "#0D1914",
+      "surface": "#182720",
+      "text": "#E7F3EA",
+      "secondary": "#BED1C4",
+      "accent": "#95E5B9"
     },
     "ambient": [
-      "#E4DCFF",
-      "#D9ECFF",
-      "#DDF4ED"
-    ]
+      "#BFEBD4",
+      "#F4F8F2",
+      "#E0F3EB",
+      "#E7F2C7"
+    ],
+    "ambient_dark": ["#1E4538", "#0D1914", "#142C24", "#283920"],
+    "selected_light": ["#A4E7CD", "#D8F4B9"],
+    "selected_dark": ["#2B6B52", "#375633"]
   },
   "space": [
     4,
@@ -79,14 +83,17 @@
     },
     "G1": {
       "light_tint_alpha": 0.78,
-      "dark_tint_alpha": 0.84
+      "dark_tint_alpha": 0.84,
+      "blur_dp": 22
     },
     "G2": {
-      "light_tint_alpha": 0.62,
-      "dark_tint_alpha": 0.76,
-      "light_blur_dp": 20,
-      "dark_blur_dp": 24,
-      "refraction_max_dp": 2,
+      "light_tint_alpha": 0.58,
+      "dark_tint_alpha": 0.80,
+      "light_blur_dp": 16,
+      "dark_blur_dp": 16,
+      "refraction_max_dp": 4,
+      "refraction_band_dp": 15,
+      "rim_width_dp": 1,
       "foreground_blur": false
     },
     "tiers": [

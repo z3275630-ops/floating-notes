@@ -16,6 +16,8 @@
 
 - T09 标签、笔记本、引用与 Room v2 迁移已通过构建和 16 项模拟器测试，[PR #47](https://github.com/z3275630-ops/floating-notes/pull/47)。验证证据见 [T09 验证](docs/quality/T09-validation.md) 和 [交接](docs/handoffs/2026-11-09-T09.md)。
 
+- 薄荷绿主题、笔记侧栏和玻璃调整通过构建与 18 项 API 35 模拟器测试，[PR #48](https://github.com/z3275630-ops/floating-notes/pull/48)。见 [验证记录](docs/quality/mint-glass-validation.md) 与 [交接](docs/handoffs/2026-11-09-mint-glass.md)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -48,6 +50,6 @@
 
 ## 验证记录
 
-最新集成构建源码 `36335d3`。[Android CI](https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905)、[APK 归档](https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905/artifacts/13643766110)、[录屏与测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42545683905/artifacts/13643930489)。本轮文档检查通过，计 65 Markdown、12 JSON、20 features、37 tasks。
+最新集成构建源码 `fd97fb7`。[Android CI](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495)、[APK 归档](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495/artifacts/13660465236)、[录屏与测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42587316495/artifacts/13659189891)。文档检查通过，计 69 Markdown、13 JSON、20 features、37 tasks。0.1.6 的 [GitHub 预发布](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.6-alpha.1) 提供之前的 Android 调试 APK。
 
-开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。当前集成分支 feat/T35-cross-app-capture，PR #46。
+开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。当前集成分支 feat/T09-mint-glass-navigation，PR #48。

@@ -1,5 +1,6 @@
 package io.github.z3275630ops.floatingnotes.feature.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
@@ -16,13 +17,14 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.DebugSampleAction
@@ -42,6 +44,7 @@ private enum class Page(val label: String) {
     Record("记录"), Explore("探索"), Agent("Agent"), Library("笔记库"),
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> Unit) {
     val dark = isSystemInDarkTheme()
@@ -69,6 +72,8 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
     val notebookMatches = notebookNotes.filter { it.notebookId == selectedNotebook }.mapTo(hashSetOf()) { it.noteId }
     val scope = rememberCoroutineScope()
     val motion = remember { CaptureMotion(scope, open) }
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
     var samples by remember { mutableStateOf(emptyList<String>()) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
@@ -112,15 +117,42 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
             notebookNotes.firstOrNull { it.noteId == id }?.notebookId, organization) { organizeNote = null }
     }
 
-    Surface(color = scheme.background) {
+    ModalNavigationDrawer(
+        drawerState = drawer,
+        gesturesEnabled = !motion.visible,
+        scrimColor = Color(0xFF0D2118).copy(alpha = if (dark) .50f else .28f),
+        drawerContent = {
+            NotesDrawer(
+                backdrop, dark,
+                total = notes.count { it.archivedAt == null },
+                archived = notes.count { it.archivedAt != null },
+                archiveSelected = page == Page.Record && showArchive,
+                allSelected = page == Page.Record && !showArchive,
+                tags = tags, notebooks = notebooks,
+                filter = if (page == Page.Library) LibraryFilter(selectedTag, selectedNotebook, descendants) else LibraryFilter(),
+                onRecord = { archive ->
+                    showArchive = archive
+                    page = Page.Record
+                    scope.launch { drawer.close() }
+                },
+                onLibrary = { filter ->
+                    selectedTag = filter.tag
+                    selectedNotebook = filter.notebook
+                    descendants = filter.descendants
+                    page = Page.Library
+                    scope.launch { drawer.close() }
+                },
+            )
+        },
+    ) {
         Box(
-            Modifier.fillMaxSize()
+            Modifier.fillMaxSize().background(scheme.background)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                 .navigationBarsPadding(),
         ) {
             Box(
-                Modifier.fillMaxSize().glassSource(backdrop).background(ambient(dark))
-                    .then(if (motion.visible) Modifier.clearAndSetSemantics { } else Modifier),
+                Modifier.fillMaxSize().glassSource(backdrop).background(mintAmbient(dark))
+                    .then(if (motion.visible || drawer.isOpen) Modifier.clearAndSetSemantics { } else Modifier),
             ) {
                 Crossfade(page, label = "home-page") { current ->
                     LazyColumn(
@@ -129,10 +161,18 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         item {
-                            Text(
-                                if (current == Page.Record) "浮记" else current.label,
-                                style = MaterialTheme.typography.headlineLarge,
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedIconButton(
+                                    onClick = { scope.launch { drawer.open() } },
+                                    modifier = Modifier.testTag("open-notes-drawer")
+                                        .semantics { contentDescription = "打开笔记导航" },
+                                ) { Text("☰", style = MaterialTheme.typography.titleMedium) }
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    if (current == Page.Record) if (showArchive) "归档" else "浮记" else current.label,
+                                    style = MaterialTheme.typography.headlineLarge,
+                                )
+                            }
                         }
                         if (current == Page.Record) {
                             item {
@@ -141,9 +181,6 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                     color = scheme.onSurfaceVariant,
                                 )
                                 Row(content = labs)
-                                TextButton(onClick = { showArchive = !showArchive }) {
-                                    Text(if (showArchive) "返回记录" else "查看归档")
-                                }
                                 model.error?.let { Text(it, color = scheme.error) }
                                 DebugSampleAction { samples = it }
                             }
@@ -190,19 +227,19 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
             }
 
             Box(Modifier.matchParentSize().imePadding()) {
-                if (!motion.visible) {
+                if (!motion.visible && !drawer.isOpen) {
                     Column(
                         Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp)
                             .fillMaxWidth().padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        FloatingActionButton(
+                        ExtendedFloatingActionButton(
                             onClick = { launchEditor() },
                             modifier = Modifier.align(Alignment.End).testTag("new-note"),
-                            containerColor = scheme.primary,
-                            contentColor = scheme.onPrimary,
-                        ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
-                        GlassSurface(backdrop, GlassTier.Standard, dark, Modifier.fillMaxWidth()) {
+                            containerColor = scheme.primaryContainer,
+                            contentColor = scheme.onPrimaryContainer,
+                        ) { Text("＋ 快速记录", style = MaterialTheme.typography.labelLarge) }
+                        GlassSurface(backdrop, GlassTier.Enhanced, dark, Modifier.fillMaxWidth()) {
                             BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
                                 val tabWidth = maxWidth / Page.entries.size
                                 val position by animateDpAsState(
@@ -212,7 +249,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                 )
                                 Box(
                                     Modifier.offset { IntOffset(position.roundToPx(), 0) }.width(tabWidth).height(48.dp)
-                                        .background(scheme.primary.copy(alpha = .13f), RoundedCornerShape(24.dp)),
+                                        .background(mintHighlight(dark), RoundedCornerShape(24.dp)),
                                 )
                                 Row(Modifier.fillMaxWidth().selectableGroup()) {
                                     for (target in Page.entries) {
@@ -290,9 +327,3 @@ private fun NoteCard(note: NoteEntity, onOpen: () -> Unit, onPin: () -> Unit, on
         }
     }
 }
-
-private fun ambient(dark: Boolean) = Brush.verticalGradient(if (dark) listOf(
-    Color(0xFF28233F), Color(0xFF11131B), Color(0xFF19312E),
-) else listOf(
-    Color(0xFFE4DCFF), Color(0xFFF7F8FC), Color(0xFFD9ECFF), Color(0xFFDDF4ED),
-))
