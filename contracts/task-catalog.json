@@ -22,8 +22,13 @@
         "T01"
       ],
       "title": "玻璃材质与帧预算样例",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/2"
+      "status": "in_progress",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/2",
+      "branch": "feat/T02-native-material-lab",
+      "owner": "Codex",
+      "evidence": [
+        "docs/quality/T02-validation.md"
+      ]
     },
     {
       "id": "T03",

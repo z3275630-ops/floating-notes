@@ -3,6 +3,9 @@ package io.github.z3275630ops.floatingnotes
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
+import io.github.z3275630ops.floatingnotes.feature.lab.MaterialLab
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -21,7 +24,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { FloatingNotesTheme { BootstrapScreen() } }
+        setContent {
+            var showMaterials by rememberSaveable { mutableStateOf(false) }
+            FloatingNotesTheme {
+                BackHandler(enabled = showMaterials) { showMaterials = false }
+                if (BuildConfig.MATERIAL_LAB && showMaterials) MaterialLab { showMaterials = false }
+                else BootstrapScreen(onMaterials = { showMaterials = true })
+            }
+        }
     }
 }
 
@@ -40,7 +50,7 @@ fun FloatingNotesTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun BootstrapScreen() {
+private fun BootstrapScreen(onMaterials: () -> Unit) {
     var samples by remember { mutableStateOf(emptyList<String>()) }
     val dark = isSystemInDarkTheme()
     val background = if (dark) listOf(Color(0xFF28233F), Color(0xFF11131B))
@@ -53,6 +63,7 @@ private fun BootstrapScreen() {
             Text("留住一闪而过的想法", style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(20.dp))
             Text(stringResource(R.string.prototype_notice), style = MaterialTheme.typography.labelLarge)
+            if (BuildConfig.MATERIAL_LAB) TextButton(onClick = onMaterials) { Text("材质实验") }
             DebugSampleAction { samples = it }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(vertical = 20.dp)) {

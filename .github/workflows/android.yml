@@ -61,9 +61,11 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: false
-          script: ./gradlew connectedDebugAndroidTest
+          script: bash scripts/android-smoke.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-instrumentation-${{ github.sha }}
-          path: app/build/reports/androidTests/
+          path: |
+            app/build/reports/androidTests/
+            artifacts/android-smoke/
