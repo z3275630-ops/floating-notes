@@ -29,6 +29,7 @@ import io.github.z3275630ops.floatingnotes.DebugSampleAction
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.text.style.TextOverflow
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
+import io.github.z3275630ops.floatingnotes.data.local.tagSubtree
 import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
 import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,19 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
     var showArchive by rememberSaveable { mutableStateOf(false) }
     val notes by model.notes.collectAsStateWithLifecycle()
     val captures by model.captureDrafts.collectAsStateWithLifecycle()
+    val organization = model.organization
+    val tags by organization.tags.collectAsStateWithLifecycle(emptyList())
+    val notebooks by organization.notebooks.collectAsStateWithLifecycle(emptyList())
+    val noteTags by organization.tagsByNote.collectAsStateWithLifecycle(emptyList())
+    val notebookNotes by organization.notebookNotes.collectAsStateWithLifecycle(emptyList())
+    val links by organization.links.collectAsStateWithLifecycle(emptyList())
+    var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedNotebook by rememberSaveable { mutableStateOf<String?>(null) }
+    var descendants by rememberSaveable { mutableStateOf(true) }
+    var organizeNote by rememberSaveable { mutableStateOf<String?>(null) }
+    val tagScope = selectedTag?.let { if (descendants) tagSubtree(tags, it) else setOf(it) }
+    val tagMatches = noteTags.filter { tagScope != null && it.tagId in tagScope }.mapTo(hashSetOf()) { it.noteId }
+    val notebookMatches = notebookNotes.filter { it.notebookId == selectedNotebook }.mapTo(hashSetOf()) { it.noteId }
     val scope = rememberCoroutineScope()
     val motion = remember { CaptureMotion(scope, open) }
     var samples by remember { mutableStateOf(emptyList<String>()) }
@@ -90,6 +104,12 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                 motion.settle(true)
             }
         }
+    }
+
+    organizeNote?.let { id ->
+        NoteOrganizationDialog(id, tags, notebooks,
+            noteTags.filter { it.noteId == id }.mapTo(hashSetOf()) { it.tagId },
+            notebookNotes.firstOrNull { it.noteId == id }?.notebookId, organization) { organizeNote = null }
     }
 
     Surface(color = scheme.background) {
@@ -134,7 +154,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                 }
                             }
                             items(notes.filter { (it.archivedAt != null) == showArchive }, key = { it.id }) { note ->
-                                NoteCard(note, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) })
+                                NoteCard(note, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
                             }
                             items(samples) { text ->
                                 Card(
@@ -144,6 +164,23 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                 ) {
                                     Text(text, Modifier.padding(20.dp), style = MaterialTheme.typography.bodyLarge)
                                 }
+                            }
+                        } else if (current == Page.Library) {
+                            item {
+                                OrganizationPanel(organization, tags, notebooks,
+                                    LibraryFilter(selectedTag, selectedNotebook, descendants)) {
+                                    selectedTag = it.tag
+                                    selectedNotebook = it.notebook
+                                    descendants = it.descendants
+                                }
+                            }
+                            val visible = notes.filter {
+                                it.archivedAt == null && (selectedTag == null || it.id in tagMatches) &&
+                                    (selectedNotebook == null || it.id in notebookMatches)
+                            }
+                            if (visible.isEmpty()) item { Text("此范围没有笔记") }
+                            items(visible, key = { it.id }) { note ->
+                                NoteCard(note, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
                             }
                         } else {
                             item { Text("页面原型，功能开发中。", color = scheme.onSurfaceVariant) }
@@ -201,7 +238,21 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                 CaptureSheet(motion, open, backdrop, dark, { close() }, { close(it) }, { open = true }) {
                     val session = model.editor
                     if (session != null) {
-                        NoteEditor(session, { close(save = true) }, { close(discard = true) })
+                        val sources = links.filter { it.targetId == session.draft.noteId }.mapTo(hashSetOf()) { it.sourceId }
+                        key(session.draft.id) {
+                            NoteEditor(session, { close(save = true) }, { close(discard = true) },
+                                notes, notes.filter { it.id in sources }) { id ->
+                                scope.launch(Dispatchers.Main.immediate) {
+                                    if (model.finishEditor() && model.openNote(id)) {
+                                        requestedNoteId = id
+                                        requestedCaptureSlot = null
+                                    } else if (model.editor == null) {
+                                        open = false
+                                        motion.settle(false)
+                                    }
+                                }
+                            }
+                        }
                     } else if (open) {
                         CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
                     }
@@ -212,7 +263,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
 }
 
 @Composable
-private fun NoteCard(note: NoteEntity, onOpen: () -> Unit, onPin: () -> Unit, onArchive: () -> Unit) {
+private fun NoteCard(note: NoteEntity, onOpen: () -> Unit, onPin: () -> Unit, onArchive: () -> Unit, onOrganize: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Card(
         onClick = onOpen,
@@ -229,6 +280,7 @@ private fun NoteCard(note: NoteEntity, onOpen: () -> Unit, onPin: () -> Unit, on
             Box {
                 TextButton(onClick = { menu = true }) { Text("更多") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("整理笔记") }, onClick = { menu = false; onOrganize() })
                     DropdownMenuItem(text = { Text(if (note.pinned) "取消置顶" else "置顶") },
                         onClick = { menu = false; onPin() })
                     DropdownMenuItem(text = { Text(if (note.archivedAt == null) "归档" else "取消归档") },

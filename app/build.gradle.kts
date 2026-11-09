@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.z3275630ops.floatingnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.1.6-t35"
+        versionCode = 8
+        versionName = "0.1.7-t09"
         buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -35,6 +35,7 @@ android {
             matchingFallbacks += "release"
         }
     }
+    sourceSets.getByName("androidTest").assets.srcDir("schemas")
     sourceSets.getByName("benchmark").java.srcDir("src/release/java")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

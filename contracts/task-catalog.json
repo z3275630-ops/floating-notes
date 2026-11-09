@@ -123,8 +123,13 @@
         "T07"
       ],
       "title": "标签、笔记本与引用",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/9"
+      "status": "in_progress",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/9",
+      "branch": "feat/T09-note-organization",
+      "owner": "Codex",
+      "evidence": [
+        "docs/quality/T09-validation.md"
+      ]
     },
     {
       "id": "T10",
