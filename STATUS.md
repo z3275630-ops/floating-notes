@@ -7,7 +7,7 @@
 - T01 工程启动已 verified（仅工程/安装范围），分支 `feat/T01-native-bootstrap`，源码 `8550e76`，[PR #40](https://github.com/z3275630-ops/floating-notes/pull/40)。
 - 原生 debug/release/benchmark、lint、测试 APK 编译通过；API35 模拟器安装启动与 1 项 Compose 测试通过。JVM 测试为 NO-SOURCE。
 - 产物、命令、失败修复与未测项见 [T01 报告](docs/quality/T01-validation.md)，交接见 [本轮记录](docs/handoffs/2026-11-08-T01.md)。
-- T02 已实现玻璃材质实验，CI 待验证，真机性能待测。见 [T02 验证记录](docs/quality/T02-validation.md) 与 [交接](docs/handoffs/2026-11-09-T02.md)。
+- T02 玻璃材质已通过构建和 2 项 API35 模拟器测试，真机性能待测。见 [T02 验证记录](docs/quality/T02-validation.md) 与 [交接](docs/handoffs/2026-11-09-T02.md)。
 - T03/T04/T07/T08/T35 待执行，F01–F20 仍为 planned。
 
 ## 已完成
