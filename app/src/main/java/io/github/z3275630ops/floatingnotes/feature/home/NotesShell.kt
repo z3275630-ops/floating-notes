@@ -11,8 +11,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -20,7 +18,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -29,6 +26,13 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.DebugSampleAction
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.text.style.TextOverflow
+import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
+import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
+import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureMotion
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.*
@@ -38,29 +42,57 @@ private enum class Page(val label: String) {
 }
 
 @Composable
-internal fun NotesShell(labs: @Composable RowScope.() -> Unit) {
+internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> Unit) {
     val dark = isSystemInDarkTheme()
     val scheme = MaterialTheme.colorScheme
     val backdrop = rememberGlassBackdrop()
     var page by rememberSaveable { mutableStateOf(Page.Record) }
+    var requestedNoteId by rememberSaveable { mutableStateOf<String?>(null) }
     var open by rememberSaveable { mutableStateOf(false) }
+    var showArchive by rememberSaveable { mutableStateOf(false) }
+    val notes by model.notes.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val motion = remember { CaptureMotion(scope, open) }
-    val draft = rememberTextFieldState()
     var samples by remember { mutableStateOf(emptyList<String>()) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
 
-    fun close(velocity: Float? = null) {
-        keyboard?.hide()
-        focus.clearFocus()
-        open = false
-        if (velocity == null) motion.settle(false) else motion.settle(false, velocity)
+    fun launchEditor(noteId: String? = null) {
+        scope.launch(Dispatchers.Main.immediate) {
+            if (model.openNote(noteId)) {
+                requestedNoteId = noteId
+                open = true
+                motion.settle(true)
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (open && !model.openNote(requestedNoteId)) {
+            open = false
+            motion.settle(false)
+        }
+    }
+
+    fun close(velocity: Float? = null, save: Boolean = false, discard: Boolean = false) {
+        scope.launch(Dispatchers.Main.immediate) {
+            if (model.finishEditor(save = save, discard = discard)) {
+                keyboard?.hide()
+                focus.clearFocus()
+                requestedNoteId = null
+                open = false
+                if (velocity == null) motion.settle(false) else motion.settle(false, velocity)
+            } else if (open) {
+                motion.settle(true)
+            }
+        }
     }
 
     Surface(color = scheme.background) {
         Box(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
+            Modifier.fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .navigationBarsPadding(),
         ) {
             Box(
                 Modifier.fillMaxSize().glassSource(backdrop).background(ambient(dark))
@@ -81,11 +113,18 @@ internal fun NotesShell(labs: @Composable RowScope.() -> Unit) {
                         if (current == Page.Record) {
                             item {
                                 Text(
-                                    if (samples.isEmpty()) "记下一件今天想留住的事。" else "合成记录",
+                                    if (notes.isEmpty()) "记下一件今天想留住的事。" else "留住今天的想法。",
                                     color = scheme.onSurfaceVariant,
                                 )
                                 Row(content = labs)
+                                TextButton(onClick = { showArchive = !showArchive }) {
+                                    Text(if (showArchive) "返回记录" else "查看归档")
+                                }
+                                model.error?.let { Text(it, color = scheme.error) }
                                 DebugSampleAction { samples = it }
+                            }
+                            items(notes.filter { (it.archivedAt != null) == showArchive }, key = { it.id }) { note ->
+                                NoteCard(note, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) })
                             }
                             items(samples) { text ->
                                 Card(
@@ -103,64 +142,88 @@ internal fun NotesShell(labs: @Composable RowScope.() -> Unit) {
                 }
             }
 
-            if (!motion.visible) {
-                Column(
-                    Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp)
-                        .fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    FloatingActionButton(
-                        onClick = { open = true; motion.settle(true) },
-                        modifier = Modifier.align(Alignment.End).testTag("new-note"),
-                        containerColor = scheme.primary,
-                        contentColor = scheme.onPrimary,
-                    ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
-                    GlassSurface(backdrop, GlassTier.Standard, dark, Modifier.fillMaxWidth()) {
-                        BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
-                            val tabWidth = maxWidth / Page.entries.size
-                            val position by animateDpAsState(
-                                tabWidth * page.ordinal,
-                                spring(dampingRatio = .85f, stiffness = 500f),
-                                label = "tab-selection",
-                            )
-                            Box(
-                                Modifier.offset { IntOffset(position.roundToPx(), 0) }.width(tabWidth).height(48.dp)
-                                    .background(scheme.primary.copy(alpha = .13f), RoundedCornerShape(24.dp)),
-                            )
-                            Row(Modifier.fillMaxWidth().selectableGroup()) {
-                                for (target in Page.entries) {
-                                    Box(
-                                        Modifier.weight(1f).heightIn(min = 48.dp)
-                                            .testTag("tab-${target.name}")
-                                            .selectable(page == target, role = Role.Tab) { page = target }
-                                            .padding(vertical = 8.dp),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Text(
-                                            target.label,
-                                            color = if (page == target) scheme.primary else scheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.labelLarge,
-                                        )
+            Box(Modifier.matchParentSize().imePadding()) {
+                if (!motion.visible) {
+                    Column(
+                        Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp)
+                            .fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        FloatingActionButton(
+                            onClick = { launchEditor() },
+                            modifier = Modifier.align(Alignment.End).testTag("new-note"),
+                            containerColor = scheme.primary,
+                            contentColor = scheme.onPrimary,
+                        ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
+                        GlassSurface(backdrop, GlassTier.Standard, dark, Modifier.fillMaxWidth()) {
+                            BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
+                                val tabWidth = maxWidth / Page.entries.size
+                                val position by animateDpAsState(
+                                    tabWidth * page.ordinal,
+                                    spring(dampingRatio = .85f, stiffness = 500f),
+                                    label = "tab-selection",
+                                )
+                                Box(
+                                    Modifier.offset { IntOffset(position.roundToPx(), 0) }.width(tabWidth).height(48.dp)
+                                        .background(scheme.primary.copy(alpha = .13f), RoundedCornerShape(24.dp)),
+                                )
+                                Row(Modifier.fillMaxWidth().selectableGroup()) {
+                                    for (target in Page.entries) {
+                                        Box(
+                                            Modifier.weight(1f).heightIn(min = 48.dp)
+                                                .testTag("tab-${target.name}")
+                                                .selectable(page == target, role = Role.Tab) { page = target }
+                                                .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                target.label,
+                                                color = if (page == target) scheme.primary else scheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.labelLarge,
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+                CaptureSheet(motion, open, backdrop, dark, { close() }, { close(it) }, { open = true }) {
+                    val session = model.editor
+                    if (session != null) {
+                        NoteEditor(session, { close(save = true) }, { close(discard = true) })
+                    } else if (open) {
+                        CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+                    }
+                }
             }
-            CaptureSheet(motion, open, backdrop, dark, { close() }, { close(it) }, { open = true }) {
-                BasicTextField(
-                    state = draft,
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)
-                        .testTag("capture-editor"),
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
-                    cursorBrush = SolidColor(scheme.primary),
-                )
-                Text(
-                    "输入面板原型 · 草稿保留在本次会话",
-                    Modifier.padding(vertical = 12.dp), color = scheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelMedium,
-                )
+        }
+    }
+}
+
+@Composable
+private fun NoteCard(note: NoteEntity, onOpen: () -> Unit, onPin: () -> Unit, onArchive: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Card(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth().testTag("saved-note"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                if (note.pinned) Text("已置顶", style = MaterialTheme.typography.labelMedium)
+                Text(note.searchText.ifBlank { "笔记" }, maxLines = 4, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyLarge)
+            }
+            Box {
+                TextButton(onClick = { menu = true }) { Text("更多") }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text(if (note.pinned) "取消置顶" else "置顶") },
+                        onClick = { menu = false; onPin() })
+                    DropdownMenuItem(text = { Text(if (note.archivedAt == null) "归档" else "取消归档") },
+                        onClick = { menu = false; onArchive() })
+                }
             }
         }
     }

@@ -106,8 +106,14 @@
         "T04"
       ],
       "title": "记录编辑闭环",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/8"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/8",
+      "branch": "feat/T08-local-recording",
+      "owner": "Codex",
+      "evidence": [
+        "docs/quality/T08-validation.md",
+        "https://github.com/z3275630-ops/floating-notes/actions/runs/42545680400"
+      ]
     },
     {
       "id": "T09",

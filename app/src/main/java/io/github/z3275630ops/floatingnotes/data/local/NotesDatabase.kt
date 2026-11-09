@@ -108,7 +108,11 @@ internal abstract class NotesDatabase : RoomDatabase() {
     abstract fun notes(): NotesDao
 
     companion object {
-        fun open(context: Context) =
-            Room.databaseBuilder(context.applicationContext, NotesDatabase::class.java, "floating-notes.db").build()
+        private var shared: NotesDatabase? = null
+
+        @Synchronized
+        fun open(context: Context): NotesDatabase = shared ?: Room.databaseBuilder(
+            context.applicationContext, NotesDatabase::class.java, "floating-notes.db",
+        ).build().also { shared = it }
     }
 }
