@@ -95,6 +95,8 @@ internal class NotesRepository(private val database: NotesDatabase) {
                 encoded.optString("due_date").ifBlank { null },
                 encoded.optString("occurrence_id").ifBlank { null })
         })
+        database.organization().clearLinks(updated.id)
+        database.organization().insertLinks(document.linksFrom(updated.id))
         dao.deleteDraft(draft.id, draft.editSeq)
         updated
     }

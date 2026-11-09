@@ -14,6 +14,8 @@
 - T08 已通过新建、待办混排、保存重开和自动保存的 API35 验证。见 [验证](docs/quality/T08-validation.md) 和 [交接](docs/handoffs/2026-11-09-T08.md)。
 - T35 的签名 APK、系统分享和选区预览通过验证，联合回归 13 项全通过。见 [验证](docs/quality/T35-validation.md) 和 [交接](docs/handoffs/2026-11-09-T35.md)。
 
+- T09 已提交标签、笔记本、引用与 Room v2 迁移，构建与迁移证据见 [T09 验证](docs/quality/T09-validation.md) 和 [交接](docs/handoffs/2026-11-09-T09.md)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。

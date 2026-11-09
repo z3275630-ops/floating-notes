@@ -11,6 +11,7 @@ import io.github.z3275630ops.floatingnotes.data.local.DraftEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotesDatabase
 import io.github.z3275630ops.floatingnotes.data.local.NotesRepository
+import io.github.z3275630ops.floatingnotes.data.local.OrganizationRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
@@ -23,6 +24,8 @@ internal class EditorBlock(private val original: NoteBlock) {
     val editable = original.editable
     val text = TextFieldState(original.text)
     var checked by mutableStateOf(original.checked)
+
+    val referenceTarget get() = original.referenceTarget
 
     fun documentBlock() = if (editable) original.copy(text = text.text.toString(), checked = checked) else original
 }
@@ -46,6 +49,18 @@ internal class EditorSession(val draft: DraftEntity, document: NoteDocument, val
         return sequence
     }
 
+    fun addReference(note: NoteEntity) {
+        if (writing || note.id == draft.noteId) return
+        blocks.add(EditorBlock(NoteBlock.reference(note.id, note.revision, referenceLabel(note))))
+        blocks.add(EditorBlock(NoteBlock.paragraph()))
+    }
+
+    fun removeReference(block: EditorBlock) {
+        if (writing || block.referenceTarget == null) return
+        blocks.remove(block)
+        if (blocks.isEmpty()) blocks.add(EditorBlock(NoteBlock.paragraph()))
+    }
+
     fun addCheckbox() {
         blocks.add(EditorBlock(NoteBlock.checkbox()))
         blocks.add(EditorBlock(NoteBlock.paragraph()))
@@ -55,7 +70,9 @@ internal class EditorSession(val draft: DraftEntity, document: NoteDocument, val
 internal enum class IncomingCapture { Opened, AlreadySaved, Failed }
 
 internal class NotesViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = NotesRepository(NotesDatabase.open(application))
+    private val database = NotesDatabase.open(application)
+    private val repository = NotesRepository(database)
+    val organization = OrganizationRepository(database)
     var editor by mutableStateOf<EditorSession?>(null)
         private set
     var error by mutableStateOf<String?>(null)

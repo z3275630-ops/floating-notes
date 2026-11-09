@@ -2,6 +2,9 @@ package io.github.z3275630ops.floatingnotes.data.local
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.AutoMigrationSpec
+import androidx.sqlite.db.SupportSQLiteDatabase
+import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "notes", indices = [Index("updated_at"), Index("archived_at")])
@@ -103,12 +106,15 @@ internal interface NotesDao {
 
 @Database(
     entities = [NoteEntity::class, DraftEntity::class, NoteVersionEntity::class,
-        TaskIndexEntity::class, OutboxEntity::class],
-    version = 1,
+        TaskIndexEntity::class, OutboxEntity::class, TagEntity::class, NotebookEntity::class,
+        NoteTagEntity::class, NotebookNoteEntity::class, NoteLinkEntity::class],
+    version = 2,
+    autoMigrations = [AutoMigration(from = 1, to = 2, spec = LinkBackfill::class)],
     exportSchema = true,
 )
 internal abstract class NotesDatabase : RoomDatabase() {
     abstract fun notes(): NotesDao
+    abstract fun organization(): OrganizationDao
 
     companion object {
         private var shared: NotesDatabase? = null
@@ -117,5 +123,21 @@ internal abstract class NotesDatabase : RoomDatabase() {
         fun open(context: Context): NotesDatabase = shared ?: Room.databaseBuilder(
             context.applicationContext, NotesDatabase::class.java, "floating-notes.db",
         ).build().also { shared = it }
+    }
+}
+
+
+internal class LinkBackfill : AutoMigrationSpec {
+    override fun onPostMigrate(db: SupportSQLiteDatabase) {
+        db.query("SELECT id, document_json FROM notes").use { rows ->
+            while (rows.moveToNext()) {
+                val links = runCatching { NoteDocument.decode(rows.getString(1)).linksFrom(rows.getString(0)) }
+                    .getOrDefault(emptyList())
+                for (link in links) db.execSQL(
+                    "INSERT INTO note_links (sourceId, blockId, targetId, targetRevision) VALUES (?, ?, ?, ?)",
+                    arrayOf(link.sourceId, link.blockId, link.targetId, link.targetRevision),
+                )
+            }
+        }
     }
 }

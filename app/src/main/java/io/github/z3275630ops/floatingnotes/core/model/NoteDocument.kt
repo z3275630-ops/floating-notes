@@ -11,6 +11,12 @@ data class NoteBlock internal constructor(
     val checked: Boolean,
     private val original: String?,
 ) {
+    val referenceTarget: String?
+        get() = if (type == "reference") original?.let { JSONObject(it).optString("target_note_id") }?.takeIf { it.isNotBlank() } else null
+
+    val referenceRevision: Long?
+        get() = if (type == "reference") original?.let { JSONObject(it).optLong("target_revision") }?.takeIf { it > 0 } else null
+
     val editable: Boolean
         get() = (type == "paragraph" || type == "checkbox") &&
             original?.let { (JSONObject(it).optJSONArray("marks")?.length() ?: 0) == 0 } != false
@@ -28,8 +34,13 @@ data class NoteBlock internal constructor(
     companion object {
         fun paragraph(text: String = "") = NoteBlock(newId(), "paragraph", text, false, null)
         fun checkbox(text: String = "") = NoteBlock(newId(), "checkbox", text, false, null)
+        fun reference(noteId: String, revision: Long, label: String): NoteBlock {
+            val id = newId()
+            return decode(JSONObject().put("id", id).put("type", "reference")
+                .put("target_note_id", noteId).put("target_revision", revision).put("label", label))
+        }
         internal fun decode(value: JSONObject) = NoteBlock(
-            value.getString("id"), value.getString("type"), value.optString("text"),
+            value.getString("id"), value.getString("type"), value.optString(if (value.optString("type") == "reference") "label" else "text"),
             value.optBoolean("checked"), value.toString(),
         )
     }

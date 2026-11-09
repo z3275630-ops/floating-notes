@@ -2,6 +2,8 @@ package io.github.z3275630ops.floatingnotes.feature.capture
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -14,15 +16,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 
 @Composable
 internal fun ColumnScope.NoteEditor(
     session: EditorSession,
     onSave: () -> Unit,
     onDiscard: () -> Unit,
+    notes: List<NoteEntity> = emptyList(),
+    backlinks: List<NoteEntity> = emptyList(),
+    onOpenRelated: ((String) -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     var confirmDiscard by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf<String?>(null) }
+    if (onOpenRelated != null && (notes.any { it.id != session.draft.noteId } || backlinks.isNotEmpty())) {
+        Row {
+            TextButton(onClick = { picker = "引用笔记" }, enabled = !session.writing) { Text("@ 引用") }
+            if (backlinks.isNotEmpty()) TextButton(onClick = { picker = "引用此笔记的记录" }) {
+                Text("反链 ${backlinks.size}")
+            }
+        }
+    }
     Column(
         Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
             .background(scheme.surface, RoundedCornerShape(20.dp)).padding(12.dp),
@@ -61,6 +76,14 @@ internal fun ColumnScope.NoteEditor(
                                 }
                             },
                         )
+                    } else if (block.referenceTarget != null && onOpenRelated != null) {
+                        val target = notes.firstOrNull { it.id == block.referenceTarget }
+                        TextButton(
+                            onClick = { target?.let { onOpenRelated(it.id) } },
+                            enabled = target != null && !session.writing,
+                            modifier = Modifier.weight(1f),
+                        ) { Text(target?.let(::referenceLabel) ?: "来源已删除或不可用") }
+                        TextButton(onClick = { session.removeReference(block) }, enabled = !session.writing) { Text("移除") }
                     } else {
                         Text(block.text.text.toString().ifBlank { "只读区块 · ${block.type}" })
                     }
@@ -86,6 +109,28 @@ internal fun ColumnScope.NoteEditor(
             enabled = !session.writing && session.document().hasContent,
         ) { Text("保存") }
     }
+    picker?.let { mode ->
+        var query by remember(mode) { mutableStateOf("") }
+        val candidates = if (mode == "引用笔记") notes.filter { it.id != session.draft.noteId } else backlinks
+        AlertDialog(
+            onDismissRequest = { picker = null },
+            title = { Text(mode) },
+            text = {
+                Column {
+                    OutlinedTextField(query, { query = it }, label = { Text("筛选笔记") }, singleLine = true)
+                    LazyColumn(Modifier.heightIn(max = 280.dp)) {
+                        items(candidates.filter { referenceLabel(it).contains(query, ignoreCase = true) }, key = { it.id }) { note ->
+                            TextButton(onClick = {
+                                picker = null
+                                if (mode == "引用笔记") session.addReference(note) else onOpenRelated?.invoke(note.id)
+                            }) { Text(referenceLabel(note)) }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { picker = null }) { Text("关闭") } },
+        )
+    }
     if (confirmDiscard) AlertDialog(
         onDismissRequest = { confirmDiscard = false },
         title = { Text("丢弃本次草稿？") },
@@ -96,3 +141,8 @@ internal fun ColumnScope.NoteEditor(
         dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") } },
     )
 }
+
+
+internal fun referenceLabel(note: NoteEntity): String = note.title?.takeIf(String::isNotBlank)
+    ?: note.searchText.lineSequence().firstOrNull { it.isNotBlank() }?.take(80)
+    ?: "无标题笔记"
