@@ -53,8 +53,13 @@
         "T03"
       ],
       "title": "四入口与动效原型",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/4"
+      "status": "in_progress",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/4",
+      "branch": "feat/T04-navigation-motion",
+      "owner": "Codex",
+      "evidence": [
+        "docs/quality/T04-validation.md"
+      ]
     },
     {
       "id": "T05",

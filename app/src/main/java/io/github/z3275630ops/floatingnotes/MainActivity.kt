@@ -7,19 +7,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.saveable.rememberSaveable
 import io.github.z3275630ops.floatingnotes.feature.lab.MaterialLab
 import io.github.z3275630ops.floatingnotes.feature.lab.InputLab
+import io.github.z3275630ops.floatingnotes.feature.home.NotesShell
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -32,7 +25,12 @@ class MainActivity : ComponentActivity() {
                 when (lab) {
                     Lab.Material -> MaterialLab { lab = null }
                     Lab.Input -> InputLab { lab = null }
-                    null -> BootstrapScreen(onLab = { lab = it })
+                    null -> NotesShell {
+                        if (BuildConfig.MATERIAL_LAB) {
+                            TextButton(onClick = { lab = Lab.Material }) { Text("材质实验") }
+                            TextButton(onClick = { lab = Lab.Input }) { Text("输入实验") }
+                        }
+                    }
                 }
             }
         }
@@ -54,34 +52,3 @@ fun FloatingNotesTheme(content: @Composable () -> Unit) {
 }
 
 private enum class Lab { Material, Input }
-
-@Composable
-private fun BootstrapScreen(onLab: (Lab) -> Unit) {
-    var samples by remember { mutableStateOf(emptyList<String>()) }
-    val dark = isSystemInDarkTheme()
-    val background = if (dark) listOf(Color(0xFF28233F), Color(0xFF11131B))
-        else listOf(Color(0xFFE4DCFF), Color(0xFFD9ECFF), Color(0xFFF7F8FC))
-    Surface {
-        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(background))
-            .safeDrawingPadding().padding(horizontal = 20.dp)) {
-            Spacer(Modifier.height(32.dp))
-            Text("浮记", style = MaterialTheme.typography.headlineLarge)
-            Text("留住一闪而过的想法", style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.prototype_notice), style = MaterialTheme.typography.labelLarge)
-            if (BuildConfig.MATERIAL_LAB) {
-                TextButton(onClick = { onLab(Lab.Material) }) { Text("材质实验") }
-                TextButton(onClick = { onLab(Lab.Input) }) { Text("输入实验") }
-            }
-            DebugSampleAction { samples = it }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(vertical = 20.dp)) {
-                items(samples) { text ->
-                    Card(Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
-                        Text(text, Modifier.padding(20.dp), style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        }
-    }
-}
