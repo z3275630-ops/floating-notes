@@ -54,6 +54,7 @@ internal class AttachmentStore(
     suspend fun import(
         uri: Uri,
         mimeHint: String? = null,
+        id: String = newId(),
         onProgress: suspend (Long, Long?) -> Unit = { _, _ -> },
     ): LocalAttachment = withContext(Dispatchers.IO) {
         if (uri.scheme != "content") throw AttachmentImportException("无法读取来源，请重新选择")
@@ -75,7 +76,8 @@ internal class AttachmentStore(
         if ((size ?: 0) > MAX_BYTES) throw AttachmentImportException("单个附件最多 100 MB")
         if (!root.isDirectory && !root.mkdirs()) throw IOException("Attachment directory unavailable")
         requireSpace(size ?: 0L)
-        val id = newId()
+        require(ID.matches(id))
+        find(id)?.let { return@withContext it }
         val stage = File(root, "$id.part")
         if (!stage.mkdir()) throw IOException("Cannot create staging directory")
         try {

@@ -1,6 +1,9 @@
 package io.github.z3275630ops.floatingnotes.feature.capture
 
 import android.app.Application
+import android.content.pm.PackageManager
+import androidx.core.content.FileProvider
+import java.io.File
 import android.net.Uri
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.*
@@ -8,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
+import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentImportException
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentKind
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
@@ -40,6 +44,13 @@ internal class EditorSession(val draft: DraftEntity, document: NoteDocument, val
     var status by mutableStateOf(if (draft.editSeq > 0) "草稿已恢复" else "")
     var writing by mutableStateOf(false)
     var closing = false
+    var recording by mutableStateOf(false)
+    var recordingPaused by mutableStateOf(false)
+    var recordingMillis by mutableLongStateOf(0L)
+    var voiceSaving by mutableStateOf(false)
+    var voicePending by mutableStateOf(false)
+    var voiceStatus by mutableStateOf<String?>(null)
+    val voiceBusy get() = recording || voiceSaving
     var importing by mutableStateOf(false)
     var importStatus by mutableStateOf<String?>(null)
     var importFailed by mutableStateOf(false)
@@ -108,6 +119,144 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     private var watcher: Job? = null
     private var stopCheckpoint: Job? = null
     private var importJob: Job? = null
+    private var voiceRecorder: VoiceRecorder? = null
+    private var voiceClock: Job? = null
+    private var foreground = false
+
+    fun onForeground() {
+        foreground = true
+    }
+
+    fun startRecording(session: EditorSession) = viewModelScope.launch {
+        if (editor !== session || session.writing || session.importing || session.voiceBusy || session.voicePending || session.closing) return@launch
+        val context = getApplication<Application>()
+        if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            session.voiceStatus = "允许麦克风权限后即可录音"
+            return@launch
+        }
+        session.voiceSaving = true
+        session.voiceStatus = "正在准备录音"
+        val directory = voiceDirectory(session)
+        val file = File(directory, "${newId()}.m4a")
+        val recorder = VoiceRecorder(context, file) {
+            stopRecording(session, "录音已中断，正在保存已录部分")
+        }
+        try {
+            val document = session.document()
+            val sequence = session.sequenceFor(document)
+            repository.checkpoint(encode(session, document, sequence))
+            session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
+            if (!foreground || editor !== session) {
+                session.voiceStatus = "已离开录音界面，未开启麦克风"
+                return@launch
+            }
+            recorder.start()
+            voiceRecorder = recorder
+            session.recording = true
+            session.recordingMillis = 0
+            session.recordingPaused = false
+            session.voiceStatus = null
+            voiceClock = viewModelScope.launch {
+                while (isActive) {
+                    val duration = recorder.duration()
+                    session.recordingMillis = duration
+                    if (duration >= VoiceRecorder.MAX_DURATION_MS) {
+                        stopRecording(session, "录音已达 10 分钟，正在保存")
+                        break
+                    }
+                    delay(250)
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            session.voiceStatus = "无法开始录音，请检查麦克风和本机存储后重试"
+        } finally {
+            session.voiceSaving = false
+        }
+    }
+
+    fun toggleRecordingPause(session: EditorSession) {
+        if (editor !== session) return
+        val recorder = voiceRecorder ?: return
+        try {
+            recorder.togglePause()
+            session.recordingPaused = recorder.paused
+        } catch (_: RuntimeException) {
+            stopRecording(session, "录音已中断，正在保存已录部分")
+        }
+    }
+
+    fun stopRecording(session: EditorSession, message: String = "正在保存录音") {
+        if (editor !== session) return
+        val recorder = voiceRecorder ?: return
+        voiceRecorder = null
+        voiceClock?.cancel()
+        session.recording = false
+        if (!recorder.stop() && recorder.file.length() == 0L) {
+            recorder.file.delete()
+            session.voiceStatus = "没有录到可保存的音频，请重试"
+            return
+        }
+        session.voiceStatus = message
+        saveRecording(session, recorder.file)
+    }
+
+    fun retryRecording(session: EditorSession) {
+        if (editor !== session || session.voiceBusy || session.writing) return
+        val file = pendingRecording(session) ?: return
+        saveRecording(session, file)
+    }
+
+    fun discardPendingRecording(session: EditorSession) {
+        if (editor !== session || session.voiceBusy || session.writing) return
+        val file = pendingRecording(session) ?: return
+        if (file.delete()) {
+            session.voicePending = false
+            session.voiceStatus = "已移除未保存的录音"
+        } else session.voiceStatus = "无法移除未保存的录音，请重试"
+    }
+
+    private fun saveRecording(session: EditorSession, file: File) {
+        session.voiceSaving = true
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                val id = file.nameWithoutExtension
+                if (session.blocks.none { it.attachmentId == id }) {
+                    val context = getApplication<Application>()
+                    val uri = FileProvider.getUriForFile(
+                        context, "${context.packageName}.attachments", file, "录音.m4a",
+                    )
+                    attachments.recover(database)
+                    val attachment = attachments.import(uri, "audio/mp4", id)
+                    addImportedBlock(session, NoteBlock.attachment("audio", attachment.id))
+                }
+                withContext(Dispatchers.IO) {
+                    if (file.delete()) file.parentFile?.delete()
+                }
+                session.voicePending = false
+                session.voiceStatus = "录音已存到草稿"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                session.voicePending = true
+                session.voiceStatus = "录音保留在本机 · ${AttachmentStore.failureMessage(error)}"
+            } finally {
+                session.voiceSaving = false
+            }
+        }
+    }
+
+    private fun voiceDirectory(session: EditorSession) =
+        File(getApplication<Application>().filesDir, "recordings/${session.draft.id}")
+
+    private fun pendingRecording(session: EditorSession): File? =
+        voiceDirectory(session).listFiles()?.firstOrNull { it.extension == "m4a" && it.isFile }
+
+    override fun onCleared() {
+        voiceRecorder?.stop()
+        super.onCleared()
+    }
 
     init {
         viewModelScope.launch {
@@ -122,7 +271,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun importAttachments(session: EditorSession, selected: List<Uri>, mimeHint: String? = null) {
-        if (selected.isEmpty() || editor !== session || session.writing || session.closing || session.importing) return
+        if (selected.isEmpty() || editor !== session || session.writing || session.closing || session.importing || session.voiceBusy) return
         if (selected.size > 10) {
             session.importFailed = true
             session.importStatus = "一次最多选择 10 个附件，请重新选择"
@@ -263,6 +412,10 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     private fun startEditor(draft: DraftEntity, existingNote: Boolean) {
         val session = EditorSession(draft, NoteDocument.decode(draft.documentJson), existingNote)
+        val pending = pendingRecording(session)
+        if (pending != null && session.blocks.any { it.attachmentId == pending.nameWithoutExtension }) pending.delete()
+        session.voicePending = pendingRecording(session) != null
+        if (session.voicePending) session.voiceStatus = "有一段本机录音待保存"
         editor = session
         watch(session)
     }
@@ -299,7 +452,15 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     suspend fun finishEditor(save: Boolean = false, discard: Boolean = false): Boolean {
         val session = editor ?: return true
-        if (session.closing) return false
+        if (session.closing || session.voiceSaving) return false
+        if (session.recording) {
+            stopRecording(session)
+            return false
+        }
+        if (session.voicePending) {
+            session.voiceStatus = "请先保存或移除待处理的录音"
+            return false
+        }
         session.closing = true
         session.writing = true
         return try {
@@ -339,7 +500,9 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun checkpointOnStop() {
+        foreground = false
         val session = editor ?: return
+        if (session.recording) stopRecording(session, "已离开录音界面，正在保存已录部分")
         if (session.writing) return
         val document = session.document()
         val sequence = session.sequenceFor(document)

@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.z3275630ops.floatingnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.1.9-attachments"
+        versionCode = 12
+        versionName = "0.1.10-voice"
         buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -48,6 +48,11 @@ class ShareCaptureActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onStart() {
+        super.onStart()
+        model.onForeground()
+    }
+
     override fun onStop() {
         model.checkpointOnStop()
         super.onStop()
@@ -109,9 +114,7 @@ private fun SharePreview(
 
     Surface(color = scheme.background) {
         Box(
-            Modifier.fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-                .navigationBarsPadding(),
+            Modifier.fillMaxSize(),
         ) {
             Box(
                 Modifier.fillMaxSize().glassSource(backdrop)
@@ -120,10 +123,12 @@ private fun SharePreview(
                 if (error != null) {
                     ShareMessage(requireNotNull(error), finish)
                 } else {
-                    Text("跨应用收集", Modifier.padding(24.dp), style = MaterialTheme.typography.headlineSmall)
+                    Text("跨应用收集", Modifier.statusBarsPadding().padding(24.dp), style = MaterialTheme.typography.headlineSmall)
                 }
             }
-            Box(Modifier.matchParentSize().imePadding()) {
+            Box(Modifier.matchParentSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .navigationBarsPadding().imePadding()) {
                 CaptureSheet(motion, open, backdrop, dark, { end(false) }, { end(false, it) }, { open = true },
                     title = "收集到浮记", dismissLabel = "取消") {
                     model.editor?.let { session ->

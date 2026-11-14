@@ -149,9 +149,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
         },
     ) {
         Box(
-            Modifier.fillMaxSize().background(scheme.background)
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-                .navigationBarsPadding(),
+            Modifier.fillMaxSize(),
         ) {
             Box(
                 Modifier.fillMaxSize().glassSource(backdrop).background(mintAmbient(dark))
@@ -159,7 +157,9 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
             ) {
                 Crossfade(page, label = "home-page") { current ->
                     LazyColumn(
-                        Modifier.fillMaxSize(),
+                        Modifier.fillMaxSize()
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                            .navigationBarsPadding(),
                         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 150.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
@@ -229,7 +229,9 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                 }
             }
 
-            Box(Modifier.matchParentSize().imePadding()) {
+            Box(Modifier.matchParentSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .navigationBarsPadding().imePadding()) {
                 if (!motion.visible && !drawer.isOpen) {
                     Column(
                         Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp)

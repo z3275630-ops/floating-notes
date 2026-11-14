@@ -19,6 +19,11 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.mintColorScheme
 class MainActivity : ComponentActivity() {
     private val notes by viewModels<NotesViewModel>()
 
+    override fun onStart() {
+        super.onStart()
+        notes.onForeground()
+    }
+
     override fun onStop() {
         notes.checkpointOnStop()
         super.onStop()

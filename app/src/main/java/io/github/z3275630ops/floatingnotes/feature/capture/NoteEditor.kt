@@ -1,5 +1,6 @@
 package io.github.z3275630ops.floatingnotes.feature.capture
 
+import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -33,6 +34,10 @@ internal fun ColumnScope.NoteEditor(
     onOpenRelated: ((String) -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val microphone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
+        if (allowed) model.startRecording(session)
+        else session.voiceStatus = "麦克风权限未开启，可在系统设置授权后重试"
+    }
     var confirmDiscard by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf<String?>(null) }
     val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
@@ -64,8 +69,12 @@ internal fun ColumnScope.NoteEditor(
         dismissButton = { TextButton(onClick = { showImport = false }) { Text("取消") } },
     )
     Row {
-        TextButton(onClick = { showImport = true }, enabled = !session.writing && !session.importing) {
+        TextButton(onClick = { showImport = true }, enabled = !session.writing && !session.importing && !session.voiceBusy) {
             Text(if (session.importFailed) "重新选择" else "附件")
+        }
+        if (!session.recording && !session.voicePending) {
+            TextButton(onClick = { microphone.launch(Manifest.permission.RECORD_AUDIO) },
+                enabled = !session.writing && !session.importing && !session.voiceBusy) { Text("录音") }
         }
         if (onOpenRelated != null && (notes.any { it.id != session.draft.noteId } || backlinks.isNotEmpty())) {
             TextButton(onClick = { picker = "引用笔记" }, enabled = !session.writing) { Text("@ 引用") }
@@ -73,6 +82,21 @@ internal fun ColumnScope.NoteEditor(
                 Text("反链 ${backlinks.size}")
             }
         }
+    }
+    if (session.recording) {
+        val seconds = session.recordingMillis / 1000
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("录音 · ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}", Modifier.weight(1f))
+            TextButton(onClick = { model.toggleRecordingPause(session) }) {
+                Text(if (session.recordingPaused) "继续" else "暂停")
+            }
+            TextButton(onClick = { model.stopRecording(session) }) { Text("停止并保存") }
+        }
+    }
+    session.voiceStatus?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
+    if (session.voicePending && !session.voiceBusy) Row {
+        TextButton(onClick = { model.retryRecording(session) }) { Text("重试保存") }
+        TextButton(onClick = { model.discardPendingRecording(session) }) { Text("移除待存录音") }
     }
     Column(
         Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
@@ -154,7 +178,7 @@ internal fun ColumnScope.NoteEditor(
         Spacer(Modifier.weight(1f))
         Button(
             onClick = onSave,
-            enabled = !session.writing && !session.importing && session.document().hasContent,
+            enabled = !session.writing && !session.importing && !session.voiceBusy && !session.voicePending && session.document().hasContent,
         ) { Text("保存") }
     }
     picker?.let { mode ->
