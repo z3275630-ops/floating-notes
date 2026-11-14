@@ -30,6 +30,8 @@
 
 - 原生玻璃样板与 T12 界面修复 `295110e` 已实现。弥散背景、悬浮底栏、胶囊快速记录和搜索弹层按 [视觉规范](docs/design/visual-system.md) 接入。见 [玻璃搜索预览](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.12-search.2)。
 
+- 笔记库入口改版 `216c26e` 已在荣耀 X10 验证。筛选条件和已保存搜索直接可见，低频管理操作收进菜单。见 [笔记库交接](docs/handoffs/2026-11-14-library-ux.md)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
