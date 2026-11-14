@@ -87,7 +87,7 @@ internal interface SearchDao {
     @RawQuery
     suspend fun search(query: SupportSQLiteQuery): List<NoteEntity>
 
-    @Query("SELECT * FROM saved_searches ORDER BY name COLLATE NOCASE, id")
+    @Query("SELECT * FROM saved_searches ORDER BY rowid DESC")
     fun saved(): Flow<List<SavedSearch>>
 
     @Insert suspend fun save(search: SavedSearch)

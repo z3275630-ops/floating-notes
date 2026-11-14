@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
@@ -92,9 +94,15 @@ internal fun LibrarySearchControls(
             }, trailingIcon = { Text("×", Modifier.semantics { contentDescription = "重置条件" }) },
                 shape = CircleShape)
         }
-        if (saved.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(saved, key = { it.id }) { item ->
-                SuggestionChip(onClick = { restore(item) }, label = { Text(item.name) }, shape = CircleShape)
+        if (saved.isNotEmpty()) {
+            val shortcuts = rememberLazyListState()
+            LaunchedEffect(saved.first().id) { shortcuts.scrollToItem(0) }
+            LazyRow(state = shortcuts, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(saved, key = { it.id }) { item ->
+                    SuggestionChip(onClick = { restore(item) }, label = {
+                        Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }, shape = CircleShape, modifier = Modifier.widthIn(max = 224.dp))
+                }
             }
         }
         if (dialog == null) error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
