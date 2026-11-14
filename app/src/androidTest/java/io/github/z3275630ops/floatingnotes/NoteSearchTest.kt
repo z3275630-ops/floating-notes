@@ -119,7 +119,7 @@ class NoteSearchTest {
                     val table = tables.getJSONObject(i)
                     val nameInSchema = table.getString("tableName")
                     old.execSQL(table.getString("createSql").replace("\${TABLE_NAME}", nameInSchema))
-                    val indices = table.getJSONArray("indices")
+                    val indices = table.optJSONArray("indices") ?: continue
                     for (j in 0 until indices.length()) {
                         old.execSQL(indices.getJSONObject(j).getString("createSql").replace("\${TABLE_NAME}", nameInSchema))
                     }
