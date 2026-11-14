@@ -54,11 +54,11 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun NoteMenuTrigger(onClick: () -> Unit) {
+internal fun NoteMenuTrigger(label: String = "更多笔记操作", tag: String = "note-actions", onClick: () -> Unit) {
     val color = MaterialTheme.colorScheme.onSurfaceVariant
     IconButton(
         onClick = onClick,
-        modifier = Modifier.testTag("note-actions").semantics { contentDescription = "更多笔记操作" },
+        modifier = Modifier.testTag(tag).semantics { contentDescription = label },
     ) {
         Canvas(Modifier.size(20.dp)) {
             for (offset in -1..1) {

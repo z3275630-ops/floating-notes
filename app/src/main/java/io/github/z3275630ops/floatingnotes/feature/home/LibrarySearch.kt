@@ -1,6 +1,19 @@
 package io.github.z3275630ops.floatingnotes.feature.home
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenuItem
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -37,15 +50,54 @@ internal fun LibrarySearchControls(
     val saved by repository.saved.collectAsState(emptyList())
     var dialog by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        ComposablesSearchField(keyword, "搜索笔记", tag = "library-search")
-        FlowRow {
-            TextButton(onClick = { dialog = "筛选" }) { Text(if (scope == NoteScope()) "筛选" else "筛选已启用") }
-            TextButton(onClick = { dialog = "保存条件" },
-                enabled = scope != NoteScope() || keyword.text.isNotBlank()) { Text("保存条件") }
-            TextButton(onClick = { dialog = "已保存搜索" }) { Text("已保存搜索") }
-            if (scope != NoteScope()) TextButton(onClick = { onFilter(NoteScope()) }) { Text("重置条件") }
+    var menu by remember { mutableStateOf(false) }
+    val active = scope != NoteScope()
+    val canSave = active || keyword.text.isNotBlank()
+    fun restore(item: SavedSearch) {
+        try {
+            val restored = NoteScope.decode(item.scopeJson)
+            keyword.edit { replace(0, length, item.keyword) }
+            onFilter(restored)
+            dialog = null
+            error = null
+        } catch (_: Exception) { error = "无法读取这条搜索条件" }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { ComposablesSearchField(keyword, "搜索笔记", tag = "library-search") }
+            SearchIcon("筛选", active = active) { dialog = "筛选" }
+            if (canSave || saved.isNotEmpty()) Box {
+                SearchIcon("更多搜索操作", more = true) { menu = true }
+                ComposablesMenu(menu, { menu = false }) {
+                    if (canSave) ComposablesMenuItem("保存条件") { menu = false; dialog = "保存条件" }
+                    if (saved.isNotEmpty()) ComposablesMenuItem("管理已保存搜索") { menu = false; dialog = "已保存搜索" }
+                }
+            }
         }
+        if (active) {
+            val paths = tags.associate { it.id to tagPath(tags, it) }
+            val labels = buildList {
+                if (scope.untagged) add("无标签")
+                addAll(scope.includeTags.mapNotNull(paths::get))
+                addAll(scope.excludeTags.mapNotNull { paths[it]?.let { name -> "排除 $name" } })
+                addAll(notebooks.filter { it.id in scope.notebooks }.map { it.name })
+                addAll(sources.filter { it.first in scope.sources }.map { it.second })
+                addAll(mediaChoices.filter { it.first in scope.media }.map { it.second })
+                if (scope.from != null || scope.until != null) add(if (scope.updatedTime) "修改日期" else "创建日期")
+                if (scope.archived) add("含归档")
+            }
+            AssistChip(onClick = { onFilter(NoteScope()) }, label = {
+                Text(labels.take(2).joinToString(" · ").ifEmpty { "筛选条件" } +
+                    if (labels.size > 2) " ＋${labels.size - 2}" else "", maxLines = 1)
+            }, trailingIcon = { Text("×", Modifier.semantics { contentDescription = "重置条件" }) },
+                shape = CircleShape)
+        }
+        if (saved.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(saved, key = { it.id }) { item ->
+                SuggestionChip(onClick = { restore(item) }, label = { Text(item.name) }, shape = CircleShape)
+            }
+        }
+        if (dialog == null) error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
     when (dialog) {
         "筛选" -> ScopeDialog(scope, tags, notebooks, { dialog = null }) { onFilter(it); dialog = null }
@@ -87,14 +139,7 @@ internal fun LibrarySearchControls(
                         if (saved.isEmpty()) Text("还没有保存的搜索")
                         saved.forEach { item ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = {
-                                    try {
-                                        val restored = NoteScope.decode(item.scopeJson)
-                                        keyword.edit { replace(0, length, item.keyword) }
-                                        onFilter(restored)
-                                        dialog = null
-                                    } catch (_: Exception) { error = "无法读取这条搜索条件" }
-                                }, modifier = Modifier.weight(1f)) { Text(item.name) }
+                                TextButton(onClick = { restore(item) }, modifier = Modifier.weight(1f)) { Text(item.name) }
                                 TextButton(onClick = { deleting = item }) { Text("删除") }
                             }
                         }
@@ -113,6 +158,30 @@ internal fun LibrarySearchControls(
                         }
                     }) { Text("删除搜索") } },
                     dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchIcon(label: String, active: Boolean = false, more: Boolean = false, action: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(Modifier.size(48.dp).clip(CircleShape)
+        .background(if (active) scheme.primaryContainer else scheme.surfaceContainer)
+        .semantics { contentDescription = label }
+        .clickable(interactionSource = null, indication = null, role = Role.Button, onClick = action),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(20.dp)) {
+            if (more) {
+                for (i in -1..1) drawCircle(scheme.onSurface, 1.4.dp.toPx(), center + Offset(i * 5.dp.toPx(), 0f))
+            } else {
+                for (i in 0..2) {
+                    val y = size.height * (.22f + i * .28f)
+                    val knob = size.width * (if (i == 1) .64f else .36f)
+                    drawLine(scheme.onSurface, Offset(0f, y), Offset(size.width, y), 1.5.dp.toPx(), StrokeCap.Round)
+                    drawCircle(scheme.onSurface, 2.25.dp.toPx(), Offset(knob, y))
+                }
             }
         }
     }
@@ -143,6 +212,8 @@ private fun SearchDialog(
         }
     }
 }
+
+private val mediaChoices = listOf("image" to "图片", "audio" to "音频", "video" to "视频")
 
 private val sources = listOf(
     "manual" to "手动记录", "voice" to "语音", "share" to "系统分享",
@@ -202,7 +273,7 @@ private fun ScopeDialog(
                     ChoiceChips("笔记本", notebooks.map { it.id to it.name }, scope.notebooks) { scope = scope.copy(notebooks = it) }
                 }
                 ChoiceChips("来源", sources, scope.sources) { scope = scope.copy(sources = it) }
-                ChoiceChips("媒体", listOf("image" to "图片", "audio" to "音频", "video" to "视频"), scope.media) {
+                ChoiceChips("媒体", mediaChoices, scope.media) {
                     scope = scope.copy(media = it)
                 }
             }

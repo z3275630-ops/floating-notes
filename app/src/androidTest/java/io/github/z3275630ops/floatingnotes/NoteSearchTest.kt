@@ -38,20 +38,21 @@ class NoteSearchTest {
         compose.onNodeWithTag("library-search").performTextInput(token)
         compose.waitUntil(8_000) {
             compose.onAllNodes(hasTestTag("saved-note") and hasText(token)).fetchSemanticsNodes().size == 1 &&
-                compose.onAllNodesWithText("新建标签").fetchSemanticsNodes().isEmpty()
+                compose.onAllNodesWithTag("library-organization-actions").fetchSemanticsNodes().isEmpty()
         }
         compose.onNode(hasTestTag("saved-note") and hasText(token)).assertExists()
-        compose.onNodeWithText("筛选").performClick()
+        compose.onNodeWithContentDescription("筛选").performClick()
         compose.onNodeWithText("仅无标签").performClick()
         compose.onNodeWithText("应用筛选").performClick()
+        compose.onNodeWithContentDescription("更多搜索操作").performClick()
         compose.onNodeWithText("保存条件").performClick()
         compose.onNode(hasSetTextAction() and hasAnyAncestor(isDialog())).performTextInput(savedName)
         compose.onNodeWithText("保存搜索").performClick()
-        compose.waitUntil(8_000) { compose.onAllNodesWithText("已保存搜索").fetchSemanticsNodes().size == 1 }
-        compose.onNodeWithText("重置条件").performClick()
-        compose.onNodeWithText("已保存搜索").performClick()
+        compose.waitUntil(8_000) { compose.onAllNodesWithText(savedName).fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithText("无标签").performClick()
+        compose.onNodeWithText("无标签").assertDoesNotExist()
         compose.onNodeWithText(savedName).performClick()
-        compose.onNodeWithText("筛选已启用").assertExists()
+        compose.onNodeWithText("无标签").assertExists()
     }
 
     @Test fun literalChinesePunctuationAndAscii() = runBlocking {

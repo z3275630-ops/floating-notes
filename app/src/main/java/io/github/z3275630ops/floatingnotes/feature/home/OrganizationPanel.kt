@@ -2,6 +2,10 @@ package io.github.z3275630ops.floatingnotes.feature.home
 
 import android.database.sqlite.SQLiteConstraintException
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenuItem
+import io.github.z3275630ops.floatingnotes.ui.designsystem.NoteMenuTrigger
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -34,19 +38,27 @@ internal fun OrganizationPanel(
 ) {
     var action by remember { mutableStateOf<OrganizationAction?>(null) }
     val paths = remember(tags) { tags.associate { it.id to tagPath(tags, it) } }
+    var add by remember { mutableStateOf(false) }
     Column {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = {
-                action = OrganizationAction("新建标签", "") { repository.createTag(it) }
-            }) { Text("新建标签") }
-            TextButton(onClick = {
-                action = OrganizationAction("新建笔记本", "") { repository.createNotebook(it) }
-            }) { Text("新建笔记本") }
-            TextButton(onClick = { onFilter(LibraryFilter()) }) { Text("清除筛选") }
-        }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(filter.descendants, { onFilter(filter.copy(descendants = it)) })
-            Text("包含下级标签")
+            Text("笔记本与标签", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            Box {
+                NoteMenuTrigger(onClick = { add = true }, label = "管理笔记本与标签", tag = "library-organization-actions")
+                ComposablesMenu(add, { add = false }) {
+                    ComposablesMenuItem("新建笔记本") {
+                        add = false
+                        action = OrganizationAction("新建笔记本", "") { repository.createNotebook(it) }
+                    }
+                    ComposablesMenuItem("新建标签") {
+                        add = false
+                        action = OrganizationAction("新建标签", "") { repository.createTag(it) }
+                    }
+                    if (filter.tag != null) ComposablesMenuItem(if (filter.descendants) "仅当前标签" else "包含下级标签") {
+                        add = false
+                        onFilter(filter.copy(descendants = !filter.descendants))
+                    }
+                }
+            }
         }
         for (tag in tags.sortedBy { paths.getValue(it.id) }) {
             val name = paths.getValue(tag.id)
@@ -54,9 +66,9 @@ internal fun OrganizationPanel(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilterChip(filter.tag == tag.id, {
                     onFilter(filter.copy(tag = tag.id.takeUnless { it == filter.tag }))
-                }, { Text(name) }, modifier = Modifier.weight(1f))
+                }, { Text(name) }, modifier = Modifier.weight(1f), shape = CircleShape)
                 Box {
-                    TextButton(onClick = { menu = true }) { Text("管理") }
+                    NoteMenuTrigger(onClick = { menu = true }, label = "管理标签 $name", tag = "tag-actions")
                     DropdownMenu(menu, { menu = false }) {
                         fun select(option: OrganizationAction) { menu = false; action = option }
                         val available = tags.filterNot { it.id in tagSubtree(tags, tag.id) }
@@ -93,9 +105,9 @@ internal fun OrganizationPanel(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilterChip(filter.notebook == notebook.id, {
                     onFilter(filter.copy(notebook = notebook.id.takeUnless { it == filter.notebook }))
-                }, { Text("笔记本 · ${notebook.name}") }, modifier = Modifier.weight(1f))
+                }, { Text(notebook.name) }, modifier = Modifier.weight(1f), shape = CircleShape)
                 Box {
-                    TextButton(onClick = { menu = true }) { Text("管理") }
+                    NoteMenuTrigger(onClick = { menu = true }, label = "管理笔记本 ${notebook.name}", tag = "notebook-actions")
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem(text = { Text("重命名") }, onClick = {
                             menu = false
