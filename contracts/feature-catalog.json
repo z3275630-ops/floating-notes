@@ -254,7 +254,7 @@
       "id": "F14",
       "name": "高级搜索",
       "milestone": "M1",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/discovery.md",
       "screens": [
         "S10"
@@ -264,7 +264,7 @@
         "Q042",
         "Q043"
       ],
-      "evidence": []
+      "evidence": ["docs/handoffs/2026-11-14-T12.md"]
     },
     {
       "id": "F15",
