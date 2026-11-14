@@ -57,7 +57,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun ComposablesSearchField(state: TextFieldState, label: String) {
+internal fun ComposablesSearchField(state: TextFieldState, label: String, tag: String = "note-reference-filter") {
     val scheme = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(12.dp)
     val interaction = remember { MutableInteractionSource() }
@@ -65,7 +65,7 @@ internal fun ComposablesSearchField(state: TextFieldState, label: String) {
     val type = MaterialTheme.typography.bodyMedium
     BasicTextField(
         state = state,
-        modifier = Modifier.fillMaxWidth().testTag("note-reference-filter")
+        modifier = Modifier.fillMaxWidth().testTag(tag)
             .semantics { contentDescription = label },
         interactionSource = interaction,
         textStyle = type.copy(color = scheme.onSurface),

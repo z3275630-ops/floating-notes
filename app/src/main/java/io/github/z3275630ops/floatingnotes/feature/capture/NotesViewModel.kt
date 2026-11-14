@@ -20,6 +20,7 @@ import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotesDatabase
 import io.github.z3275630ops.floatingnotes.data.local.NotesRepository
 import io.github.z3275630ops.floatingnotes.data.local.OrganizationRepository
+import io.github.z3275630ops.floatingnotes.data.local.SearchRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
@@ -106,6 +107,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     private val repository = NotesRepository(database)
     val attachments = AttachmentStore(application)
     val organization = OrganizationRepository(database)
+    val search = SearchRepository(database)
     var editor by mutableStateOf<EditorSession?>(null)
         private set
     var error by mutableStateOf<String?>(null)

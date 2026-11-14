@@ -103,7 +103,8 @@ class OrganizationTest {
                 )
                 old.version = 1
             }
-            val db = Room.databaseBuilder(context, NotesDatabase::class.java, name).build()
+            val db = Room.databaseBuilder(context, NotesDatabase::class.java, name)
+                .addMigrations(io.github.z3275630ops.floatingnotes.data.local.SearchMigration).build()
             try {
                 val notes = NotesRepository(db)
                 assertEquals(document, notes.loadNote(source)?.documentJson)

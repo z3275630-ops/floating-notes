@@ -67,6 +67,7 @@ internal class NotesRepository(private val database: NotesDatabase) {
                 title = null,
                 documentJson = draft.documentJson,
                 searchText = document.text,
+                mediaMask = document.mediaMask(),
                 sourceType = draft.sourceType,
                 sourceUrl = draft.sourceUrl,
                 createdAt = time,
@@ -80,6 +81,7 @@ internal class NotesRepository(private val database: NotesDatabase) {
             previous.copy(
                 documentJson = draft.documentJson,
                 searchText = document.text,
+                mediaMask = document.mediaMask(),
                 updatedAt = time,
                 revision = previous.revision + 1,
                 contentHash = hash(draft.documentJson),

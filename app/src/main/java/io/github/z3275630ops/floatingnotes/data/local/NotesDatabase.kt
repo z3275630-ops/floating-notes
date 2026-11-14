@@ -3,6 +3,7 @@ package io.github.z3275630ops.floatingnotes.data.local
 import android.content.Context
 import androidx.room.*
 import androidx.room.migration.AutoMigrationSpec
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +28,7 @@ internal data class NoteEntity(
     val pinned: Boolean = false,
     @ColumnInfo(name = "last_draft_id") val lastDraftId: String,
     @ColumnInfo(name = "committed_seq") val committedSeq: Long,
+    @ColumnInfo(name = "media_mask", defaultValue = "0") val mediaMask: Int = 0,
 )
 
 @Entity(tableName = "drafts", indices = [Index(value = ["slot"], unique = true)])
@@ -107,14 +109,15 @@ internal interface NotesDao {
 @Database(
     entities = [NoteEntity::class, DraftEntity::class, NoteVersionEntity::class,
         TaskIndexEntity::class, OutboxEntity::class, TagEntity::class, NotebookEntity::class,
-        NoteTagEntity::class, NotebookNoteEntity::class, NoteLinkEntity::class],
-    version = 2,
+        NoteTagEntity::class, NotebookNoteEntity::class, NoteLinkEntity::class, SavedSearch::class],
+    version = 3,
     autoMigrations = [AutoMigration(from = 1, to = 2, spec = LinkBackfill::class)],
     exportSchema = true,
 )
 internal abstract class NotesDatabase : RoomDatabase() {
     abstract fun notes(): NotesDao
     abstract fun organization(): OrganizationDao
+    abstract fun search(): SearchDao
 
     companion object {
         private var shared: NotesDatabase? = null
@@ -122,10 +125,23 @@ internal abstract class NotesDatabase : RoomDatabase() {
         @Synchronized
         fun open(context: Context): NotesDatabase = shared ?: Room.databaseBuilder(
             context.applicationContext, NotesDatabase::class.java, "floating-notes.db",
-        ).build().also { shared = it }
+        ).addMigrations(SearchMigration).build().also { shared = it }
     }
 }
 
+
+internal object SearchMigration : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE notes ADD COLUMN media_mask INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("CREATE TABLE saved_searches (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, keyword TEXT NOT NULL, scope_json TEXT NOT NULL)")
+        db.query("SELECT id, document_json FROM notes").use { rows ->
+            while (rows.moveToNext()) {
+                val mask = runCatching { NoteDocument.decode(rows.getString(1)).mediaMask() }.getOrDefault(0)
+                if (mask != 0) db.execSQL("UPDATE notes SET media_mask = ? WHERE id = ?", arrayOf<Any>(mask, rows.getString(0)))
+            }
+        }
+    }
+}
 
 internal class LinkBackfill : AutoMigrationSpec {
     override fun onPostMigrate(db: SupportSQLiteDatabase) {

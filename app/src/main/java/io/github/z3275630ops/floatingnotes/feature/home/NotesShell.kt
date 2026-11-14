@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,10 +35,13 @@ import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
 import io.github.z3275630ops.floatingnotes.feature.capture.AttachmentThumbnail
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
+import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.tagSubtree
 import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
 import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureMotion
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureSheet
@@ -73,6 +77,35 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
     val tagScope = selectedTag?.let { if (descendants) tagSubtree(tags, it) else setOf(it) }
     val tagMatches = noteTags.filter { tagScope != null && it.tagId in tagScope }.mapTo(hashSetOf()) { it.noteId }
     val notebookMatches = notebookNotes.filter { it.notebookId == selectedNotebook }.mapTo(hashSetOf()) { it.noteId }
+    val keyword = rememberTextFieldState()
+    var searchScopeJson by rememberSaveable { mutableStateOf(NoteScope().encode()) }
+    val searchScope = remember(searchScopeJson) { NoteScope.decode(searchScopeJson) }
+    val phrase = keyword.text.toString()
+    val effectiveScope = if (searchScope != NoteScope()) searchScope else NoteScope(
+        includeTags = setOfNotNull(selectedTag),
+        notebooks = setOfNotNull(selectedNotebook),
+        descendants = descendants,
+    )
+    val searching = phrase.isNotBlank() || searchScope != NoteScope()
+    var searchLimit by remember(phrase, effectiveScope) { mutableIntStateOf(50) }
+    var searchFailed by remember(page, phrase, effectiveScope, searchLimit) { mutableStateOf(false) }
+    var searchAttempt by remember { mutableIntStateOf(0) }
+    val results by key(page, phrase, effectiveScope, searchAttempt) {
+        produceState<List<NoteEntity>?>(null, searchLimit) {
+            searchFailed = false
+            if (page == Page.Library && searching) {
+                delay(160)
+                try {
+                    model.search.observe(phrase, effectiveScope, searchLimit + 1).collect { value = it }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    searchFailed = true
+                    value = null
+                }
+            }
+        }
+    }
     val scope = rememberCoroutineScope()
     val motion = remember { CaptureMotion(scope, open) }
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -139,6 +172,8 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                     scope.launch { drawer.close() }
                 },
                 onLibrary = { filter ->
+                    keyword.edit { replace(0, length, "") }
+                    searchScopeJson = NoteScope().encode()
                     selectedTag = filter.tag
                     selectedNotebook = filter.notebook
                     descendants = filter.descendants
@@ -207,6 +242,14 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                             }
                         } else if (current == Page.Library) {
                             item {
+                                LibrarySearchControls(model.search, keyword, effectiveScope, tags, notebooks) { updated ->
+                                    selectedTag = null
+                                    selectedNotebook = null
+                                    descendants = true
+                                    searchScopeJson = updated.encode()
+                                }
+                            }
+                            if (!searching) item {
                                 OrganizationPanel(organization, tags, notebooks,
                                     LibraryFilter(selectedTag, selectedNotebook, descendants)) {
                                     selectedTag = it.tag
@@ -214,13 +257,19 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                     descendants = it.descendants
                                 }
                             }
-                            val visible = notes.filter {
+                            val visible = if (searching) results.orEmpty().take(searchLimit) else notes.filter {
                                 it.archivedAt == null && (selectedTag == null || it.id in tagMatches) &&
                                     (selectedNotebook == null || it.id in notebookMatches)
                             }
-                            if (visible.isEmpty()) item { Text("此范围没有笔记") }
+                            if (searching && results == null) item {
+                                if (searchFailed) TextButton(onClick = { searchAttempt++ }) { Text("搜索失败，点此重试") }
+                                else Text("正在搜索…")
+                            } else if (visible.isEmpty()) item { Text("此范围没有笔记") }
                             items(visible, key = { it.id }) { note ->
                                 NoteCard(note, model.attachments, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
+                            }
+                            if (searching && (results?.size ?: 0) > searchLimit) item {
+                                TextButton(onClick = { searchLimit += 50 }) { Text("加载更多") }
                             }
                         } else {
                             item { Text("页面原型，功能开发中。", color = scheme.onSurfaceVariant) }
