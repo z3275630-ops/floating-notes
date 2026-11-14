@@ -22,6 +22,8 @@
 
 - T10 在 `feat/T10-reliable-attachments`（源码 `89e791b`）接入图片、音频和视频导入、草稿恢复、缩略图与无引用文件清理。荣耀 X10（Android 10）全量回归 24 项通过，系统选择、保存和重开已实测。调试 APK 和截图见 [v0.1.9-attachments.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.9-attachments.1)。功能状态和实测命令见 [T10 验证](docs/quality/T10-validation.md) 与 [T10 交接](docs/handoffs/2026-11-14-T10.md)。
 
+- T11 在 `feat/T11-voice-capture`（源码 `3eec079`）接入前台录音、暂停、继续与本机附件保存，并修复首页状态栏浅色断层。荣耀 X10 通过短时录音实测和 22 项回归。转写与整理版仍在开发。见 [T11 交接](docs/handoffs/2026-11-14-T11.md) 和 [内测预览](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.10-voice.1)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -50,7 +52,7 @@
 
 ## 下一步
 
-[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐。接着按依赖推进 T11–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
+[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐。继续完成 T11 转写后按依赖推进 T12–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
 
 ## 验证记录
 

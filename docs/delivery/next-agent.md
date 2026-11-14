@@ -1,6 +1,6 @@
 # 下一位开发 Agent：直接开工
 
-v3.1 路线继续执行。main 是设计基线，Android 当前开发分支是 `feat/T10-reliable-attachments`，基于 [PR #49](https://github.com/z3275630-ops/floating-notes/pull/49) 的 `edeaafb`。先读取 [STATUS](../../STATUS.md) 与 [T10 交接](../handoffs/2026-11-14-T10.md)，再核对目标提交的验证记录和产物。
+v3.1 路线继续执行。main 是设计基线，Android 当前开发分支是 `feat/T11-voice-capture`，基于 T10 `7e48faf`。先读取 [STATUS](../../STATUS.md) 与 [T11 交接](../handoffs/2026-11-14-T11.md)，再核对目标提交的验证记录和产物。
 
 ## 已交付与接续
 

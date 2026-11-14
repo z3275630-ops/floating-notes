@@ -38,7 +38,7 @@
       "id": "F02",
       "name": "语音记录",
       "milestone": "M1",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/capture-editor.md",
       "screens": [
         "S04"
