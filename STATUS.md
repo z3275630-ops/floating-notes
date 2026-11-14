@@ -1,6 +1,6 @@
 # 项目实际状态
 
-更新时间：2026-11-09。规格版本 3.1。
+更新时间：2026-11-14。规格版本 3.1。
 
 ## 当前开发轮次
 
@@ -19,6 +19,8 @@
 - 薄荷绿主题、笔记侧栏和玻璃调整通过构建与 18 项 API 35 模拟器测试，[PR #48](https://github.com/z3275630-ops/floating-notes/pull/48)。见 [验证记录](docs/quality/mint-glass-validation.md) 与 [交接](docs/handoffs/2026-11-09-mint-glass.md)。
 
 - T09 已移植 Composables UI 的笔记菜单与引用筛选，构建和 18 项模拟器测试通过，已发 [v0.1.8-composables.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.8-composables.1)。见 [选型记录](docs/decisions/0011-composables-ui-source.md) 与 [交接](docs/handoffs/2026-11-09-composables-ui.md)。
+
+- T10 在 `feat/T10-reliable-attachments`（源码 `89e791b`）接入图片、音频和视频导入、草稿恢复、缩略图与无引用文件清理。荣耀 X10（Android 10）全量回归 24 项通过，系统选择、保存和重开已实测。调试 APK 和截图见 [v0.1.9-attachments.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.9-attachments.1)。功能状态和实测命令见 [T10 验证](docs/quality/T10-validation.md) 与 [T10 交接](docs/handoffs/2026-11-14-T10.md)。
 
 ## 已完成
 
@@ -48,10 +50,10 @@
 
 ## 下一步
 
-[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐，按既定路线推进 T10–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
+[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐。接着按依赖推进 T11–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
 
 ## 验证记录
 
-最新集成构建源码 `d100102`。[Android CI](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221)、[APK 归档](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221/artifacts/13687622074)、[录屏与测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221/artifacts/13688141493)。文档检查通过，计 71 Markdown、13 JSON、20 features、37 tasks。
+T09 集成构建源码 `d100102`。[Android CI](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221)、[APK 归档](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221/artifacts/13687622074)、[录屏与测试报告](https://github.com/z3275630-ops/floating-notes/actions/runs/42645622221/artifacts/13688141493)。文档检查通过，计 71 Markdown、13 JSON、20 features、37 tasks。
 
-开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。当前集成分支 feat/T09-composables-ui，PR #49。
+开发入口：[下一位 Agent 开工说明](docs/delivery/next-agent.md)。T35 在 T08 后优先，T36 在 T08/T17 后，T37 在 T18/T20 后；T31 增加这三项集成依赖。T09 集成分支 feat/T09-composables-ui，PR #49。

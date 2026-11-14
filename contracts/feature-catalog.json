@@ -345,7 +345,7 @@
       "id": "F19",
       "name": "多媒体",
       "milestone": "M1",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/map-library-integrations.md",
       "screens": [
         "S03",
@@ -356,7 +356,7 @@
         "Q058",
         "Q059"
       ],
-      "evidence": []
+      "evidence": ["docs/quality/T10-validation.md"]
     },
     {
       "id": "F20",

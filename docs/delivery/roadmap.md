@@ -175,7 +175,7 @@ GitHub 任务：[T10 · #10](https://github.com/z3275630-ops/floating-notes/issu
 
 退出验收：URI 授权撤回、损坏文件、空间不足、崩溃可恢复。
 
-实现者应在任务开始时补文件边界和验证命令，完成后补 PR/提交/报告链接。未知设备、预算或供应商能力单列阻断；可独立完成的工作继续推进。
+实现分支 `feat/T10-reliable-attachments`，基于 T09 交接 `edeaafb`。改动边界为应用私有媒体存储、既有 Room 草稿与文档、编辑器/列表预览和 Android 分享入口。执行了 Android 构建、Lint、荣耀 X10（API 29）真机回归和文档检查，见 [T10 验证](../quality/T10-validation.md)。
 
 ## T11 · 录音和转写
 
