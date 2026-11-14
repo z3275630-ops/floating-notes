@@ -24,6 +24,8 @@
 
 - T11 在 `feat/T11-voice-capture`（源码 `3eec079`）接入前台录音、暂停、继续与本机附件保存，并修复首页状态栏浅色断层。荣耀 X10 通过短时录音实测和 22 项回归。转写与整理版仍在开发。见 [T11 交接](docs/handoffs/2026-11-14-T11.md) 和 [内测预览](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.10-voice.1)。
 
+- T11 转写在 `feat/T11-offline-transcription`（源码 `3d9ffca`）接入 Vosk 本机普通话识别、原文/整理版切换和插入正文。已在荣耀 X10 测试系统导入、模型下载、识别和重开复用。见 [转写交接](docs/handoffs/2026-11-14-T11-transcription.md) 和 [调试预览](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.11-transcription.1)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -52,7 +54,7 @@
 
 ## 下一步
 
-[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐。继续完成 T11 转写后按依赖推进 T12–T14。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
+[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐。按依赖推进 T12 中文搜索与范围、T13 和 T14。T11 真实来电、断网和取消重试验收仍待执行。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
 
 ## 验证记录
 
