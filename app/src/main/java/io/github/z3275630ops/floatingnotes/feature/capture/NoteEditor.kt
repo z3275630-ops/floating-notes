@@ -137,7 +137,10 @@ internal fun ColumnScope.NoteEditor(
                             },
                         )
                     } else if (block.attachmentId != null) {
-                        AttachmentRow(model.attachments, requireNotNull(block.attachmentId), !session.writing) {
+                        AttachmentRow(
+                            model.attachments, requireNotNull(block.attachmentId), !session.writing && !session.voiceBusy,
+                            insertTranscript = { text -> session.insertTranscript(block, text) },
+                        ) {
                             session.removeAttachment(block)
                         }
                     } else if (block.referenceTarget != null && onOpenRelated != null) {

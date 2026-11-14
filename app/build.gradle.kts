@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.z3275630ops.floatingnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.1.10-voice"
+        versionCode = 13
+        versionName = "0.1.11-transcription"
         buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -49,6 +49,7 @@ room {
 }
 dependencies {
     implementation(libs.room.runtime)
+    implementation(libs.vosk.android)
     kapt(libs.room.compiler)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

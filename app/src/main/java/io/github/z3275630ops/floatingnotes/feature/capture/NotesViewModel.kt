@@ -75,6 +75,12 @@ internal class EditorSession(val draft: DraftEntity, document: NoteDocument, val
         blocks.add(EditorBlock(NoteBlock.paragraph()))
     }
 
+    fun insertTranscript(block: EditorBlock, text: String) {
+        if (writing || closing) return
+        val position = blocks.indexOf(block)
+        if (position >= 0) blocks.add(position + 1, EditorBlock(NoteBlock.paragraph(text)))
+    }
+
     fun removeAttachment(block: EditorBlock) {
         if (writing || block.attachmentId == null) return
         blocks.remove(block)

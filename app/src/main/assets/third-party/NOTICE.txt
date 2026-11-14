@@ -1,0 +1,11 @@
+Vosk Android 0.3.75 by Alpha Cephei Inc
+https://github.com/alphacep/vosk-api
+Apache License 2.0 (Apache-2.0.txt in this directory).
+
+JNA 5.18.1 by the JNA project contributors
+https://github.com/java-native-access/jna
+Distributed here under the Apache License 2.0 option.
+
+Vosk model vosk-model-small-cn-0.22 by Alpha Cephei
+https://alphacephei.com/vosk/models
+Apache License 2.0. Downloaded on request from the official host.

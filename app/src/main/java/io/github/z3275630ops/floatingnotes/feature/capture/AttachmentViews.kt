@@ -46,7 +46,13 @@ internal fun AttachmentThumbnail(store: AttachmentStore, id: String, type: Strin
 }
 
 @Composable
-internal fun AttachmentRow(store: AttachmentStore, id: String, enabled: Boolean, remove: () -> Unit) {
+internal fun AttachmentRow(
+    store: AttachmentStore,
+    id: String,
+    enabled: Boolean,
+    insertTranscript: (String) -> Unit,
+    remove: () -> Unit,
+) {
     val context = LocalContext.current
     var loaded by remember(id) { mutableStateOf(false) }
     val attachment by produceState<LocalAttachment?>(null, id) {
@@ -55,6 +61,7 @@ internal fun AttachmentRow(store: AttachmentStore, id: String, enabled: Boolean,
     }
     var openFailed by remember(id) { mutableStateOf(false) }
     val item = attachment
+    var showTranscription by remember(id) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (item != null) {
@@ -82,6 +89,12 @@ internal fun AttachmentRow(store: AttachmentStore, id: String, enabled: Boolean,
             }
             TextButton(onClick = remove, enabled = enabled) { Text("移除") }
         }
+        if (AttachmentKind.fromMime(item?.mime) == AttachmentKind.Audio) {
+            TextButton(onClick = { showTranscription = true }, enabled = enabled) { Text("转写") }
+        }
         if (openFailed) Text("无法打开该附件，请检查是否有应用支持此格式。", color = MaterialTheme.colorScheme.error)
+    }
+    if (showTranscription && item != null) {
+        TranscriptionDialog(store, item, { showTranscription = false }, insertTranscript)
     }
 }
