@@ -3,6 +3,7 @@ package io.github.z3275630ops.floatingnotes
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 
@@ -17,7 +18,8 @@ class NavigationMotionTest {
         waitForEditor()
         compose.onNodeWithTag("capture-editor").performTextReplacement("留下这段草稿")
         compose.onNodeWithTag("capture-handle").performTouchInput {
-            swipe(center, center + Offset(0f, 460f), durationMillis = 350)
+            val distance = with(compose.density) { 250.dp.toPx() }
+            swipe(center, center + Offset(0f, distance), durationMillis = 350)
         }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("new-note").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("new-note").assertIsDisplayed().performClick()

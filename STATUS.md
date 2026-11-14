@@ -26,7 +26,9 @@
 
 - T11 转写在 `feat/T11-offline-transcription`（源码 `3d9ffca`）接入 Vosk 本机普通话识别、原文/整理版切换和插入正文。已在荣耀 X10 测试系统导入、模型下载、识别和重开复用。见 [转写交接](docs/handoffs/2026-11-14-T11-transcription.md) 和 [调试预览](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.11-transcription.1)。
 
-- T12 在 `feat/T12-local-search`（源码 `dc80a35`）接入本地中文搜索、组合筛选和保存条件。Android 构建及 Windows SQLite 查询验证已通过，荣耀 X10 的调试通道离线，手机覆盖安装、迁移与性能待验收。见 [T12 交接](docs/handoffs/2026-11-14-T12.md) 和 [测试预览](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.12-search.1)。
+- T12 在 `feat/T12-local-search`（源码 `dc80a35`）接入本地中文搜索、组合筛选和保存条件。Android 构建及 Windows SQLite 查询验证已通过，荣耀 X10 已覆盖安装并验证升级，查询、保存条件及修复后的界面流程通过。见 [T12 交接](docs/handoffs/2026-11-14-T12.md) 和 [测试预览](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.12-search.1)。
+
+- 原生玻璃样板与 T12 界面修复 `295110e` 已实现。弥散背景、悬浮底栏、胶囊快速记录和搜索弹层按 [视觉规范](docs/design/visual-system.md) 接入。见 [玻璃搜索预览](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.12-search.2)。
 
 ## 已完成
 
