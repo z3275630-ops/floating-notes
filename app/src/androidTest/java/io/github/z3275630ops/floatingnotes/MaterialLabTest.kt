@@ -13,7 +13,8 @@ class MaterialLabTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun changeMaterialAndRestoreThemeAfterRecreation() {
-        compose.onNodeWithText("材质实验").performClick()
+        compose.onNodeWithTag("open-notes-drawer").performClick()
+        openDevAction("材质实验").performClick()
         val standardStatus = if (Build.VERSION.SDK_INT >= 31) "背景模糊与边缘高光" else "当前系统使用清晰档"
         val enhancedStatus = when {
             Build.VERSION.SDK_INT >= 33 -> "背景模糊与边缘折射"
@@ -36,7 +37,19 @@ class MaterialLabTest {
         compose.onNodeWithText(enhancedStatus).assertIsDisplayed()
         compose.onNodeWithContentDescription("深色主题").assertIsOn()
         compose.onNodeWithText("返回工程样例").performClick()
-        compose.onNodeWithText("载入合成示例").assertIsDisplayed()
+        compose.onNodeWithTag("open-notes-drawer").assertIsDisplayed().performClick()
+        openDevAction("载入合成示例").assertIsDisplayed()
+    }
+
+    private fun openDevAction(label: String): SemanticsNodeInteraction {
+        compose.onNodeWithTag("notes-drawer-list").performScrollToNode(hasTestTag("drawer-dev-section"))
+        if (compose.onAllNodes(hasText(label)).fetchSemanticsNodes().isEmpty()) {
+            compose.onNodeWithTag("drawer-dev-section").performClick()
+            compose.waitUntil(5_000) {
+                compose.onAllNodes(hasText(label)).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        return compose.onNodeWithText(label).performScrollTo()
     }
 
     private fun screenshot(name: String) {

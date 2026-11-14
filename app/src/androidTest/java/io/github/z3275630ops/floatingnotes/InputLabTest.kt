@@ -11,7 +11,8 @@ class InputLabTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun replaceChineseSelectionAndUndoAcrossKeyboardDismissal() {
-        compose.onNodeWithText("输入实验").performClick()
+        compose.onNodeWithTag("open-notes-drawer").performClick()
+        openDevAction("输入实验").performClick()
         val field = compose.onNodeWithTag("input-lab-editor")
         field.performClick()
         field.performTextInput("记录一段中文")
@@ -31,10 +32,22 @@ class InputLabTest {
     }
 
     @Test fun restoreThirtyThousandCharacters() {
-        compose.onNodeWithText("输入实验").performClick()
+        compose.onNodeWithTag("open-notes-drawer").performClick()
+        openDevAction("输入实验").performClick()
         compose.onNodeWithText("填入三万字").performClick()
         compose.onNodeWithText("30000 字符", substring = true).assertIsDisplayed()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("30000 字符", substring = true).assertIsDisplayed()
+    }
+
+    private fun openDevAction(label: String): SemanticsNodeInteraction {
+        compose.onNodeWithTag("notes-drawer-list").performScrollToNode(hasTestTag("drawer-dev-section"))
+        if (compose.onAllNodes(hasText(label)).fetchSemanticsNodes().isEmpty()) {
+            compose.onNodeWithTag("drawer-dev-section").performClick()
+            compose.waitUntil(5_000) {
+                compose.onAllNodes(hasText(label)).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        return compose.onNodeWithText(label).performScrollTo()
     }
 }

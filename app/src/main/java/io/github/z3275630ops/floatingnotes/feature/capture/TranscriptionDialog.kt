@@ -2,20 +2,28 @@ package io.github.z3275630ops.floatingnotes.feature.capture
 
 import android.content.Context
 import android.util.AtomicFile
-import androidx.compose.foundation.layout.Column
-import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.compose.LifecycleEventEffect
-import androidx.lifecycle.Lifecycle
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
 import io.github.z3275630ops.floatingnotes.data.local.LocalAttachment
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGlassDialog
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -90,6 +98,8 @@ internal fun TranscriptionDialog(
     insert: (String) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
+    val dark = isSystemInDarkTheme()
+    val scheme = MaterialTheme.colorScheme
     val transcription = remember(attachment.id) { TranscriptionStore(context, store.original(attachment)) }
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(true) }
@@ -115,48 +125,113 @@ internal fun TranscriptionDialog(
         if (job != null) status = "转写已暂停，可返回重试"
     }
     val text = transcript?.let { if (original) it.raw else it.formatted }
-    AlertDialog(
-        onDismissRequest = dismiss,
-        properties = DialogProperties(dismissOnClickOutside = job == null),
-        title = { Text("离线转写") },
-        text = {
-            Column {
-                if (text != null) {
-                    TextButton(onClick = { original = !original }) { Text(if (original) "查看整理版" else "查看原文") }
-                    Text(text, Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()))
-                } else {
-                    Text(status ?: if (loading) "读取中" else if (installed) {
+    MintGlassDialog(
+        onDismissRequest = { if (job == null) dismiss() },
+        dark = dark,
+        dismissOnClickOutside = job == null,
+        title = "离线转写",
+        subtitle = attachment.name,
+        actions = {
+            MintPillButton(
+                label = if (job == null) "关闭" else "取消",
+                dark = dark,
+                onClick = dismiss,
+            )
+            if (text != null) {
+                MintPillButton(
+                    label = "插入正文",
+                    primary = true,
+                    icon = MintIcons.Check,
+                    dark = dark,
+                    onClick = {
+                        insert(text)
+                        dismiss()
+                    },
+                )
+            } else {
+                MintPillButton(
+                    label = if (job != null) "转写中" else if (status != null) "重试" else if (installed) "开始转写" else "下载并转写",
+                    primary = true,
+                    icon = MintIcons.Audio,
+                    dark = dark,
+                    enabled = !loading && job == null,
+                    onClick = {
+                        status = "正在准备"
+                        job = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                            try {
+                                transcript = transcription.run { status = it }
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: SpeechException) {
+                                status = error.message
+                            } catch (_: Exception) {
+                                status = "转写失败，录音已保留，可重试"
+                            } catch (_: LinkageError) {
+                                status = "当前设备无法加载离线语音引擎"
+                            } finally {
+                                installed = withContext(kotlinx.coroutines.NonCancellable) { transcription.modelInstalled() }
+                                job = null
+                            }
+                        }
+                    },
+                )
+            }
+        },
+    ) {
+        if (text != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (original) "原始语音识别结果" else "已整理可读文本",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = scheme.onSurfaceVariant,
+                )
+                MintPillButton(
+                    label = if (original) "查看整理版" else "查看原文",
+                    dark = dark,
+                    onClick = { original = !original },
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 260.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (dark) Color(0xFF1A2A22) else Color(0xFFF3F8F4))
+                    .border(0.9.dp, scheme.outline.copy(alpha = 0.22f), RoundedCornerShape(16.dp))
+                    .verticalScroll(rememberScrollState())
+                    .padding(14.dp),
+            ) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurface,
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (dark) Color(0xFF1A2A22) else Color(0xFFF3F8F4))
+                    .padding(14.dp),
+            ) {
+                Text(
+                    text = status ?: if (loading) {
+                        "读取中"
+                    } else if (installed) {
                         "普通话转写在本机完成。"
                     } else {
                         "首次需下载约 42 MB 的普通话模型。之后可断网转写，录音留在本机。"
-                    })
-                }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurface,
+                )
             }
-        },
-        confirmButton = {
-            if (text != null) TextButton(onClick = { insert(text); dismiss() }) { Text("插入正文") }
-            else TextButton(enabled = !loading && job == null, onClick = {
-                status = "正在准备"
-                job = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-                    try {
-                        transcript = transcription.run { status = it }
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: SpeechException) {
-                        status = error.message
-                    } catch (_: Exception) {
-                        status = "转写失败，录音已保留，可重试"
-                    } catch (_: LinkageError) {
-                        status = "当前设备无法加载离线语音引擎"
-                    } finally {
-                        installed = withContext(kotlinx.coroutines.NonCancellable) { transcription.modelInstalled() }
-                        job = null
-                    }
-                }
-            }) { Text(if (job != null) "转写中" else if (status != null) "重试" else if (installed) "开始转写" else "下载并转写") }
-        },
-        dismissButton = {
-            TextButton(onClick = dismiss) { Text(if (job == null) "关闭" else "取消") }
-        },
-    )
+        }
+    }
 }

@@ -32,6 +32,8 @@
 
 - 笔记库入口改版 `216c26e` 已在荣耀 X10 验证。筛选条件和已保存搜索直接可见，低频管理操作收进菜单。见 [笔记库交接](docs/handoffs/2026-11-14-library-ux.md)。
 
+- UI 重构、T09 剩余范围与 T13 待办提醒在 `feat/T13-ui-todos`（`versionCode 17`，`0.1.13-todos.1`）完成实现与荣耀 X10 复验：完成薄荷玻璃界面改版、Room v3→v4 迁移、待办列表（S23）与本地重复/时区提醒、行内 `#`/`@` 建议与 UTF-16 引文选区范围。全量构建、9 项 JVM 单测、0 错误 Lint 与荣耀 X10 覆盖安装及 11 类 35 项 `androidTest` 全通过；API 31+/33+ 实时模糊与系统通知授权弹窗、物理关机重启及 `release`/`benchmark` 真机运行仍待验证。见 [T13 交接](docs/handoffs/2026-11-14-T13-ui-todos.md) 与 [v0.1.13-todos.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.13-todos.1)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -60,7 +62,7 @@
 
 ## 下一步
 
-[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 #/@ 即时识别与引用选区范围待补齐。按依赖推进 T12 中文搜索与范围、T13 和 T14。T11 真实来电、断网和取消重试验收仍待执行。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，真机视觉与动效保留验收。
+[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 `#`/`@` 即时识别、引用选区范围与 T13 待办及本地提醒已实现并通过荣耀 X10 35 项测试；后续按依赖推进 T14 历史/回收站/本地备份及更高 Android API 真机玻璃与通知权限验收。T11 真实来电、断网和取消重试验收仍待执行。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，高版本真机视觉与动效保留验收。
 
 ## 验证记录
 

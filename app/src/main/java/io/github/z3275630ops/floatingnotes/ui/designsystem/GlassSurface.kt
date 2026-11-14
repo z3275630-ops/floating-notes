@@ -76,15 +76,17 @@ fun GlassSurface(
     dark: Boolean,
     modifier: Modifier = Modifier,
     sampleTopHeight: Dp? = null,
+    shapeRadius: Dp = 28.dp,
+    elevatedModal: Boolean = false,
+    shape: RoundedCornerShape = RoundedCornerShape(shapeRadius),
     content: @Composable BoxScope.() -> Unit,
 ) {
     val effective = tier.supportedOn(Build.VERSION.SDK_INT)
     val density = LocalDensity.current
-    val radius = 28.dp
-    val shape = RoundedCornerShape(radius)
+    val radius = shapeRadius
     var position by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
-    val effect = remember(effective, dark, viewport, density) {
+    val effect = remember(effective, dark, viewport, density, radius) {
         if (effective == GlassTier.Reduced || viewport == IntSize.Zero || Build.VERSION.SDK_INT < 31) {
             null
         } else with(density) {
@@ -100,15 +102,21 @@ fun GlassSurface(
             }
         }
     }
-    val tint = MaterialTheme.colorScheme.surface
-    val alpha = when (effective) {
-        GlassTier.Reduced -> if (dark) .94f else .88f
-        GlassTier.Standard -> if (dark) .84f else .78f
-        GlassTier.Enhanced -> if (dark) .80f else .58f
+    val tint = if (dark) {
+        if (elevatedModal) Color(0xFF15231C) else MaterialTheme.colorScheme.surface
+    } else {
+        if (elevatedModal) Color(0xFFFAFDF9) else Color(0xFFF6FAF5)
     }
+    val alpha = when (effective) {
+        GlassTier.Reduced -> if (elevatedModal) .98f else .96f
+        GlassTier.Standard -> if (elevatedModal) (if (dark) .92f else .90f) else (if (dark) .84f else .78f)
+        GlassTier.Enhanced -> if (elevatedModal) (if (dark) .90f else .84f) else (if (dark) .80f else .58f)
+    }
+    val elevation = if (elevatedModal) 14.dp else 8.dp
+    val shadowTint = if (dark) Color(0x55040A07) else Color(0x1E126543)
     Box(
         modifier
-            .shadow(12.dp, shape, ambientColor = Color(0x44214735), spotColor = Color(0x44214735))
+            .shadow(elevation, shape, ambientColor = shadowTint, spotColor = shadowTint)
             .onGloballyPositioned { position = it.positionInRoot() }
             .clip(shape)
     ) {
@@ -126,20 +134,20 @@ fun GlassSurface(
         }
         val surface = if (sampleTopHeight == null) Modifier.background(tint.copy(alpha = alpha))
         else Modifier.background(Brush.verticalGradient(
-            colors = listOf(tint.copy(alpha = alpha), tint),
+            colors = listOf(tint.copy(alpha = if (effective == GlassTier.Reduced) .98f else alpha), tint),
             endY = with(density) { sampleTopHeight.toPx() },
         ))
         Box(
             Modifier.matchParentSize().then(surface)
                 .background(Brush.verticalGradient(listOf(
-                    Color.White.copy(alpha = if (dark) .07f else .27f),
+                    Color.White.copy(alpha = if (dark) .06f else .22f),
                     Color.Transparent,
-                    Color(0xFF92DFC2).copy(alpha = if (dark) .09f else .17f),
+                    Color(0xFF92DFC2).copy(alpha = if (dark) .08f else .14f),
                 )))
                 .border(1.dp, Brush.verticalGradient(listOf(
-                    Color.White.copy(alpha = if (dark) .34f else .94f),
-                    Color.Transparent,
-                    Color(0xFF3A8567).copy(alpha = if (dark) .32f else .27f),
+                    Color.White.copy(alpha = if (dark) .28f else .94f),
+                    Color(0xFFD5EDE0).copy(alpha = if (dark) .08f else .35f),
+                    Color(0xFF3A8567).copy(alpha = if (dark) .28f else .22f),
                 )), shape)
         )
         content()

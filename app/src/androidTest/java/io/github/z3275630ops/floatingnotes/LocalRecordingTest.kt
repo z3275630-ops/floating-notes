@@ -4,6 +4,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import org.junit.Rule
 import org.junit.Test
+import java.util.UUID
 
 class LocalRecordingTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -42,8 +43,9 @@ class LocalRecordingTest {
     }
 
     @Test fun insertReferenceAndOpenItsBacklink() {
-        val target = "待引用的测试笔记"
-        val source = "带引用的测试笔记"
+        val suffix = UUID.randomUUID().toString().take(8)
+        val target = "待引用的测试笔记-$suffix"
+        val source = "带引用的测试笔记-$suffix"
         val targetCard = hasTestTag("saved-note") and hasText(target)
         val sourceCard = hasTestTag("saved-note") and hasText(source, substring = true)
         compose.onNodeWithTag("new-note").performClick()
@@ -60,8 +62,8 @@ class LocalRecordingTest {
         compose.onNodeWithText(target).assertDoesNotExist()
         compose.onNodeWithContentDescription("清除筛选").performClick()
         compose.onNodeWithText(target).assertExists()
-        filter.performTextReplacement("待引用")
-        compose.onNodeWithText(target).performClick()
+        filter.performTextReplacement(target)
+        compose.onNode(hasText(target) and hasClickAction() and !hasTestTag("note-reference-filter")).performClick()
         compose.onNodeWithText("保存").performClick()
         await(sourceCard)
         compose.onNode(targetCard).performClick()

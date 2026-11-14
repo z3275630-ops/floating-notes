@@ -123,12 +123,13 @@
         "T07"
       ],
       "title": "标签、笔记本与引用",
-      "status": "in_progress",
+      "status": "implemented",
       "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/9",
       "branch": "feat/T09-note-organization",
       "owner": "Codex",
       "evidence": [
-        "docs/quality/T09-validation.md"
+        "docs/quality/T09-validation.md",
+        "docs/handoffs/2026-11-14-T13-ui-todos.md"
       ]
     },
     {
@@ -171,8 +172,13 @@
         "T08"
       ],
       "title": "待办与本地提醒",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/13"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/13",
+      "branch": "feat/T13-ui-todos",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-14-T13-ui-todos.md"
+      ]
     },
     {
       "id": "T14",

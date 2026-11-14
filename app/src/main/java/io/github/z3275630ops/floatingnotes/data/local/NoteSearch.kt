@@ -92,6 +92,9 @@ internal interface SearchDao {
 
     @Insert suspend fun save(search: SavedSearch)
 
+    @Query("UPDATE saved_searches SET name = :name WHERE id = :id")
+    suspend fun rename(id: String, name: String)
+
     @Query("DELETE FROM saved_searches WHERE id = :id")
     suspend fun delete(id: String)
 }
@@ -106,6 +109,12 @@ internal class SearchRepository(private val database: NotesDatabase) {
         val label = name.trim()
         require(label.isNotEmpty() && label.length <= 60) { "请输入 1–60 个字的名称" }
         database.search().save(SavedSearch(newId(), label, keyword, scope.encode()))
+    }
+
+    suspend fun rename(id: String, name: String) {
+        val label = name.trim()
+        require(label.isNotEmpty() && label.length <= 60) { "请输入 1–60 个字的名称" }
+        database.search().rename(id, label)
     }
 
     suspend fun delete(id: String) = database.search().delete(id)

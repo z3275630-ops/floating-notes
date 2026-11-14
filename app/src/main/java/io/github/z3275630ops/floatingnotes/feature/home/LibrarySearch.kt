@@ -1,42 +1,58 @@
 package io.github.z3275630ops.floatingnotes.feature.home
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
-import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenuItem
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
-import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
-import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
-import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.data.local.*
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenuItem
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesSearchField
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChip
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChipStyle
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGlassDialog
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIconButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSegmentedBar
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
+
+private data class ActiveConditionChip(
+    val key: String,
+    val label: String,
+    val remove: () -> Unit,
+)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -47,14 +63,22 @@ internal fun LibrarySearchControls(
     tags: List<TagEntity>,
     notebooks: List<NotebookEntity>,
     onFilter: (NoteScope) -> Unit,
+    resultCount: Int? = null,
+    hasExtraFilter: Boolean = false,
+    onResetExtraFilter: (() -> Unit)? = null,
+    dark: Boolean = isSystemInDarkTheme(),
 ) {
+    val scheme = MaterialTheme.colorScheme
     val coroutine = rememberCoroutineScope()
     val saved by repository.saved.collectAsState(emptyList())
     var dialog by remember { mutableStateOf<String?>(null) }
+    var renamingItem by remember { mutableStateOf<SavedSearch?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf(false) }
     val active = scope != NoteScope()
     val canSave = active || keyword.text.isNotBlank()
+    val hasAnyFilter = active || keyword.text.isNotBlank() || hasExtraFilter
+
     fun restore(item: SavedSearch) {
         try {
             val restored = NoteScope.decode(item.scopeJson)
@@ -62,161 +86,560 @@ internal fun LibrarySearchControls(
             onFilter(restored)
             dialog = null
             error = null
-        } catch (_: Exception) { error = "无法读取这条搜索条件" }
+        } catch (_: Exception) {
+            error = "无法读取这条搜索条件"
+        }
     }
+
+    fun clearAllFilters() {
+        keyword.edit { replace(0, length, "") }
+        onFilter(NoteScope())
+        onResetExtraFilter?.invoke()
+        error = null
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) { ComposablesSearchField(keyword, "搜索笔记", tag = "library-search") }
-            SearchIcon("筛选", active = active) { dialog = "筛选" }
-            if (canSave || saved.isNotEmpty()) Box {
-                SearchIcon("更多搜索操作", more = true) { menu = true }
-                ComposablesMenu(menu, { menu = false }) {
-                    if (canSave) ComposablesMenuItem("保存条件") { menu = false; dialog = "保存条件" }
-                    if (saved.isNotEmpty()) ComposablesMenuItem("管理已保存搜索") { menu = false; dialog = "已保存搜索" }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f)) {
+                ComposablesSearchField(keyword, "搜索笔记", tag = "library-search")
+            }
+            MintIconButton(
+                onClick = { dialog = "筛选" },
+                contentDescription = "筛选",
+                dark = dark,
+                icon = MintIcons.Filter,
+                tint = if (active) scheme.onPrimaryContainer else scheme.onSurface,
+                containerColor = if (active) {
+                    if (dark) Color(0xFF23523E) else Color(0xFFD7F2E4)
+                } else {
+                    if (dark) Color(0xFF1A2B22) else Color(0xFFFAFDF9)
+                },
+                borderColor = if (active) {
+                    scheme.primary.copy(alpha = 0.55f)
+                } else {
+                    scheme.outline.copy(alpha = 0.30f)
+                },
+            )
+            if (canSave || saved.isNotEmpty()) {
+                Box {
+                    MintIconButton(
+                        onClick = { menu = true },
+                        contentDescription = "更多搜索操作",
+                        dark = dark,
+                        icon = MintIcons.More,
+                        containerColor = if (dark) Color(0xFF1A2B22) else Color(0xFFFAFDF9),
+                        borderColor = scheme.outline.copy(alpha = 0.30f),
+                    )
+                    ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
+                        if (canSave) {
+                            ComposablesMenuItem("保存条件", icon = MintIcons.SmartFolder) {
+                                menu = false
+                                dialog = "保存条件"
+                            }
+                        }
+                        if (saved.isNotEmpty()) {
+                            ComposablesMenuItem("管理已保存搜索", icon = MintIcons.Library) {
+                                menu = false
+                                dialog = "已保存搜索"
+                            }
+                        }
+                    }
                 }
             }
         }
+
         if (active) {
-            val paths = tags.associate { it.id to tagPath(tags, it) }
-            val labels = buildList {
-                if (scope.untagged) add("无标签")
-                addAll(scope.includeTags.mapNotNull(paths::get))
-                addAll(scope.excludeTags.mapNotNull { paths[it]?.let { name -> "排除 $name" } })
-                addAll(notebooks.filter { it.id in scope.notebooks }.map { it.name })
-                addAll(sources.filter { it.first in scope.sources }.map { it.second })
-                addAll(mediaChoices.filter { it.first in scope.media }.map { it.second })
-                if (scope.from != null || scope.until != null) add(if (scope.updatedTime) "修改日期" else "创建日期")
-                if (scope.archived) add("含归档")
+            val paths = remember(tags) { tags.associate { it.id to tagPath(tags, it) } }
+            val activeChips = buildList {
+                if (scope.untagged) {
+                    add(ActiveConditionChip("untagged", "无标签") { onFilter(scope.copy(untagged = false)) })
+                }
+                scope.includeTags.forEach { tagId ->
+                    paths[tagId]?.let { label ->
+                        add(ActiveConditionChip("inc:$tagId", "#$label") {
+                            onFilter(scope.copy(includeTags = scope.includeTags - tagId))
+                        })
+                    }
+                }
+                scope.excludeTags.forEach { tagId ->
+                    paths[tagId]?.let { label ->
+                        add(ActiveConditionChip("exc:$tagId", "排除 $label") {
+                            onFilter(scope.copy(excludeTags = scope.excludeTags - tagId))
+                        })
+                    }
+                }
+                notebooks.filter { it.id in scope.notebooks }.forEach { book ->
+                    add(ActiveConditionChip("nb:${book.id}", book.name) {
+                        onFilter(scope.copy(notebooks = scope.notebooks - book.id))
+                    })
+                }
+                sources.filter { it.first in scope.sources }.forEach { (id, label) ->
+                    add(ActiveConditionChip("src:$id", label) {
+                        onFilter(scope.copy(sources = scope.sources - id))
+                    })
+                }
+                mediaChoices.filter { it.first in scope.media }.forEach { (id, label) ->
+                    add(ActiveConditionChip("media:$id", label) {
+                        onFilter(scope.copy(media = scope.media - id))
+                    })
+                }
+                if (scope.from != null || scope.until != null) {
+                    add(ActiveConditionChip("date", if (scope.updatedTime) "修改日期" else "创建日期") {
+                        onFilter(scope.copy(from = null, until = null))
+                    })
+                }
+                if (scope.archived) {
+                    add(ActiveConditionChip("archived", "含归档") {
+                        onFilter(scope.copy(archived = false))
+                    })
+                }
             }
-            AssistChip(onClick = { onFilter(NoteScope()) }, label = {
-                Text(labels.take(2).joinToString(" · ").ifEmpty { "筛选条件" } +
-                    if (labels.size > 2) " ＋${labels.size - 2}" else "", maxLines = 1)
-            }, trailingIcon = { Text("×", Modifier.semantics { contentDescription = "重置条件" }) },
-                shape = CircleShape)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                activeChips.forEach { chip ->
+                    key(chip.key) {
+                        MintChip(
+                            label = chip.label,
+                            onClick = chip.remove,
+                            dark = dark,
+                            style = MintChipStyle.ActiveFilter,
+                            removable = true,
+                        )
+                    }
+                }
+                MintChip(
+                    label = "清空",
+                    onClick = ::clearAllFilters,
+                    dark = dark,
+                    style = MintChipStyle.Standard,
+                    modifier = Modifier.semantics { contentDescription = "重置条件" },
+                )
+            }
         }
+
         if (saved.isNotEmpty()) {
             val shortcuts = rememberLazyListState()
             LaunchedEffect(saved.first().id) { shortcuts.scrollToItem(0) }
-            LazyRow(state = shortcuts, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(
+                state = shortcuts,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 items(saved, key = { it.id }) { item ->
-                    SuggestionChip(onClick = { restore(item) }, label = {
-                        Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }, shape = CircleShape, modifier = Modifier.widthIn(max = 224.dp))
+                    var itemMenu by remember(item.id) { mutableStateOf(false) }
+                    val itemScope = remember(item.scopeJson) {
+                        runCatching { NoteScope.decode(item.scopeJson) }.getOrNull()
+                    }
+                    val isSelected = itemScope != null &&
+                        (item.keyword.isNotBlank() || itemScope != NoteScope()) &&
+                        item.keyword.trim() == keyword.text.toString().trim() &&
+                        itemScope == scope
+                    Box {
+                        SmartFolderPill(
+                            name = item.name,
+                            active = isSelected,
+                            dark = dark,
+                            onClick = { restore(item) },
+                            onMoreClick = { itemMenu = true },
+                        )
+                        ComposablesMenu(expanded = itemMenu, onDismiss = { itemMenu = false }) {
+                            ComposablesMenuItem("重命名", icon = MintIcons.SmartFolder) {
+                                itemMenu = false
+                                renamingItem = item
+                            }
+                            ComposablesMenuItem("删除搜索", icon = MintIcons.Close, destructive = true) {
+                                itemMenu = false
+                                coroutine.launch {
+                                    try {
+                                        repository.delete(item.id)
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (_: Exception) {
+                                        error = "无法删除搜索条件，请重试"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        if (dialog == null) error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+        if (resultCount != null || hasAnyFilter) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                if (resultCount != null) {
+                    Text(
+                        text = "共 $resultCount 条笔记",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                        color = scheme.onSurfaceVariant,
+                    )
+                } else {
+                    Spacer(Modifier.width(1.dp))
+                }
+                if (hasAnyFilter && !active) {
+                    Text(
+                        text = "清空",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = scheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .semantics { contentDescription = "重置条件" }
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                role = Role.Button,
+                                onClick = ::clearAllFilters,
+                            )
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
+            }
+        }
+
+        if (dialog == null && renamingItem == null) {
+            error?.let {
+                Text(it, color = scheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
+
     when (dialog) {
-        "筛选" -> ScopeDialog(scope, tags, notebooks, { dialog = null }) { onFilter(it); dialog = null }
+        "筛选" -> ScopeDialog(
+            initial = scope,
+            tags = tags,
+            notebooks = notebooks,
+            dark = dark,
+            close = { dialog = null },
+        ) {
+            onFilter(it)
+            dialog = null
+        }
+
         "保存条件" -> {
             var name by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
-            SearchDialog(onDismissRequest = { if (!busy) dialog = null }, title = { Text("保存搜索条件") },
-                text = {
-                    Column {
-                        OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("名称") })
-                        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            fun saveCurrent() {
+                if (name.isBlank() || busy) return
+                busy = true
+                coroutine.launch {
+                    try {
+                        repository.save(name, keyword.text.toString(), scope)
+                        dialog = null
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (problem: IllegalArgumentException) {
+                        error = problem.message
+                    } catch (_: Exception) {
+                        error = "无法保存搜索条件，请重试"
+                    } finally {
+                        busy = false
                     }
+                }
+            }
+            MintGlassDialog(
+                onDismissRequest = { if (!busy) dialog = null },
+                dark = dark,
+                dismissOnClickOutside = !busy,
+                title = "保存搜索条件",
+                subtitle = "保存后将作为智能文件夹显示在搜索栏下方",
+                actions = {
+                    MintPillButton(
+                        label = "取消",
+                        dark = dark,
+                        enabled = !busy,
+                        onClick = { dialog = null },
+                    )
+                    MintPillButton(
+                        label = "保存搜索",
+                        primary = true,
+                        icon = MintIcons.Check,
+                        dark = dark,
+                        enabled = name.isNotBlank() && !busy,
+                        onClick = ::saveCurrent,
+                    )
                 },
-                confirmButton = {
-                    TextButton(enabled = name.isNotBlank() && !busy, onClick = {
-                        busy = true
-                        coroutine.launch {
-                            try {
-                                repository.save(name, keyword.text.toString(), scope)
-                                dialog = null
-                                error = null
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (problem: IllegalArgumentException) {
-                                error = problem.message
-                            } catch (_: Exception) {
-                                error = "无法保存搜索条件，请重试"
-                            } finally { busy = false }
-                        }
-                    }) { Text("保存搜索") }
-                },
-                dismissButton = { TextButton(onClick = { dialog = null }, enabled = !busy) { Text("取消") } })
+            ) {
+                MintTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        error = null
+                    },
+                    placeholder = "输入智能文件夹名称",
+                    dark = dark,
+                    leadingIcon = MintIcons.SmartFolder,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { saveCurrent() }),
+                )
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = scheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
+
         "已保存搜索" -> {
             var deleting by remember { mutableStateOf<SavedSearch?>(null) }
-            SearchDialog(onDismissRequest = { dialog = null }, title = { Text("已保存搜索") },
-                text = {
-                    Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-                        if (saved.isEmpty()) Text("还没有保存的搜索")
-                        saved.forEach { item ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = { restore(item) }, modifier = Modifier.weight(1f)) { Text(item.name) }
-                                TextButton(onClick = { deleting = item }) { Text("删除") }
-                            }
-                        }
-                        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    }
+            MintGlassDialog(
+                onDismissRequest = { dialog = null },
+                dark = dark,
+                title = "已保存搜索",
+                actions = {
+                    MintPillButton(
+                        label = "关闭",
+                        primary = true,
+                        dark = dark,
+                        onClick = { dialog = null },
+                    )
                 },
-                confirmButton = { TextButton(onClick = { dialog = null }) { Text("关闭") } })
-            deleting?.let { item ->
-                SearchDialog(onDismissRequest = { deleting = null }, title = { Text("删除「${item.name}」？") },
-                    confirmButton = { TextButton(onClick = {
-                        deleting = null
-                        coroutine.launch {
-                            try { repository.delete(item.id) }
-                            catch (cancelled: CancellationException) { throw cancelled }
-                            catch (_: Exception) { error = "无法删除搜索条件，请重试" }
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (saved.isEmpty()) {
+                        Text("还没有保存的搜索", color = scheme.onSurfaceVariant)
+                    }
+                    saved.forEach { item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (dark) Color(0xFF1A2B22) else Color(0xFFF3F8F4))
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = MintIcons.SmartFolder,
+                                contentDescription = null,
+                                tint = scheme.primary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Text(
+                                text = item.name,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = scheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = { restore(item) },
+                                    )
+                                    .padding(vertical = 8.dp),
+                            )
+                            MintPillButton(
+                                label = "删除",
+                                destructive = true,
+                                dark = dark,
+                                onClick = { deleting = item },
+                            )
                         }
-                    }) { Text("删除搜索") } },
-                    dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } })
+                    }
+                    error?.let {
+                        Text(it, color = scheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            deleting?.let { item ->
+                MintGlassDialog(
+                    onDismissRequest = { deleting = null },
+                    dark = dark,
+                    title = "删除「${item.name}」？",
+                    subtitle = "仅移除这条智能文件夹快捷方式，不会删除笔记。",
+                    actions = {
+                        MintPillButton(
+                            label = "取消",
+                            dark = dark,
+                            onClick = { deleting = null },
+                        )
+                        MintPillButton(
+                            label = "删除搜索",
+                            destructive = true,
+                            dark = dark,
+                            onClick = {
+                                deleting = null
+                                coroutine.launch {
+                                    try {
+                                        repository.delete(item.id)
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (_: Exception) {
+                                        error = "无法删除搜索条件，请重试"
+                                    }
+                                }
+                            },
+                        )
+                    },
+                ) {}
             }
         }
     }
-}
 
-@Composable
-private fun SearchIcon(label: String, active: Boolean = false, more: Boolean = false, action: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Box(Modifier.size(48.dp).clip(CircleShape)
-        .background(if (active) scheme.primaryContainer else scheme.surfaceContainer)
-        .semantics { contentDescription = label }
-        .clickable(interactionSource = null, indication = null, role = Role.Button, onClick = action),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.size(20.dp)) {
-            if (more) {
-                for (i in -1..1) drawCircle(scheme.onSurface, 1.4.dp.toPx(), center + Offset(i * 5.dp.toPx(), 0f))
-            } else {
-                for (i in 0..2) {
-                    val y = size.height * (.22f + i * .28f)
-                    val knob = size.width * (if (i == 1) .64f else .36f)
-                    drawLine(scheme.onSurface, Offset(0f, y), Offset(size.width, y), 1.5.dp.toPx(), StrokeCap.Round)
-                    drawCircle(scheme.onSurface, 2.25.dp.toPx(), Offset(knob, y))
+    renamingItem?.let { item ->
+        var newName by remember(item.id) { mutableStateOf(item.name) }
+        var busy by remember(item.id) { mutableStateOf(false) }
+        fun submitRename() {
+            if (newName.isBlank() || busy) return
+            busy = true
+            coroutine.launch {
+                try {
+                    repository.rename(item.id, newName)
+                    renamingItem = null
+                    error = null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (problem: IllegalArgumentException) {
+                    error = problem.message
+                } catch (_: Exception) {
+                    error = "无法重命名搜索条件，请重试"
+                } finally {
+                    busy = false
                 }
             }
         }
+        MintGlassDialog(
+            onDismissRequest = { if (!busy) renamingItem = null },
+            dark = dark,
+            dismissOnClickOutside = !busy,
+            title = "重命名智能文件夹",
+            actions = {
+                MintPillButton(
+                    label = "取消",
+                    dark = dark,
+                    enabled = !busy,
+                    onClick = { renamingItem = null },
+                )
+                MintPillButton(
+                    label = "保存",
+                    primary = true,
+                    dark = dark,
+                    enabled = newName.isNotBlank() && !busy,
+                    onClick = ::submitRename,
+                )
+            },
+        ) {
+            MintTextField(
+                value = newName,
+                onValueChange = {
+                    newName = it
+                    error = null
+                },
+                placeholder = "输入新名称",
+                dark = dark,
+                leadingIcon = MintIcons.SmartFolder,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { submitRename() }),
+            )
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = scheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
 @Composable
-private fun SearchDialog(
-    onDismissRequest: () -> Unit,
-    title: @Composable () -> Unit,
-    text: @Composable () -> Unit = {},
-    confirmButton: @Composable () -> Unit,
-    dismissButton: @Composable () -> Unit = {},
+private fun SmartFolderPill(
+    name: String,
+    active: Boolean,
+    dark: Boolean,
+    onClick: () -> Unit,
+    onMoreClick: () -> Unit,
 ) {
-    val dark = isSystemInDarkTheme()
-    val backdrop = rememberGlassBackdrop()
-    Dialog(onDismissRequest, properties = DialogProperties()) {
-        GlassSurface(backdrop, GlassTier.Reduced, dark, Modifier.widthIn(max = 420.dp).fillMaxWidth()) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ProvideTextStyle(MaterialTheme.typography.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)) {
-                    title()
-                }
-                ProvideTextStyle(MaterialTheme.typography.bodyMedium) { text() }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    dismissButton()
-                    confirmButton()
-                }
-            }
+    val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(50)
+    val fill = if (active) {
+        if (dark) Color(0xFF23523E) else Color(0xFFD7F2E4)
+    } else {
+        if (dark) Color(0xFF1D3027) else Color(0xFFFAFDF9)
+    }
+    val contentColor = if (active) {
+        if (dark) Color(0xFFAAF0CB) else Color(0xFF0E5A3A)
+    } else {
+        scheme.onSurface
+    }
+    val iconTint = if (active) contentColor else scheme.primary
+    val border = if (active) {
+        scheme.primary.copy(alpha = if (dark) 0.72f else 0.50f)
+    } else {
+        scheme.outline.copy(alpha = if (dark) 0.48f else 0.34f)
+    }
+    Row(
+        modifier = Modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .widthIn(max = 260.dp)
+            .clip(shape)
+            .background(fill, shape)
+            .border(if (active) 1.2.dp else 0.9.dp, border, shape)
+            .semantics { selected = active },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .defaultMinSize(minHeight = 48.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClick = onClick,
+                )
+                .padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = MintIcons.SmartFolder,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                ),
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(width = 34.dp, height = 48.dp)
+                .clip(CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClickLabel = "管理已保存搜索 $name",
+                    onClick = onMoreClick,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = MintIcons.More,
+                contentDescription = null,
+                tint = if (active) contentColor.copy(alpha = 0.85f) else scheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp),
+            )
         }
     }
 }
@@ -224,8 +647,13 @@ private fun SearchDialog(
 private val mediaChoices = listOf("image" to "图片", "audio" to "音频", "video" to "视频")
 
 private val sources = listOf(
-    "manual" to "手动记录", "voice" to "语音", "share" to "系统分享",
-    "import" to "导入", "agent" to "Agent", "insight" to "洞察", "web" to "网页",
+    "manual" to "手动记录",
+    "voice" to "语音",
+    "share" to "系统分享",
+    "import" to "导入",
+    "agent" to "Agent",
+    "insight" to "洞察",
+    "web" to "网页",
 )
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -234,78 +662,272 @@ private fun ScopeDialog(
     initial: NoteScope,
     tags: List<TagEntity>,
     notebooks: List<NotebookEntity>,
+    dark: Boolean,
     close: () -> Unit,
     apply: (NoteScope) -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     val zone = remember { ZoneId.systemDefault() }
     var scope by remember { mutableStateOf(initial) }
     var start by remember { mutableStateOf(initial.from?.atZone(zone)?.toLocalDate()?.toString().orEmpty()) }
     var end by remember { mutableStateOf(initial.until?.atZone(zone)?.toLocalDate()?.minusDays(1)?.toString().orEmpty()) }
+    var customDateExpanded by remember { mutableStateOf(start.isNotEmpty() || end.isNotEmpty()) }
     var error by remember { mutableStateOf(false) }
-    SearchDialog(onDismissRequest = close, title = { Text("筛选笔记") },
-        text = {
-            Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.clickable { scope = scope.copy(updatedTime = !scope.updatedTime) },
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(scope.updatedTime, null, Modifier.padding(end = 10.dp))
-                    Text(if (scope.updatedTime) "按修改日期" else "按创建日期")
-                }
-                OutlinedTextField(start, { start = it; error = false }, singleLine = true, label = { Text("开始日期 YYYY-MM-DD") })
-                OutlinedTextField(end, { end = it; error = false }, singleLine = true, label = { Text("结束日期 YYYY-MM-DD") })
-                TextButton(onClick = {
-                    val date = LocalDate.now(zone).minusYears(1)
-                    start = date.toString()
-                    end = start
-                    scope = scope.copy(updatedTime = false)
-                    error = false
-                }) { Text("去年今日") }
-                if (error) Text("请输入有效日期，结束日期须在开始日期当天或之后。", color = MaterialTheme.colorScheme.error)
 
-                FilterChip(scope.archived, { scope = scope.copy(archived = !scope.archived) }, { Text("包含归档") })
-                FilterChip(scope.untagged, {
-                    scope = scope.copy(untagged = !scope.untagged, includeTags = emptySet())
-                }, { Text("仅无标签") })
-                if (tags.isNotEmpty()) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(scope.descendants, { scope = scope.copy(descendants = !scope.descendants) }, { Text("包含下级") })
-                        FilterChip(scope.matchAll, { scope = scope.copy(matchAll = !scope.matchAll) }, {
-                            Text(if (scope.matchAll) "匹配全部标签" else "匹配任一标签")
-                        })
+    val todayStr = remember { LocalDate.now(zone).toString() }
+    val weekStartStr = remember { LocalDate.now(zone).minusDays(6).toString() }
+    val lastYearStr = remember { LocalDate.now(zone).minusYears(1).toString() }
+
+    val preset = when {
+        start == todayStr && end == todayStr -> "today"
+        start == weekStartStr && end == todayStr -> "week"
+        start == lastYearStr && end == lastYearStr -> "last_year"
+        start.isNotEmpty() || end.isNotEmpty() -> "custom"
+        else -> "none"
+    }
+
+    MintGlassDialog(
+        onDismissRequest = close,
+        dark = dark,
+        title = "筛选笔记",
+        actions = {
+            MintPillButton(
+                label = "取消",
+                dark = dark,
+                onClick = close,
+            )
+            MintPillButton(
+                label = "应用筛选",
+                primary = true,
+                icon = MintIcons.Check,
+                dark = dark,
+                onClick = {
+                    try {
+                        val from = start.trim().takeIf(String::isNotEmpty)
+                            ?.let { LocalDate.parse(it).atStartOfDay(zone).toInstant() }
+                        val until = end.trim().takeIf(String::isNotEmpty)
+                            ?.let { LocalDate.parse(it).plusDays(1).atStartOfDay(zone).toInstant() }
+                        apply(scope.copy(from = from, until = until))
+                    } catch (_: IllegalArgumentException) {
+                        error = true
+                    } catch (_: java.time.DateTimeException) {
+                        error = true
                     }
-                    val labels = tags.map { it.id to tagPath(tags, it) }
-                    if (!scope.untagged) ChoiceChips("包含标签", labels, scope.includeTags) { scope = scope.copy(includeTags = it) }
-                    ChoiceChips("排除标签", labels, scope.excludeTags) { scope = scope.copy(excludeTags = it) }
-                }
-                if (notebooks.isNotEmpty()) {
-                    ChoiceChips("笔记本", notebooks.map { it.id to it.name }, scope.notebooks) { scope = scope.copy(notebooks = it) }
-                }
-                ChoiceChips("来源", sources, scope.sources) { scope = scope.copy(sources = it) }
-                ChoiceChips("媒体", mediaChoices, scope.media) {
-                    scope = scope.copy(media = it)
+                },
+            )
+        },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 460.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "时间范围",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = scheme.onSurface,
+            )
+            MintSegmentedBar(
+                options = listOf("按创建日期", "按修改日期"),
+                selectedIndex = if (scope.updatedTime) 1 else 0,
+                onSelect = { scope = scope.copy(updatedTime = it == 1) },
+                dark = dark,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                MintChip(
+                    label = "今天",
+                    dark = dark,
+                    leadingIcon = MintIcons.Calendar,
+                    style = if (preset == "today") MintChipStyle.Selected else MintChipStyle.Standard,
+                    onClick = {
+                        if (preset == "today") {
+                            start = ""
+                            end = ""
+                        } else {
+                            start = todayStr
+                            end = todayStr
+                            customDateExpanded = false
+                        }
+                        error = false
+                    },
+                )
+                MintChip(
+                    label = "近 7 天",
+                    dark = dark,
+                    leadingIcon = MintIcons.Calendar,
+                    style = if (preset == "week") MintChipStyle.Selected else MintChipStyle.Standard,
+                    onClick = {
+                        if (preset == "week") {
+                            start = ""
+                            end = ""
+                        } else {
+                            start = weekStartStr
+                            end = todayStr
+                            customDateExpanded = false
+                        }
+                        error = false
+                    },
+                )
+                MintChip(
+                    label = "去年今日",
+                    dark = dark,
+                    leadingIcon = MintIcons.Calendar,
+                    style = if (preset == "last_year") MintChipStyle.Selected else MintChipStyle.Standard,
+                    onClick = {
+                        if (preset == "last_year") {
+                            start = ""
+                            end = ""
+                        } else {
+                            start = lastYearStr
+                            end = lastYearStr
+                            scope = scope.copy(updatedTime = false)
+                            customDateExpanded = false
+                        }
+                        error = false
+                    },
+                )
+                MintChip(
+                    label = "自定义",
+                    dark = dark,
+                    style = if (customDateExpanded || preset == "custom") MintChipStyle.Selected else MintChipStyle.Standard,
+                    onClick = { customDateExpanded = !customDateExpanded },
+                )
+            }
+            AnimatedVisibility(visible = customDateExpanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MintTextField(
+                        value = start,
+                        onValueChange = {
+                            start = it
+                            error = false
+                        },
+                        placeholder = "开始日期 YYYY-MM-DD",
+                        dark = dark,
+                        leadingIcon = MintIcons.Calendar,
+                    )
+                    MintTextField(
+                        value = end,
+                        onValueChange = {
+                            end = it
+                            error = false
+                        },
+                        placeholder = "结束日期 YYYY-MM-DD",
+                        dark = dark,
+                        leadingIcon = MintIcons.Calendar,
+                    )
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                try {
-                    val from = start.trim().takeIf(String::isNotEmpty)?.let { LocalDate.parse(it).atStartOfDay(zone).toInstant() }
-                    val until = end.trim().takeIf(String::isNotEmpty)?.let { LocalDate.parse(it).plusDays(1).atStartOfDay(zone).toInstant() }
-                    apply(scope.copy(from = from, until = until))
-                } catch (_: IllegalArgumentException) { error = true }
-                catch (_: java.time.DateTimeException) { error = true }
-            }) { Text("应用筛选") }
-        },
-        dismissButton = { TextButton(onClick = close) { Text("取消") } })
+            if (error) {
+                Text(
+                    text = "请输入有效日期，结束日期须在开始日期当天或之后。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.error,
+                )
+            }
+
+            Text(
+                text = "状态与标签",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = scheme.onSurface,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                MintChip(
+                    label = "包含归档",
+                    dark = dark,
+                    leadingIcon = MintIcons.Archive,
+                    style = if (scope.archived) MintChipStyle.Selected else MintChipStyle.Standard,
+                    onClick = { scope = scope.copy(archived = !scope.archived) },
+                )
+                MintChip(
+                    label = "仅无标签",
+                    dark = dark,
+                    leadingIcon = MintIcons.Tag,
+                    style = if (scope.untagged) MintChipStyle.Selected else MintChipStyle.Standard,
+                    onClick = {
+                        scope = scope.copy(untagged = !scope.untagged, includeTags = emptySet())
+                    },
+                )
+            }
+            if (tags.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    MintChip(
+                        label = "包含下级",
+                        dark = dark,
+                        style = if (scope.descendants) MintChipStyle.Selected else MintChipStyle.Standard,
+                        onClick = { scope = scope.copy(descendants = !scope.descendants) },
+                    )
+                    MintChip(
+                        label = if (scope.matchAll) "匹配全部标签" else "匹配任一标签",
+                        dark = dark,
+                        style = if (scope.matchAll) MintChipStyle.Selected else MintChipStyle.Standard,
+                        onClick = { scope = scope.copy(matchAll = !scope.matchAll) },
+                    )
+                }
+                val labels = remember(tags) { tags.map { it.id to tagPath(tags, it) } }
+                if (!scope.untagged) {
+                    ChoiceChips("包含标签", labels, scope.includeTags, dark) {
+                        scope = scope.copy(includeTags = it)
+                    }
+                }
+                ChoiceChips("排除标签", labels, scope.excludeTags, dark) {
+                    scope = scope.copy(excludeTags = it)
+                }
+            }
+            if (notebooks.isNotEmpty()) {
+                ChoiceChips("笔记本", notebooks.map { it.id to it.name }, scope.notebooks, dark) {
+                    scope = scope.copy(notebooks = it)
+                }
+            }
+            ChoiceChips("来源", sources, scope.sources, dark) {
+                scope = scope.copy(sources = it)
+            }
+            ChoiceChips("媒体", mediaChoices, scope.media, dark) {
+                scope = scope.copy(media = it)
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChoiceChips(title: String, items: List<Pair<String, String>>, selected: Set<String>, change: (Set<String>) -> Unit) {
-    Text(title, style = MaterialTheme.typography.labelLarge)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items.forEach { (id, name) ->
-            FilterChip(id in selected, { change(if (id in selected) selected - id else selected + id) }, { Text(name) })
+private fun ChoiceChips(
+    title: String,
+    items: List<Pair<String, String>>,
+    selected: Set<String>,
+    dark: Boolean,
+    change: (Set<String>) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            items.forEach { (id, name) ->
+                val isSelected = id in selected
+                MintChip(
+                    label = name,
+                    dark = dark,
+                    style = if (isSelected) MintChipStyle.Selected else MintChipStyle.Standard,
+                    onClick = { change(if (isSelected) selected - id else selected + id) },
+                )
+            }
         }
     }
 }

@@ -23,7 +23,6 @@
 // Adapted from Composables UI TextField.kt, upstream bbaf1ba.
 package io.github.z3275630ops.floatingnotes.ui.designsystem
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -39,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -46,26 +46,33 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun ComposablesSearchField(state: TextFieldState, label: String, tag: String = "note-reference-filter") {
+internal fun ComposablesSearchField(
+    state: TextFieldState,
+    label: String,
+    modifier: Modifier = Modifier,
+    tag: String = "note-reference-filter",
+) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(16.dp)
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val type = MaterialTheme.typography.bodyMedium
     BasicTextField(
         state = state,
-        modifier = Modifier.fillMaxWidth().testTag(tag)
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(tag)
             .semantics { contentDescription = label },
         interactionSource = interaction,
         textStyle = type.copy(color = scheme.onSurface),
@@ -73,29 +80,62 @@ internal fun ComposablesSearchField(state: TextFieldState, label: String, tag: S
         cursorBrush = SolidColor(scheme.primary),
         decorator = { input ->
             Row(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                    .background(scheme.surfaceContainer, shape)
-                    .border(if (focused) 2.dp else 1.dp, if (focused) scheme.primary else scheme.outlineVariant, shape)
-                    .padding(start = 12.dp, end = if (state.text.isEmpty()) 12.dp else 0.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(shape)
+                    .background(scheme.surface.copy(alpha = 0.96f), shape)
+                    .border(
+                        width = if (focused) 1.8.dp else 1.dp,
+                        color = if (focused) scheme.primary else scheme.outline.copy(alpha = 0.34f),
+                        shape = shape,
+                    )
+                    .padding(start = 14.dp, end = if (state.text.isEmpty()) 14.dp else 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Canvas(Modifier.size(18.dp)) {
-                    val stroke = 1.5.dp.toPx()
-                    drawCircle(scheme.onSurfaceVariant, 4.8.dp.toPx(), Offset(size.width * .42f, size.height * .42f),
-                        style = Stroke(stroke))
-                    drawLine(scheme.onSurfaceVariant, Offset(size.width * .62f, size.height * .62f),
-                        Offset(size.width * .88f, size.height * .88f), stroke, StrokeCap.Round)
-                }
-                Box(Modifier.weight(1f)) {
-                    if (state.text.isEmpty()) Text(label, color = scheme.onSurfaceVariant, style = type)
+                Icon(
+                    imageVector = MintIcons.Search,
+                    contentDescription = null,
+                    tint = if (focused) scheme.primary else scheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(
+                            top = 10.dp,
+                            bottom = 10.dp,
+                            end = if (state.text.isEmpty()) 2.dp else 8.dp,
+                        )
+                        .clipToBounds(),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (state.text.isEmpty()) {
+                        Text(
+                            text = label,
+                            color = scheme.onSurfaceVariant.copy(alpha = 0.78f),
+                            style = type,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     input()
                 }
                 if (state.text.isNotEmpty()) {
                     IconButton(
                         onClick = { state.edit { replace(0, length, "") } },
-                        modifier = Modifier.semantics { contentDescription = "清除筛选" },
-                    ) { Text("×", color = scheme.onSurfaceVariant, style = MaterialTheme.typography.titleLarge) }
+                        modifier = Modifier
+                            .size(48.dp)
+                            .semantics { contentDescription = "清除筛选" },
+                    ) {
+                        Icon(
+                            imageVector = MintIcons.Close,
+                            contentDescription = null,
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
         },

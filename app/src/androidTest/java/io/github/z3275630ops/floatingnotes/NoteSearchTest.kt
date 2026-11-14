@@ -134,7 +134,7 @@ class NoteSearchTest {
                     arrayOf(document, timestamp, timestamp))
                 old.version = 2
             }
-            Room.databaseBuilder(context, NotesDatabase::class.java, name).addMigrations(SearchMigration).build().let { db ->
+            Room.databaseBuilder(context, NotesDatabase::class.java, name).addMigrations(*NotesDatabase.migrations).build().let { db ->
                 try {
                 val result = db.search().search(searchQuery("", NoteScope(media = setOf("audio")), 50)).single()
                 assertEquals(document, result.documentJson)

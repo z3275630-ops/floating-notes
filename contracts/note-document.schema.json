@@ -421,6 +421,17 @@
                 "type": "string",
                 "format": "uuid"
               },
+              "target_block_id": {
+                "type": "string"
+              },
+              "start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "end": {
+                "type": "integer",
+                "minimum": 0
+              },
               "target_revision": {
                 "type": "integer",
                 "minimum": 1

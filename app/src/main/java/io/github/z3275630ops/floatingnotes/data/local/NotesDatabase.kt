@@ -53,7 +53,11 @@ internal data class NoteVersionEntity(
     @ColumnInfo(name = "created_at") val createdAt: String,
 )
 
-@Entity(tableName = "task_index", primaryKeys = ["note_id", "block_id"])
+@Entity(
+    tableName = "task_index",
+    primaryKeys = ["note_id", "block_id"],
+    indices = [Index("due_date"), Index("checked"), Index("occurrence_id")],
+)
 internal data class TaskIndexEntity(
     @ColumnInfo(name = "note_id") val noteId: String,
     @ColumnInfo(name = "block_id") val blockId: String,
@@ -109,8 +113,9 @@ internal interface NotesDao {
 @Database(
     entities = [NoteEntity::class, DraftEntity::class, NoteVersionEntity::class,
         TaskIndexEntity::class, OutboxEntity::class, TagEntity::class, NotebookEntity::class,
-        NoteTagEntity::class, NotebookNoteEntity::class, NoteLinkEntity::class, SavedSearch::class],
-    version = 3,
+        NoteTagEntity::class, NotebookNoteEntity::class, NoteLinkEntity::class, SavedSearch::class,
+        ReminderEntity::class, TaskOccurrenceEntity::class],
+    version = 4,
     autoMigrations = [AutoMigration(from = 1, to = 2, spec = LinkBackfill::class)],
     exportSchema = true,
 )
@@ -118,14 +123,16 @@ internal abstract class NotesDatabase : RoomDatabase() {
     abstract fun notes(): NotesDao
     abstract fun organization(): OrganizationDao
     abstract fun search(): SearchDao
+    abstract fun taskReminders(): TaskReminderDao
 
     companion object {
         private var shared: NotesDatabase? = null
+        internal val migrations: Array<Migration> = arrayOf(SearchMigration, MIGRATION_3_4)
 
         @Synchronized
         fun open(context: Context): NotesDatabase = shared ?: Room.databaseBuilder(
             context.applicationContext, NotesDatabase::class.java, "floating-notes.db",
-        ).addMigrations(SearchMigration).build().also { shared = it }
+        ).addMigrations(*migrations).build().also { shared = it }
     }
 }
 
