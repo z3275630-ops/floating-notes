@@ -17,6 +17,10 @@ data class NoteBlock internal constructor(
     val referenceRevision: Long?
         get() = if (type == "reference") original?.let { JSONObject(it).optLong("target_revision") }?.takeIf { it > 0 } else null
 
+    internal val attachmentId: String?
+        get() = if (type in mediaTypes) original?.let { JSONObject(it).optString("attachment_id") }
+            ?.takeIf(String::isNotBlank) else null
+
     val editable: Boolean
         get() = (type == "paragraph" || type == "checkbox") &&
             original?.let { (JSONObject(it).optJSONArray("marks")?.length() ?: 0) == 0 } != false
@@ -32,6 +36,13 @@ data class NoteBlock internal constructor(
     }
 
     companion object {
+        private val mediaTypes = setOf("image", "audio", "video")
+
+        internal fun attachment(type: String, attachmentId: String): NoteBlock {
+            require(type in mediaTypes)
+            return decode(JSONObject().put("id", newId()).put("type", type).put("attachment_id", attachmentId))
+        }
+
         fun paragraph(text: String = "") = NoteBlock(newId(), "paragraph", text, false, null)
         fun checkbox(text: String = "") = NoteBlock(newId(), "checkbox", text, false, null)
         fun reference(noteId: String, revision: Long, label: String): NoteBlock {

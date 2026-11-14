@@ -35,7 +35,9 @@ class ShareCaptureActivity : ComponentActivity() {
             FloatingNotesTheme {
                 when (payload) {
                     is SharePayload.Rejected -> ShareMessage(payload.message, ::finish)
-                    is SharePayload.Text -> SharePreview(captureId, payload, model, ::finish)
+                    is SharePayload.Text -> SharePreview(captureId, payload.body, payload.sourceUrl, model, finish = ::finish)
+                    is SharePayload.Media -> SharePreview(captureId, payload.caption, null, model,
+                        media = payload, restore = savedInstanceState != null, finish = ::finish)
                 }
             }
         }
@@ -55,8 +57,11 @@ class ShareCaptureActivity : ComponentActivity() {
 @Composable
 private fun SharePreview(
     captureId: String,
-    payload: SharePayload.Text,
+    body: String,
+    sourceUrl: String?,
     model: NotesViewModel,
+    media: SharePayload.Media? = null,
+    restore: Boolean = false,
     finish: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -69,10 +74,18 @@ private fun SharePreview(
     val motion = remember { CaptureMotion(scope, open) }
 
     LaunchedEffect(captureId) {
-        when (model.openIncomingCapture(captureId, payload.body, payload.sourceUrl)) {
+        val retainedEditor = model.editor != null
+        when (model.openIncomingCapture(captureId, body, sourceUrl)) {
             IncomingCapture.Opened -> {
                 open = true
                 motion.settle(true)
+                if (media != null) model.editor?.let { session ->
+                    if (!restore) model.importAttachments(session, media.files, media.mime)
+                    else if (!retainedEditor) {
+                        session.importFailed = true
+                        session.importStatus = "上次已存的附件已恢复，如有遗漏请重新选择"
+                    }
+                }
             }
             IncomingCapture.AlreadySaved -> finish()
             IncomingCapture.Failed -> error = "无法打开收集草稿。请返回后重试。"
@@ -118,7 +131,7 @@ private fun SharePreview(
                             Text("来源链接 · $it", maxLines = 2, modifier = Modifier.padding(bottom = 8.dp),
                                 style = MaterialTheme.typography.labelMedium)
                         }
-                        NoteEditor(session, onSave = { end(true) }, onDiscard = { end(false) })
+                        NoteEditor(session, model, onSave = { end(true) }, onDiscard = { end(false) })
                     }
                 }
             }

@@ -1,5 +1,7 @@
 package io.github.z3275630ops.floatingnotes.feature.capture
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +25,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesSearchFiel
 @Composable
 internal fun ColumnScope.NoteEditor(
     session: EditorSession,
+    model: NotesViewModel,
     onSave: () -> Unit,
     onDiscard: () -> Unit,
     notes: List<NoteEntity> = emptyList(),
@@ -32,8 +35,39 @@ internal fun ColumnScope.NoteEditor(
     val scheme = MaterialTheme.colorScheme
     var confirmDiscard by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf<String?>(null) }
-    if (onOpenRelated != null && (notes.any { it.id != session.draft.noteId } || backlinks.isNotEmpty())) {
-        Row {
+    val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
+        model.importAttachments(session, it)
+    }
+    var showImport by remember { mutableStateOf(false) }
+    var space by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(showImport) {
+        if (showImport) space = model.attachments.availableSpace()
+    }
+    if (showImport) AlertDialog(
+        onDismissRequest = { showImport = false },
+        title = { Text("添加附件") },
+        text = {
+            Text("可选择图片、音频或视频，每个最多 100 MB。" +
+                (space?.let { "\n本机可用空间 ${it / 1_000_000} MB" } ?: ""))
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                showImport = false
+                try {
+                    attachmentPicker.launch(arrayOf("image/*", "audio/*", "video/*"))
+                } catch (_: android.content.ActivityNotFoundException) {
+                    session.importStatus = "本机没有可用的文件选择器"
+                    session.importFailed = true
+                }
+            }) { Text("选择文件") }
+        },
+        dismissButton = { TextButton(onClick = { showImport = false }) { Text("取消") } },
+    )
+    Row {
+        TextButton(onClick = { showImport = true }, enabled = !session.writing && !session.importing) {
+            Text(if (session.importFailed) "重新选择" else "附件")
+        }
+        if (onOpenRelated != null && (notes.any { it.id != session.draft.noteId } || backlinks.isNotEmpty())) {
             TextButton(onClick = { picker = "引用笔记" }, enabled = !session.writing) { Text("@ 引用") }
             if (backlinks.isNotEmpty()) TextButton(onClick = { picker = "引用此笔记的记录" }) {
                 Text("反链 ${backlinks.size}")
@@ -78,6 +112,10 @@ internal fun ColumnScope.NoteEditor(
                                 }
                             },
                         )
+                    } else if (block.attachmentId != null) {
+                        AttachmentRow(model.attachments, requireNotNull(block.attachmentId), !session.writing) {
+                            session.removeAttachment(block)
+                        }
                     } else if (block.referenceTarget != null && onOpenRelated != null) {
                         val target = notes.firstOrNull { it.id == block.referenceTarget }
                         TextButton(
@@ -91,6 +129,14 @@ internal fun ColumnScope.NoteEditor(
                     }
                 }
             }
+        }
+    }
+    session.importStatus?.let { status ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(status, Modifier.weight(1f),
+                color = if (session.importFailed) scheme.error else scheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium)
+            if (session.importing) TextButton(onClick = { model.cancelImport(session) }) { Text("取消导入") }
         }
     }
     if (session.status.isNotEmpty()) Text(
@@ -108,7 +154,7 @@ internal fun ColumnScope.NoteEditor(
         Spacer(Modifier.weight(1f))
         Button(
             onClick = onSave,
-            enabled = !session.writing && session.document().hasContent,
+            enabled = !session.writing && !session.importing && session.document().hasContent,
         ) { Text("保存") }
     }
     picker?.let { mode ->

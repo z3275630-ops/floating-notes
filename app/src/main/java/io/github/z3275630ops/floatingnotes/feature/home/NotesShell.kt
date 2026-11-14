@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.DebugSampleAction
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.text.style.TextOverflow
+import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
+import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
+import io.github.z3275630ops.floatingnotes.feature.capture.AttachmentThumbnail
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.tagSubtree
 import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
@@ -191,7 +194,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                 }
                             }
                             items(notes.filter { (it.archivedAt != null) == showArchive }, key = { it.id }) { note ->
-                                NoteCard(note, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
+                                NoteCard(note, model.attachments, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
                             }
                             items(samples) { text ->
                                 Card(
@@ -217,7 +220,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                             }
                             if (visible.isEmpty()) item { Text("此范围没有笔记") }
                             items(visible, key = { it.id }) { note ->
-                                NoteCard(note, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
+                                NoteCard(note, model.attachments, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
                             }
                         } else {
                             item { Text("页面原型，功能开发中。", color = scheme.onSurfaceVariant) }
@@ -277,7 +280,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                     if (session != null) {
                         val sources = links.filter { it.targetId == session.draft.noteId }.mapTo(hashSetOf()) { it.sourceId }
                         key(session.draft.id) {
-                            NoteEditor(session, { close(save = true) }, { close(discard = true) },
+                            NoteEditor(session, model, { close(save = true) }, { close(discard = true) },
                                 notes, notes.filter { it.id in sources }) { id ->
                                 scope.launch(Dispatchers.Main.immediate) {
                                     if (model.finishEditor() && model.openNote(id)) {
@@ -300,7 +303,7 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
 }
 
 @Composable
-private fun NoteCard(note: NoteEntity, onOpen: () -> Unit, onPin: () -> Unit, onArchive: () -> Unit, onOrganize: () -> Unit) {
+private fun NoteCard(note: NoteEntity, attachments: AttachmentStore, onOpen: () -> Unit, onPin: () -> Unit, onArchive: () -> Unit, onOrganize: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Card(
         onClick = onOpen,
@@ -311,7 +314,19 @@ private fun NoteCard(note: NoteEntity, onOpen: () -> Unit, onPin: () -> Unit, on
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
                 if (note.pinned) Text("已置顶", style = MaterialTheme.typography.labelMedium)
-                Text(note.searchText.ifBlank { "笔记" }, maxLines = 4, overflow = TextOverflow.Ellipsis,
+                val media = remember(note.documentJson) {
+                    runCatching {
+                        NoteDocument.decode(note.documentJson).blocks.filter { it.attachmentId != null }.take(3)
+                    }.getOrDefault(emptyList())
+                }
+                if (media.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    media.forEach { block ->
+                        key(block.id) {
+                            AttachmentThumbnail(attachments, requireNotNull(block.attachmentId), block.type, Modifier.size(44.dp))
+                        }
+                    }
+                }
+                Text(note.searchText.ifBlank { if (media.isEmpty()) "笔记" else "媒体笔记" }, maxLines = 4, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodyLarge)
             }
             Box {

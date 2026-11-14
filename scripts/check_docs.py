@@ -27,7 +27,7 @@ def validate(value, schema, base, at='$'):
     if '$ref' in schema:
         target = (base / schema['$ref']).resolve()
         require(target.is_relative_to(base.resolve()), f'{at}: external ref forbidden')
-        return validate(value, json.loads(target.read_text()), target.parent, at)
+        return validate(value, json.loads(target.read_text(encoding='utf-8')), target.parent, at)
     if 'oneOf' in schema:
         successes = 0
         for candidate in schema['oneOf']:
@@ -87,14 +87,16 @@ def validate(value, schema, base, at='$'):
 
 def run(root):
     root = root.resolve()
-    files = [p for p in root.rglob('*') if p.is_file() and '.git' not in p.parts]
+    generated = {'.git', '.gradle', '.kotlin', 'build', 'artifacts'}
+    files = [p for p in root.rglob('*') if p.is_file()
+             and not generated.intersection(p.relative_to(root).parts[:-1])]
     markdown = [p for p in files if p.suffix == '.md']
     documents = {}
     for path in files:
         if path.suffix == '.json':
-            documents[str(path.relative_to(root))] = json.loads(path.read_text())
+            documents[path.relative_to(root).as_posix()] = json.loads(path.read_text(encoding='utf-8'))
     for path in markdown:
-        text = re.sub(r'```.*?```', '', path.read_text(), flags=re.S)
+        text = re.sub(r'```.*?```', '', path.read_text(encoding='utf-8'), flags=re.S)
         for link in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
             target = link.strip().split(' "')[0].strip('<>')
             if not target or target.startswith('#') or urlsplit(target).scheme:
@@ -105,8 +107,8 @@ def run(root):
     catalog = documents['contracts/feature-catalog.json']
     features = catalog['features']
     require([f['id'] for f in features] == [f'F{i:02}' for i in range(1, 21)], 'F01-F20 incomplete or reordered')
-    screen_text = (root / 'docs/design/screens.md').read_text()
-    test_text = (root / 'docs/quality/test-cases.md').read_text()
+    screen_text = (root / 'docs/design/screens.md').read_text(encoding='utf-8')
+    test_text = (root / 'docs/quality/test-cases.md').read_text(encoding='utf-8')
     for feature in features:
         require((root / feature['spec']).is_file(), f"{feature['id']}: missing spec")
         require(feature['status'] in catalog['status_values'], 'invalid feature status')

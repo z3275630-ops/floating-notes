@@ -1,12 +1,16 @@
 package io.github.z3275630ops.floatingnotes.feature.capture
 
 import android.app.Application
+import android.net.Uri
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
+import io.github.z3275630ops.floatingnotes.data.local.AttachmentImportException
+import io.github.z3275630ops.floatingnotes.data.local.AttachmentKind
+import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
 import io.github.z3275630ops.floatingnotes.data.local.DraftEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotesDatabase
@@ -25,6 +29,7 @@ internal class EditorBlock(private val original: NoteBlock) {
     val text = TextFieldState(original.text)
     var checked by mutableStateOf(original.checked)
 
+    val attachmentId get() = original.attachmentId
     val referenceTarget get() = original.referenceTarget
 
     fun documentBlock() = if (editable) original.copy(text = text.text.toString(), checked = checked) else original
@@ -34,6 +39,10 @@ internal class EditorSession(val draft: DraftEntity, document: NoteDocument, val
     val blocks = mutableStateListOf<EditorBlock>().apply { addAll(document.blocks.map(::EditorBlock)) }
     var status by mutableStateOf(if (draft.editSeq > 0) "草稿已恢复" else "")
     var writing by mutableStateOf(false)
+    var closing = false
+    var importing by mutableStateOf(false)
+    var importStatus by mutableStateOf<String?>(null)
+    var importFailed by mutableStateOf(false)
     var checkpointSeq = draft.editSeq
     var committedSeq = if (existingNote && draft.editSeq > 0) -1 else draft.editSeq
     private var sequence = draft.editSeq
@@ -55,6 +64,12 @@ internal class EditorSession(val draft: DraftEntity, document: NoteDocument, val
         blocks.add(EditorBlock(NoteBlock.paragraph()))
     }
 
+    fun removeAttachment(block: EditorBlock) {
+        if (writing || block.attachmentId == null) return
+        blocks.remove(block)
+        if (blocks.isEmpty()) blocks.add(EditorBlock(NoteBlock.paragraph()))
+    }
+
     fun removeReference(block: EditorBlock) {
         if (writing || block.referenceTarget == null) return
         blocks.remove(block)
@@ -72,6 +87,7 @@ internal enum class IncomingCapture { Opened, AlreadySaved, Failed }
 internal class NotesViewModel(application: Application) : AndroidViewModel(application) {
     private val database = NotesDatabase.open(application)
     private val repository = NotesRepository(database)
+    val attachments = AttachmentStore(application)
     val organization = OrganizationRepository(database)
     var editor by mutableStateOf<EditorSession?>(null)
         private set
@@ -91,6 +107,96 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     private var watcher: Job? = null
     private var stopCheckpoint: Job? = null
+    private var importJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            try {
+                attachments.recover(database)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Retry recovery on import. Existing notes remain available.
+            }
+        }
+    }
+
+    fun importAttachments(session: EditorSession, selected: List<Uri>, mimeHint: String? = null) {
+        if (selected.isEmpty() || editor !== session || session.writing || session.closing || session.importing) return
+        if (selected.size > 10) {
+            session.importFailed = true
+            session.importStatus = "一次最多选择 10 个附件，请重新选择"
+            return
+        }
+        session.importing = true
+        session.importFailed = false
+        session.importStatus = "正在准备附件"
+        val uris = selected.distinct()
+        importJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var imported = 0
+            var failure: String? = null
+            try {
+                attachments.recover(database)
+                for ((index, uri) in uris.withIndex()) {
+                    val label = "导入 ${index + 1}/${uris.size}"
+                    session.importStatus = "$label · 正在读取"
+                    try {
+                        val attachment = attachments.import(uri, mimeHint) { copied, total ->
+                            withContext(Dispatchers.Main.immediate) {
+                                session.importStatus = if (total != null && copied >= total) "$label · 正在校验"
+                                    else if (total != null) "$label · ${copied * 100 / total}%"
+                                    else "$label · ${copied / 1024} KB"
+                            }
+                        }
+                        val kind = requireNotNull(AttachmentKind.fromMime(attachment.mime))
+                        val block = NoteBlock.attachment(kind.blockType, attachment.id)
+                        addImportedBlock(session, block)
+                        imported++
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        failure = AttachmentStore.failureMessage(error)
+                    }
+                }
+                session.importFailed = failure != null
+                session.importStatus = failure?.let { "已导入 $imported 个 · $it" } ?: "已导入 $imported 个附件"
+            } catch (cancelled: CancellationException) {
+                session.importStatus = "导入已取消 · 已保留 $imported 个附件"
+                throw cancelled
+            } catch (error: Exception) {
+                session.importFailed = true
+                session.importStatus = AttachmentStore.failureMessage(error)
+            } finally {
+                session.importing = false
+            }
+        }
+    }
+
+    fun cancelImport(session: EditorSession) {
+        if (editor === session) importJob?.cancel()
+    }
+
+    private suspend fun addImportedBlock(session: EditorSession, block: NoteBlock) = withContext(NonCancellable) {
+        session.writing = true
+        try {
+            watcher?.cancelAndJoin()
+            stopCheckpoint?.cancelAndJoin()
+            val document = NoteDocument(session.document().blocks + block)
+            val sequence = session.sequenceFor(document)
+            try {
+                repository.checkpoint(encode(session, document, sequence))
+            } catch (_: Exception) {
+                throw AttachmentImportException(
+                    "无法保存附件到草稿，请检查本机空间后重试",
+                )
+            }
+            session.blocks.add(EditorBlock(block))
+            session.checkpointSeq = sequence
+        } finally {
+            session.writing = session.closing
+            if (!session.closing) watch(session)
+        }
+    }
 
     suspend fun openNote(noteId: String? = null, captureSlot: String? = null): Boolean {
         if (editor != null) return true
@@ -193,11 +299,13 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     suspend fun finishEditor(save: Boolean = false, discard: Boolean = false): Boolean {
         val session = editor ?: return true
-        if (session.writing) return false
+        if (session.closing) return false
+        session.closing = true
         session.writing = true
-        val previousWatcher = watcher
         return try {
-            previousWatcher?.cancelAndJoin()
+            importJob?.cancelAndJoin()
+            session.writing = true
+            watcher?.cancelAndJoin()
             stopCheckpoint?.cancelAndJoin()
             val document = session.document()
             val sequence = session.sequenceFor(document)
@@ -222,8 +330,10 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             throw cancelled
         } catch (_: Exception) {
             session.status = "保存失败，正文仍保留。可重试。"
+            watch(session)
             false
         } finally {
+            session.closing = false
             session.writing = false
         }
     }
