@@ -3,7 +3,7 @@ package io.github.z3275630ops.floatingnotes
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.os.SystemClock
-import android.util.Log
+import android.os.Bundle
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.room.Room
@@ -36,8 +36,11 @@ class NoteSearchTest {
         runBlocking { db.notes().putNote(note(token, token)) }
         compose.onNodeWithTag("tab-Library").performClick()
         compose.onNodeWithTag("library-search").performTextInput(token)
-        compose.waitUntil(8_000) { compose.onAllNodesWithTag("saved-note").fetchSemanticsNodes().size == 1 }
-        compose.onNodeWithText(token).assertExists()
+        compose.waitUntil(8_000) {
+            compose.onAllNodes(hasTestTag("saved-note") and hasText(token)).fetchSemanticsNodes().size == 1 &&
+                compose.onAllNodesWithText("新建标签").fetchSemanticsNodes().isEmpty()
+        }
+        compose.onNode(hasTestTag("saved-note") and hasText(token)).assertExists()
         compose.onNodeWithText("筛选").performClick()
         compose.onNodeWithText("仅无标签").performClick()
         compose.onNodeWithText("应用筛选").performClick()
@@ -156,7 +159,9 @@ class NoteSearchTest {
                     assertEquals(count, db.search().search(query).size)
                     (SystemClock.elapsedRealtimeNanos() - begin) / 1_000_000.0
                 }.sorted()
-                Log.i("FloatingSearchBench", "fixture=10000 count=$count p95_ms=${times[18]}")
+                InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
+                    putString("stream", "\nfixture=10000 count=$count p95_ms=${times[18]}\n")
+                })
             }
         }
     }

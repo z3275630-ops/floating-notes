@@ -102,7 +102,7 @@ fun GlassSurface(
     }
     val tint = MaterialTheme.colorScheme.surface
     val alpha = when (effective) {
-        GlassTier.Reduced -> 1f
+        GlassTier.Reduced -> if (dark) .94f else .88f
         GlassTier.Standard -> if (dark) .84f else .78f
         GlassTier.Enhanced -> if (dark) .80f else .58f
     }

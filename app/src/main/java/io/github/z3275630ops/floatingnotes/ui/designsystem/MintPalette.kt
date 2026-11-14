@@ -2,6 +2,9 @@ package io.github.z3275630ops.floatingnotes.ui.designsystem
 
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
@@ -57,10 +60,24 @@ internal fun mintColorScheme(dark: Boolean) = if (dark) darkColorScheme(
     outlineVariant = Color(0xFFB4C9BA),
 )
 
-internal fun mintAmbient(dark: Boolean) = Brush.linearGradient(
-    if (dark) listOf(Color(0xFF1E4538), Color(0xFF0D1914), Color(0xFF142C24), Color(0xFF283920))
-    else listOf(Color(0xFFBFEBD4), Color(0xFFF4F8F2), Color(0xFFE0F3EB), Color(0xFFE7F2C7)),
-)
+internal fun Modifier.mintAmbient(dark: Boolean): Modifier = drawWithCache {
+    val base = if (dark) Color(0xFF101F1B) else Color(0xFFF5FAF4)
+    val radius = maxOf(size.width, size.height)
+    fun halo(color: Color, x: Float, y: Float, spread: Float) = Brush.radialGradient(
+        listOf(color, color.copy(alpha = 0f)),
+        center = Offset(size.width * x, size.height * y),
+        radius = (radius * spread).coerceAtLeast(1f),
+    )
+    val mint = halo(if (dark) Color(0xFF2B5145) else Color(0xFFC3E9D6), .12f, .08f, .67f)
+    val sprout = halo(if (dark) Color(0xFF35432D) else Color(0xFFE3EFC8), .92f, .78f, .55f)
+    val pearl = halo(if (dark) Color(0xFF25413B) else Color(0xFFE0F1EC), .03f, .85f, .48f)
+    onDrawBehind {
+        drawRect(base)
+        drawRect(mint)
+        drawRect(sprout)
+        drawRect(pearl)
+    }
+}
 
 internal fun mintHighlight(dark: Boolean) = Brush.horizontalGradient(
     if (dark) listOf(Color(0xFF2B6B52), Color(0xFF375633))

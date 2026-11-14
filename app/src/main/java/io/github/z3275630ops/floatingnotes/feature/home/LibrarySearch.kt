@@ -1,6 +1,12 @@
 package io.github.z3275630ops.floatingnotes.feature.home
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
+import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.TextFieldState
@@ -46,7 +52,7 @@ internal fun LibrarySearchControls(
         "保存条件" -> {
             var name by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
-            AlertDialog(onDismissRequest = { if (!busy) dialog = null }, title = { Text("保存搜索条件") },
+            SearchDialog(onDismissRequest = { if (!busy) dialog = null }, title = { Text("保存搜索条件") },
                 text = {
                     Column {
                         OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("名称") })
@@ -75,7 +81,7 @@ internal fun LibrarySearchControls(
         }
         "已保存搜索" -> {
             var deleting by remember { mutableStateOf<SavedSearch?>(null) }
-            AlertDialog(onDismissRequest = { dialog = null }, title = { Text("已保存搜索") },
+            SearchDialog(onDismissRequest = { dialog = null }, title = { Text("已保存搜索") },
                 text = {
                     Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
                         if (saved.isEmpty()) Text("还没有保存的搜索")
@@ -97,7 +103,7 @@ internal fun LibrarySearchControls(
                 },
                 confirmButton = { TextButton(onClick = { dialog = null }) { Text("关闭") } })
             deleting?.let { item ->
-                AlertDialog(onDismissRequest = { deleting = null }, title = { Text("删除「${item.name}」？") },
+                SearchDialog(onDismissRequest = { deleting = null }, title = { Text("删除「${item.name}」？") },
                     confirmButton = { TextButton(onClick = {
                         deleting = null
                         coroutine.launch {
@@ -107,6 +113,32 @@ internal fun LibrarySearchControls(
                         }
                     }) { Text("删除搜索") } },
                     dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchDialog(
+    onDismissRequest: () -> Unit,
+    title: @Composable () -> Unit,
+    text: @Composable () -> Unit = {},
+    confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable () -> Unit = {},
+) {
+    val dark = isSystemInDarkTheme()
+    val backdrop = rememberGlassBackdrop()
+    Dialog(onDismissRequest, properties = DialogProperties()) {
+        GlassSurface(backdrop, GlassTier.Reduced, dark, Modifier.widthIn(max = 420.dp).fillMaxWidth()) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ProvideTextStyle(MaterialTheme.typography.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)) {
+                    title()
+                }
+                ProvideTextStyle(MaterialTheme.typography.bodyMedium) { text() }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    dismissButton()
+                    confirmButton()
+                }
             }
         }
     }
@@ -131,7 +163,7 @@ private fun ScopeDialog(
     var start by remember { mutableStateOf(initial.from?.atZone(zone)?.toLocalDate()?.toString().orEmpty()) }
     var end by remember { mutableStateOf(initial.until?.atZone(zone)?.toLocalDate()?.minusDays(1)?.toString().orEmpty()) }
     var error by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = close, title = { Text("筛选笔记") },
+    SearchDialog(onDismissRequest = close, title = { Text("筛选笔记") },
         text = {
             Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {

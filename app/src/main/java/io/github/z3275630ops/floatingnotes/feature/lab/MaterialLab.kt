@@ -32,7 +32,7 @@ fun MaterialLab(onBack: () -> Unit) {
 
     MaterialTheme(colorScheme = scheme) {
         Surface(color = scheme.background) {
-            Column(Modifier.fillMaxSize().background(mintAmbient(dark)).safeDrawingPadding()) {
+            Column(Modifier.fillMaxSize().mintAmbient(dark).safeDrawingPadding()) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                     TextButton(onClick = onBack) { Text("返回工程样例") }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -55,7 +55,7 @@ fun MaterialLab(onBack: () -> Unit) {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.fillMaxSize().then(
                         if (effective == GlassTier.Reduced) Modifier else Modifier.glassSource(backdrop)
-                    ).background(mintAmbient(dark))) {
+                    ).mintAmbient(dark)) {
                         LazyColumn(
                             Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(

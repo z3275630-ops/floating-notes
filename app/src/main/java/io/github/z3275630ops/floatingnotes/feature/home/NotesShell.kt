@@ -87,6 +87,8 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
         descendants = descendants,
     )
     val searching = phrase.isNotBlank() || searchScope != NoteScope()
+    val librarySearching by rememberUpdatedState(searching)
+    val libraryScope by rememberUpdatedState(effectiveScope)
     var searchLimit by remember(phrase, effectiveScope) { mutableIntStateOf(50) }
     var searchFailed by remember(page, phrase, effectiveScope, searchLimit) { mutableStateOf(false) }
     var searchAttempt by remember { mutableIntStateOf(0) }
@@ -106,6 +108,9 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
             }
         }
     }
+    val libraryResults by rememberUpdatedState(results)
+    val libraryLimit by rememberUpdatedState(searchLimit)
+    val librarySearchFailed by rememberUpdatedState(searchFailed)
     val scope = rememberCoroutineScope()
     val motion = remember { CaptureMotion(scope, open) }
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -187,11 +192,60 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
             Modifier.fillMaxSize(),
         ) {
             Box(
-                Modifier.fillMaxSize().glassSource(backdrop).background(mintAmbient(dark))
+                Modifier.fillMaxSize().glassSource(backdrop).mintAmbient(dark)
                     .then(if (motion.visible || drawer.isOpen) Modifier.clearAndSetSemantics { } else Modifier),
             ) {
                 Crossfade(page, label = "home-page") { current ->
-                    LazyColumn(
+                    if (current == Page.Library) {
+                        val visible = if (librarySearching) libraryResults.orEmpty().take(libraryLimit) else notes.filter {
+                            it.archivedAt == null && (selectedTag == null || it.id in tagMatches) &&
+                                (selectedNotebook == null || it.id in notebookMatches)
+                        }
+                        Column(Modifier.fillMaxSize()
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                            .navigationBarsPadding().padding(horizontal = 20.dp)) {
+                            Row(Modifier.padding(top = 24.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedIconButton(
+                                    onClick = { scope.launch { drawer.open() } },
+                                    modifier = Modifier.testTag("open-notes-drawer")
+                                        .semantics { contentDescription = "打开笔记导航" },
+                                ) { Text("☰", style = MaterialTheme.typography.titleMedium) }
+                                Spacer(Modifier.width(12.dp))
+                                Text("笔记库", style = MaterialTheme.typography.headlineLarge)
+                            }
+                            LibrarySearchControls(model.search, keyword, libraryScope, tags, notebooks) { updated ->
+                                selectedTag = null
+                                selectedNotebook = null
+                                descendants = true
+                                searchScopeJson = updated.encode()
+                            }
+                            LazyColumn(
+                                Modifier.weight(1f).fillMaxWidth(),
+                                contentPadding = PaddingValues(top = 12.dp, bottom = 150.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                if (!librarySearching) item {
+                                    OrganizationPanel(organization, tags, notebooks,
+                                        LibraryFilter(selectedTag, selectedNotebook, descendants)) {
+                                        selectedTag = it.tag
+                                        selectedNotebook = it.notebook
+                                        descendants = it.descendants
+                                    }
+                                }
+                                if (librarySearching && libraryResults == null) item {
+                                    if (librarySearchFailed) TextButton(onClick = { searchAttempt++ }) { Text("搜索失败，点此重试") }
+                                    else Text("正在搜索…")
+                                } else if (visible.isEmpty()) item { Text("此范围没有笔记") }
+                                items(visible, key = { it.id }) { note ->
+                                    NoteCard(note, model.attachments, { launchEditor(note.id) },
+                                        { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
+                                }
+                                if (librarySearching && (libraryResults?.size ?: 0) > libraryLimit) item {
+                                    TextButton(onClick = { searchLimit += 50 }) { Text("加载更多") }
+                                }
+                            }
+                        }
+                    } else LazyColumn(
                         Modifier.fillMaxSize()
                             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                             .navigationBarsPadding(),
@@ -240,37 +294,6 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                     Text(text, Modifier.padding(20.dp), style = MaterialTheme.typography.bodyLarge)
                                 }
                             }
-                        } else if (current == Page.Library) {
-                            item {
-                                LibrarySearchControls(model.search, keyword, effectiveScope, tags, notebooks) { updated ->
-                                    selectedTag = null
-                                    selectedNotebook = null
-                                    descendants = true
-                                    searchScopeJson = updated.encode()
-                                }
-                            }
-                            if (!searching) item {
-                                OrganizationPanel(organization, tags, notebooks,
-                                    LibraryFilter(selectedTag, selectedNotebook, descendants)) {
-                                    selectedTag = it.tag
-                                    selectedNotebook = it.notebook
-                                    descendants = it.descendants
-                                }
-                            }
-                            val visible = if (searching) results.orEmpty().take(searchLimit) else notes.filter {
-                                it.archivedAt == null && (selectedTag == null || it.id in tagMatches) &&
-                                    (selectedNotebook == null || it.id in notebookMatches)
-                            }
-                            if (searching && results == null) item {
-                                if (searchFailed) TextButton(onClick = { searchAttempt++ }) { Text("搜索失败，点此重试") }
-                                else Text("正在搜索…")
-                            } else if (visible.isEmpty()) item { Text("此范围没有笔记") }
-                            items(visible, key = { it.id }) { note ->
-                                NoteCard(note, model.attachments, { launchEditor(note.id) }, { model.pin(note) }, { model.archive(note) }) { organizeNote = note.id }
-                            }
-                            if (searching && (results?.size ?: 0) > searchLimit) item {
-                                TextButton(onClick = { searchLimit += 50 }) { Text("加载更多") }
-                            }
                         } else {
                             item { Text("页面原型，功能开发中。", color = scheme.onSurfaceVariant) }
                         }
@@ -287,12 +310,9 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                             .fillMaxWidth().padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        ExtendedFloatingActionButton(
-                            onClick = { launchEditor() },
-                            modifier = Modifier.align(Alignment.End).testTag("new-note"),
-                            containerColor = scheme.primaryContainer,
-                            contentColor = scheme.onPrimaryContainer,
-                        ) { Text("＋ 快速记录", style = MaterialTheme.typography.labelLarge) }
+                        GlassAction("＋ 快速记录", dark, Modifier.align(Alignment.End).testTag("new-note")) {
+                            launchEditor()
+                        }
                         GlassSurface(backdrop, GlassTier.Enhanced, dark, Modifier.fillMaxWidth()) {
                             BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
                                 val tabWidth = maxWidth / Page.entries.size
@@ -310,7 +330,8 @@ internal fun NotesShell(model: NotesViewModel, labs: @Composable RowScope.() -> 
                                         Box(
                                             Modifier.weight(1f).heightIn(min = 48.dp)
                                                 .testTag("tab-${target.name}")
-                                                .selectable(page == target, role = Role.Tab) { page = target }
+                                                .selectable(page == target, interactionSource = null, indication = null,
+                                                role = Role.Tab) { page = target }
                                                 .padding(vertical = 8.dp),
                                             contentAlignment = Alignment.Center,
                                         ) {
