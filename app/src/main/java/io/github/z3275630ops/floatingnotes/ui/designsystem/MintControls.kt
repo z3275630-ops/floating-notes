@@ -3,11 +3,18 @@ package io.github.z3275630ops.floatingnotes.ui.designsystem
 import android.animation.ValueAnimator
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1266,5 +1273,113 @@ internal fun MintPillButton(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+@Composable
+internal fun MintSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    dark: Boolean,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val animEnabled = mintAnimatorsEnabled()
+    val trackColor by animateColorAsState(
+        targetValue = when {
+            !enabled && checked -> scheme.primary.copy(alpha = 0.45f)
+            !enabled -> if (dark) Color(0xFF28342D) else Color(0xFFD5DED9)
+            checked -> if (dark) Color(0xFF2F8B62) else Color(0xFF1E7E55)
+            else -> if (dark) Color(0xFF313D37) else Color(0xFFD1DAD4)
+        },
+        animationSpec = if (animEnabled) mintSpringSpec() else snap(),
+        label = "mint-switch-track",
+    )
+    val thumbOffset by animateDpAsState(
+        targetValue = if (checked) 20.dp else 2.dp,
+        animationSpec = if (animEnabled) mintSpringSpec() else snap(),
+        label = "mint-switch-thumb",
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+    Box(
+        modifier = modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                interactionSource = interactionSource,
+                indication = null,
+                onValueChange = onCheckedChange,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 48.dp, height = 28.dp)
+                .clip(RoundedCornerShape(50))
+                .background(trackColor),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Box(
+                modifier = Modifier
+                    .offset(x = thumbOffset)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .border(
+                        width = 0.5.dp,
+                        color = Color.Black.copy(alpha = if (dark) 0.16f else 0.08f),
+                        shape = CircleShape,
+                    ),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun MintActivityIndicator(
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    sizeDp: androidx.compose.ui.unit.Dp = 18.dp,
+) {
+    val animEnabled = mintAnimatorsEnabled()
+    val step = if (animEnabled) {
+        val transition = rememberInfiniteTransition(label = "mint-spinner")
+        val phase by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 12f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "mint-spinner-step",
+        )
+        phase.toInt() % 12
+    } else {
+        0
+    }
+    Canvas(modifier = modifier.size(sizeDp)) {
+        val count = 12
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val innerR = size.minDimension * 0.25f
+        val outerR = size.minDimension * 0.48f
+        val stroke = (size.minDimension * 0.11f).coerceAtLeast(1.4f)
+        for (i in 0 until count) {
+            val angleRad = (i * 30.0) * (Math.PI / 180.0)
+            val cosA = kotlin.math.cos(angleRad).toFloat()
+            val sinA = kotlin.math.sin(angleRad).toFloat()
+            val distance = (i - step + count) % count
+            val alpha = 0.22f + (distance / (count - 1f)) * 0.72f
+            drawLine(
+                color = color.copy(alpha = alpha),
+                start = androidx.compose.ui.geometry.Offset(cx + innerR * cosA, cy + innerR * sinA),
+                end = androidx.compose.ui.geometry.Offset(cx + outerR * cosA, cy + outerR * sinA),
+                strokeWidth = stroke,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            )
+        }
     }
 }

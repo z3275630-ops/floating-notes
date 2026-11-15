@@ -74,7 +74,7 @@
       "id": "F04",
       "name": "每日回顾",
       "milestone": "M2",
-      "status": "planned",
+      "status": "implemented",
       "spec": "docs/features/discovery.md",
       "screens": [
         "S07",
@@ -85,13 +85,15 @@
         "Q011",
         "Q012"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "F05",
       "name": "随机漫步",
       "milestone": "M2",
-      "status": "planned",
+      "status": "implemented",
       "spec": "docs/features/discovery.md",
       "screens": [
         "S09"
@@ -105,13 +107,15 @@
         "Q101",
         "Q102"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "F06",
       "name": "相关笔记",
       "milestone": "M2",
-      "status": "planned",
+      "status": "implemented",
       "spec": "docs/features/discovery.md",
       "screens": [
         "S03",
@@ -126,13 +130,15 @@
         "Q097",
         "Q098"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "F07",
       "name": "自然语言找一找",
       "milestone": "M2",
-      "status": "planned",
+      "status": "implemented",
       "spec": "docs/features/discovery.md",
       "screens": [
         "S10"
@@ -142,7 +148,9 @@
         "Q020",
         "Q021"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "F08",

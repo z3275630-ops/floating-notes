@@ -6,6 +6,13 @@ import androidx.room.migration.AutoMigrationSpec
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
+import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryDao
+import io.github.z3275630ops.floatingnotes.data.discovery.MIGRATION_5_6
+import io.github.z3275630ops.floatingnotes.data.discovery.NoteChunkEntity
+import io.github.z3275630ops.floatingnotes.data.discovery.ReviewEventEntity
+import io.github.z3275630ops.floatingnotes.data.discovery.ReviewSessionEntity
+import io.github.z3275630ops.floatingnotes.data.discovery.WalkSessionEntity
+import io.github.z3275630ops.floatingnotes.data.discovery.WalkStepEntity
 import kotlinx.coroutines.flow.Flow
 
 @Entity(
@@ -191,8 +198,10 @@ internal interface NotesDao {
     entities = [NoteEntity::class, DraftEntity::class, NoteVersionEntity::class,
         TaskIndexEntity::class, OutboxEntity::class, TagEntity::class, NotebookEntity::class,
         NoteTagEntity::class, NotebookNoteEntity::class, NoteLinkEntity::class, SavedSearch::class,
-        ReminderEntity::class, TaskOccurrenceEntity::class],
-    version = 5,
+        ReminderEntity::class, TaskOccurrenceEntity::class,
+        NoteChunkEntity::class, ReviewSessionEntity::class, ReviewEventEntity::class,
+        WalkSessionEntity::class, WalkStepEntity::class],
+    version = 6,
     autoMigrations = [AutoMigration(from = 1, to = 2, spec = LinkBackfill::class)],
     exportSchema = true,
 )
@@ -201,11 +210,12 @@ internal abstract class NotesDatabase : RoomDatabase() {
     abstract fun organization(): OrganizationDao
     abstract fun search(): SearchDao
     abstract fun taskReminders(): TaskReminderDao
+    abstract fun discovery(): DiscoveryDao
 
     companion object {
-        const val SCHEMA_VERSION = 5
+        const val SCHEMA_VERSION = 6
         private var shared: NotesDatabase? = null
-        internal val migrations: Array<Migration> = arrayOf(SearchMigration, MIGRATION_3_4, MIGRATION_4_5)
+        internal val migrations: Array<Migration> = arrayOf(SearchMigration, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 
         @Synchronized
         fun open(context: Context): NotesDatabase = shared ?: Room.databaseBuilder(

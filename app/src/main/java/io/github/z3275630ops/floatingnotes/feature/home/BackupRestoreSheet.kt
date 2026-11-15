@@ -8,9 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,6 +23,7 @@ import io.github.z3275630ops.floatingnotes.data.backup.RestoreMode
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.RestorePreflight
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintActivityIndicator
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintAlertDialog
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
@@ -33,6 +32,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSelectionRow
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDestructiveColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import java.time.LocalDate
@@ -53,6 +53,9 @@ internal fun BackupRestoreSheet(
     onConfirmRestore: () -> Unit,
     onDismissPreflight: () -> Unit,
     onClearOutcome: () -> Unit,
+    edgeEchoEnabled: Boolean = true,
+    onToggleEdgeEcho: (Boolean) -> Unit = {},
+    onRestoreDiscoveryExclusions: (() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val today = remember { LocalDate.now().toString() }
@@ -99,7 +102,7 @@ internal fun BackupRestoreSheet(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        MintActivityIndicator(color = scheme.primary)
                         Text(
                             text = state.busyLabel ?: "正在处理本地备份…",
                             style = MaterialTheme.typography.bodyMedium,
@@ -280,14 +283,43 @@ internal fun BackupRestoreSheet(
                     leadingIcon = MintIcons.Checklist,
                     dark = dark,
                     trailingContent = {
-                        Switch(
+                        MintSwitch(
                             checked = todoStartupEnabled,
                             onCheckedChange = onToggleTodoStartup,
+                            dark = dark,
                             modifier = Modifier.testTag("backup-startup-todo-toggle"),
                         )
                     },
                     onClick = { onToggleTodoStartup(!todoStartupEnabled) },
                 )
+                MintGroupedDivider(dark = dark, startIndent = 48.dp)
+                MintGroupedRow(
+                    label = "写作边缘历史回响",
+                    subtitle = "编辑时停顿片刻，在边缘轻提示相关旧笔记，不打断输入",
+                    leadingIcon = MintIcons.Explore,
+                    dark = dark,
+                    trailingContent = {
+                        MintSwitch(
+                            checked = edgeEchoEnabled,
+                            onCheckedChange = onToggleEdgeEcho,
+                            dark = dark,
+                            modifier = Modifier.testTag("settings-edge-echo-toggle"),
+                        )
+                    },
+                    onClick = { onToggleEdgeEcho(!edgeEchoEnabled) },
+                )
+                if (onRestoreDiscoveryExclusions != null) {
+                    MintGroupedDivider(dark = dark, startIndent = 48.dp)
+                    MintGroupedRow(
+                        label = "恢复已排除的回顾与发现内容",
+                        subtitle = "重新允许此前在回顾或找一找中隐藏的笔记和标签出现",
+                        leadingIcon = MintIcons.Restore,
+                        showChevron = true,
+                        dark = dark,
+                        modifier = Modifier.testTag("settings-restore-exclusions"),
+                        onClick = onRestoreDiscoveryExclusions,
+                    )
+                }
             }
         }
     }
@@ -419,9 +451,10 @@ private fun RestorePreflightSheet(
                     subtitle = "防止意外替换或中断导致数据丢失",
                     dark = dark,
                     trailingContent = {
-                        Switch(
+                        MintSwitch(
                             checked = autoBackup,
                             onCheckedChange = onToggleAutoBackup,
+                            dark = dark,
                             modifier = Modifier.testTag("backup-preflight-autobackup"),
                         )
                     },

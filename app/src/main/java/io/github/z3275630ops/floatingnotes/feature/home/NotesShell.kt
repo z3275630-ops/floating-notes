@@ -56,6 +56,7 @@ import io.github.z3275630ops.floatingnotes.feature.capture.CaptureMotion
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureSheet
 import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
 import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
+import io.github.z3275630ops.floatingnotes.feature.explore.ExploreScreen
 import io.github.z3275630ops.floatingnotes.ui.designsystem.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -139,9 +140,14 @@ internal fun NotesShell(
     val historyState by model.historyState.collectAsStateWithLifecycle()
     val trashPurgeImpact by model.trashPurgeImpact.collectAsStateWithLifecycle()
     val backupState by model.backupState.collectAsStateWithLifecycle()
+    val exploreState by model.exploreState.collectAsStateWithLifecycle()
     val todoStartupEnabled by model.taskPreferences.observeTodoStartupEnabled().collectAsStateWithLifecycle(
         initialValue = model.taskPreferences.todoStartupEnabled,
     )
+    val edgeEchoEnabled by model.explorePreferences.observeEdgeEchoEnabled().collectAsStateWithLifecycle(
+        initialValue = model.explorePreferences.edgeEchoEnabled,
+    )
+    var exploreSectionIndex by rememberSaveable { mutableStateOf(0) }
     val organization = model.organization
     val tags by organization.tags.collectAsStateWithLifecycle(emptyList())
     val notebooks by organization.notebooks.collectAsStateWithLifecycle(emptyList())
@@ -384,6 +390,14 @@ internal fun NotesShell(
             onConfirmRestore = { model.confirmRestoreFromPreflight() },
             onDismissPreflight = { model.dismissRestorePreflight() },
             onClearOutcome = { model.clearBackupOutcome() },
+            edgeEchoEnabled = edgeEchoEnabled,
+            onToggleEdgeEcho = { enabled -> model.setEdgeEchoGlobalEnabled(enabled) },
+            onRestoreDiscoveryExclusions = {
+                model.restoreAllDiscoveryExclusions()
+                showBackupSheet = false
+                exploreSectionIndex = 0
+                page = Page.Explore
+            },
         )
     }
 
@@ -820,18 +834,48 @@ internal fun NotesShell(
                                 } else if (current == Page.Explore) {
                                     item("explore_section") {
                                         Box(modifier = Modifier.padding(top = 10.dp)) {
-                                            ExplorePreviewSection(
-                                                notes = notes,
-                                                tagsCount = tags.size,
-                                                notebooksCount = notebooks.size,
+                                            ExploreScreen(
+                                                state = exploreState,
+                                                tags = tags,
+                                                notesCount = notes.count { it.archivedAt == null },
                                                 linksCount = links.size,
                                                 openTodosCount = badgeTasksCount,
                                                 dark = dark,
+                                                backdrop = backdrop,
+                                                onEnsureLoaded = { model.loadExploreDashboard() },
+                                                onClearMessage = { model.clearExploreMessage() },
+                                                onStartExtraReviewRound = { model.loadExploreDashboard(startExtraRound = true) },
+                                                onSelectReviewIndex = { idx -> model.selectReviewCard(idx) },
+                                                onDeferReviewCard = { id -> model.deferReviewCard(id) },
+                                                onSuppressReviewCard7Days = { id -> model.suppressReviewCard7Days(id) },
+                                                onExcludeReviewCard = { id -> model.excludeReviewCard(id) },
+                                                onExcludeReviewTag = { tid, name -> model.excludeReviewTag(tid, name) },
+                                                onUpdateReviewConfig = { cfg -> model.updateReviewConfig(cfg) },
+                                                onRestoreAllExclusions = { model.restoreAllDiscoveryExclusions() },
+                                                onAnnotateReviewCard = { note, text -> model.annotateReviewCard(note, text) },
+                                                onQueryChange = { q -> model.updateFindQuery(q) },
+                                                onScopeChange = { sc -> model.updateFindScope(sc) },
+                                                onSearchFind = { q, sc -> model.runFindSearch(q, sc) },
+                                                onRefreshIndex = { model.refreshRetrievalIndex() },
+                                                onToggleBasket = { hit -> model.toggleEvidenceBasket(hit) },
+                                                onClearBasket = { model.clearEvidenceBasket() },
+                                                onSaveBasketAsNote = { model.saveEvidenceBasketAsNote() },
+                                                onExcludeFindNote = { nid -> model.excludeNoteFromFind(nid) },
+                                                onStartWalk = { nid, tid -> model.startWalk(nid, tid) },
+                                                onStepWalkForward = { cross -> model.stepWalkForward(cross) },
+                                                onStepWalkBack = { model.stepWalkBack() },
+                                                onSaveWalkMemo = { memo -> model.saveWalkStepMemo(memo) },
+                                                onFinishWalkPostcard = { model.finishWalkAndPreviewPostcard() },
+                                                onToggleWalkPrivacy = { priv -> model.toggleWalkPostcardPrivacy(priv) },
+                                                onSaveWalkPostcardAsNote = { model.saveWalkPostcardAsNote() },
+                                                onDismissWalkPostcard = { model.dismissWalkPostcard() },
+                                                onOpenNote = { noteId, blockId -> launchEditor(noteId = noteId, focusBlockId = blockId) },
                                                 onOpenTodos = {
                                                     recordFilter = RecordFilter.Todos
                                                     page = Page.Record
                                                 },
-                                                onOpenLibrary = { page = Page.Library },
+                                                selectedSectionIndex = exploreSectionIndex,
+                                                onSelectSection = { exploreSectionIndex = it },
                                             )
                                         }
                                     }
@@ -1101,6 +1145,12 @@ internal fun NotesShell(
                                         }
                                     }
                                 },
+                                onStartWalkFromNote = { nid ->
+                                    close(save = true)
+                                    exploreSectionIndex = 2
+                                    page = Page.Explore
+                                    model.startWalk(seedNoteId = nid)
+                                },
                                 trashedNoteIds = trashedNoteIds,
                                 trashedNotes = trashedNotes,
                             )
@@ -1110,7 +1160,7 @@ internal fun NotesShell(
                             Modifier.fillMaxWidth().padding(vertical = 32.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            CircularProgressIndicator()
+                            MintActivityIndicator(color = scheme.primary)
                         }
                     }
                 }
@@ -1888,54 +1938,6 @@ private fun EmptyStateCard(
                 color = scheme.onSurfaceVariant,
             )
         }
-    }
-}
-
-@Composable
-private fun ExplorePreviewSection(
-    notes: List<NoteEntity>,
-    tagsCount: Int,
-    notebooksCount: Int,
-    linksCount: Int,
-    openTodosCount: Int,
-    dark: Boolean,
-    onOpenTodos: () -> Unit,
-    onOpenLibrary: () -> Unit,
-) {
-    val activeNotes = notes.count { it.archivedAt == null }
-    val recentWeek = remember(notes) {
-        val cutoff = Instant.now().minus(7, ChronoUnit.DAYS)
-        notes.count { note ->
-            note.archivedAt == null &&
-                runCatching { Instant.parse(note.updatedAt).isAfter(cutoff) }.getOrDefault(false)
-        }
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        PreviewFeatureCard(
-            icon = MintIcons.Calendar,
-            title = "近期创作脉络",
-            badge = "近 7 天 $recentWeek 条",
-            description = "当前共有 $activeNotes 条活跃笔记、$notebooksCount 个笔记本、$tagsCount 个标签，支持按「去年今日」与标签组合回看。",
-            dark = dark,
-            actionLabel = "前往笔记库按时间检索",
-            onAction = onOpenLibrary,
-        )
-        PreviewFeatureCard(
-            icon = MintIcons.Checklist,
-            title = "待办与灵感交汇",
-            badge = if (openTodosCount > 0) "$openTodosCount 项待完成" else "已全部完成",
-            description = "笔记中的勾选框会自动聚合到待办视图，点开即可直接回到原笔记上下文继续补充。",
-            dark = dark,
-            actionLabel = "筛选含待办笔记",
-            onAction = onOpenTodos,
-        )
-        PreviewFeatureCard(
-            icon = MintIcons.Link,
-            title = "双向引用与知识图谱",
-            badge = "$linksCount 条引用关联",
-            description = "支持在正文中通过 @ 引用其他笔记，编辑器内自动维护反向链接。",
-            dark = dark,
-        )
     }
 }
 

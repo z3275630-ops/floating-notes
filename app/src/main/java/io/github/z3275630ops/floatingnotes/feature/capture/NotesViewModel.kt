@@ -18,6 +18,15 @@ import io.github.z3275630ops.floatingnotes.data.backup.HistoryUiState
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreMode
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.TrashPurgeImpact
+import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryEngines
+import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryRepository
+import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceBasketItem
+import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
+import io.github.z3275630ops.floatingnotes.data.discovery.ExplorePreferences
+import io.github.z3275630ops.floatingnotes.data.discovery.ReviewConfig
+import io.github.z3275630ops.floatingnotes.data.local.NoteScope
+import io.github.z3275630ops.floatingnotes.feature.explore.EditorDiscoveryState
+import io.github.z3275630ops.floatingnotes.feature.explore.ExploreUiState
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentImportException
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentKind
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
@@ -221,6 +230,8 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     internal val backupManager = BackupManager(application, database, attachments)
     val organization = OrganizationRepository(database)
     val search = SearchRepository(database)
+    val explorePreferences = ExplorePreferences(application)
+    internal val discovery = DiscoveryRepository(database, repository, explorePreferences)
     var editor by mutableStateOf<EditorSession?>(null)
         private set
     var error by mutableStateOf<String?>(null)
@@ -254,6 +265,16 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     private val _backupState = MutableStateFlow(BackupUiState())
     val backupState: StateFlow<BackupUiState> = _backupState.asStateFlow()
+
+    private val _exploreState = MutableStateFlow(ExploreUiState())
+    val exploreState: StateFlow<ExploreUiState> = _exploreState.asStateFlow()
+
+    private val _editorDiscoveryState = MutableStateFlow(
+        EditorDiscoveryState(globalEchoEnabled = explorePreferences.edgeEchoEnabled),
+    )
+    val editorDiscoveryState: StateFlow<EditorDiscoveryState> = _editorDiscoveryState.asStateFlow()
+
+    private var edgeEchoJob: Job? = null
 
     val captureDrafts = repository.captureDrafts.catch {
         error = "无法读取跨应用草稿"
@@ -639,6 +660,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         if (session.voicePending) session.voiceStatus = "有一段本机录音待保存"
         editor = session
         watch(session)
+        resetEditorDiscoveryForSession(if (existingNote) draft.noteId else null)
     }
 
     private fun applyTaskMetadataToSession(
@@ -749,6 +771,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     save || (session.existingNote && document.hasContent && sequence > session.committedSeq) -> {
                         session.status = "正在保存"
                         val committed = repository.commit(draft)
+                        runCatching { discovery.syncChunksForNote(committed) }
                         session.draft = session.draft.copy(baseRevision = committed.revision)
                         session.committedSeq = maxOf(session.committedSeq, sequence)
                         didCommit = true
@@ -1168,6 +1191,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     try {
                         closeEditorIfMatchingLocked(setOf(note.id))
                         val reminderIds = repository.moveToTrash(note.id)
+                        runCatching { discovery.removeChunksForNoteIds(listOf(note.id)) }
                         val app = getApplication<Application>()
                         reminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
                         if (_historyState.value.noteId == note.id) {
@@ -1190,6 +1214,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 persistenceMutex.withLock {
                     try {
                         val sync = repository.restoreFromTrash(note.id)
+                        runCatching { repository.loadNote(note.id)?.let { discovery.syncChunksForNote(it) } }
                         sync?.let { ReminderScheduler.syncReconcile(getApplication(), it) }
                         error = null
                     } catch (cancelled: CancellationException) {
@@ -1245,6 +1270,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     try {
                         closeEditorIfMatchingLocked(setOf(note.id))
                         val result = repository.permanentlyDeleteNotes(listOf(note.id))
+                        runCatching { discovery.removeChunksForNoteIds(listOf(note.id)) }
                         val app = getApplication<Application>()
                         result.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
                         attachments.collectUnreferenced(database, backupManager.activeLeaseIds())
@@ -1270,6 +1296,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             closeEditorIfMatchingLocked(trashedIds)
                         }
                         val result = repository.emptyTrash()
+                        runCatching { discovery.removeChunksForNoteIds(result.deletedNoteIds) }
                         val app = getApplication<Application>()
                         result.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
                         attachments.collectUnreferenced(database, backupManager.activeLeaseIds())
@@ -1409,6 +1436,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                 }
                             }
                             is RestoreVersionResult.Restored -> {
+                                runCatching { discovery.syncChunksForNote(result.note) }
                                 ReminderScheduler.syncReconcile(getApplication(), result.reminderSync)
                                 val activeSession = editor
                                 if (activeSession != null && activeSession.draft.noteId == noteId) {
@@ -1594,6 +1622,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         exec.activeRemindersToSchedule.forEach { ReminderScheduler.scheduleReminder(app, it) }
 
                         if (exec.outcome is RestoreOutcome.Success) {
+                            runCatching { discovery.ensureIndexFresh(forceRebuild = true) }
                             val openSession = editor
                             if (openSession != null && (mode == RestoreMode.REPLACE_ALL || repository.loadNote(openSession.draft.noteId) == null)) {
                                 closeEditorIfMatchingLocked(setOf(openSession.draft.noteId))
@@ -1654,6 +1683,516 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
+    fun clearExploreMessage() {
+        _exploreState.update { it.copy(statusMessage = null, errorMessage = null) }
+    }
+
+    fun loadExploreDashboard(startExtraRound: Boolean = false) {
+        viewModelScope.launch {
+            _exploreState.update { it.copy(loading = true, errorMessage = null) }
+            try {
+                val coverage = discovery.ensureIndexFresh(forceRebuild = false)
+                val review = discovery.loadOrCreateDailyReview(startExtraRound = startExtraRound)
+                val latestWalk = _exploreState.value.walk ?: discovery.loadLatestActiveWalk()
+                _exploreState.update {
+                    it.copy(
+                        loading = false,
+                        review = review,
+                        coverage = coverage,
+                        walk = latestWalk,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _exploreState.update {
+                    it.copy(loading = false, errorMessage = "加载探索内容失败，请重试")
+                }
+            }
+        }
+    }
+
+    fun selectReviewCard(index: Int) {
+        val review = _exploreState.value.review ?: return
+        val clamped = index.coerceIn(0, (review.cards.size - 1).coerceAtLeast(0))
+        _exploreState.update { state ->
+            state.copy(review = state.review?.copy(currentIndex = clamped))
+        }
+        viewModelScope.launch {
+            runCatching { discovery.setReviewIndex(review.session.id, clamped) }
+            review.cards.getOrNull(clamped)?.let { card ->
+                runCatching { discovery.recordReviewAction(review.session.id, card.note.id, "seen") }
+            }
+        }
+    }
+
+    fun deferReviewCard(noteId: String) {
+        val sessionId = _exploreState.value.review?.session?.id ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.recordReviewAction(sessionId, noteId, "deferred")
+                val refreshed = discovery.loadOrCreateDailyReview()
+                _exploreState.update {
+                    it.copy(review = refreshed, statusMessage = "已移出今日队列，明天可再次重温")
+                }
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _exploreState.update { s -> s.copy(errorMessage = "操作未生效，请重试") }
+            }
+        }
+    }
+
+    fun suppressReviewCard7Days(noteId: String) {
+        val sessionId = _exploreState.value.review?.session?.id ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.recordReviewAction(sessionId, noteId, "suppressed_7d")
+                val refreshed = discovery.loadOrCreateDailyReview()
+                _exploreState.update {
+                    it.copy(review = refreshed, statusMessage = "已设为近期（7 天）不再出现")
+                }
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _exploreState.update { s -> s.copy(errorMessage = "操作未生效，请重试") }
+            }
+        }
+    }
+
+    fun excludeReviewCard(noteId: String) {
+        val sessionId = _exploreState.value.review?.session?.id ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.recordReviewAction(sessionId, noteId, "excluded")
+                val refreshed = discovery.loadOrCreateDailyReview()
+                _exploreState.update {
+                    it.copy(review = refreshed, statusMessage = "已永久排除该条回顾（可在设置中恢复）")
+                }
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _exploreState.update { s -> s.copy(errorMessage = "操作未生效，请重试") }
+            }
+        }
+    }
+
+    fun excludeReviewTag(tagId: String, tagName: String) {
+        viewModelScope.launch {
+            explorePreferences.addExcludedReviewTag(tagId)
+            val refreshed = discovery.loadOrCreateDailyReview()
+            _exploreState.update {
+                it.copy(review = refreshed, statusMessage = "已排除 #$tagName 类回顾（可在设置恢复）")
+            }
+        }
+    }
+
+    fun updateReviewConfig(config: ReviewConfig) {
+        viewModelScope.launch {
+            explorePreferences.reviewConfig = config
+            val refreshed = discovery.loadOrCreateDailyReview()
+            _exploreState.update {
+                it.copy(review = refreshed, statusMessage = "已更新今日回顾筛选范围")
+            }
+        }
+    }
+
+    fun annotateReviewCard(targetNote: NoteEntity, text: String) {
+        val sessionId = _exploreState.value.review?.session?.id ?: return
+        viewModelScope.launch {
+            try {
+                persistenceMutex.withLock {
+                    discovery.annotateReviewCardAsNote(sessionId, targetNote, text)
+                }
+                val refreshed = discovery.loadOrCreateDailyReview()
+                _exploreState.update {
+                    it.copy(review = refreshed, statusMessage = "已生成一条带原笔记引用的新批注")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (err: Exception) {
+                _exploreState.update { it.copy(errorMessage = err.message ?: "保存批注失败") }
+            }
+        }
+    }
+
+    fun restoreAllDiscoveryExclusions() {
+        viewModelScope.launch {
+            val count = runCatching { discovery.restoreAllExclusions() }.getOrDefault(0)
+            val refreshed = runCatching { discovery.loadOrCreateDailyReview() }.getOrNull()
+            _exploreState.update {
+                it.copy(
+                    review = refreshed ?: it.review,
+                    statusMessage = if (count > 0) "已恢复 $count 项此前排除的回顾/发现内容" else "当前没有已排除的内容",
+                )
+            }
+        }
+    }
+
+    fun updateFindQuery(query: String) {
+        _exploreState.update { it.copy(findQuery = query) }
+    }
+
+    fun updateFindScope(scope: NoteScope) {
+        _exploreState.update { it.copy(findScope = scope) }
+        val q = _exploreState.value.findQuery
+        if (q.isNotBlank()) runFindSearch(q, scope)
+    }
+
+    fun runFindSearch(
+        query: String = _exploreState.value.findQuery,
+        scope: NoteScope = _exploreState.value.findScope,
+    ) {
+        _exploreState.update { it.copy(findQuery = query, findScope = scope, indexing = true, errorMessage = null) }
+        viewModelScope.launch {
+            try {
+                val res = discovery.searchFind(query, scope)
+                _exploreState.update {
+                    it.copy(indexing = false, findResult = res, coverage = res.coverage)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _exploreState.update {
+                    it.copy(indexing = false, errorMessage = "检索失败，请重试")
+                }
+            }
+        }
+    }
+
+    fun refreshRetrievalIndex() {
+        _exploreState.update { it.copy(indexing = true) }
+        viewModelScope.launch {
+            runCatching {
+                val cov = discovery.ensureIndexFresh(forceRebuild = true)
+                val q = _exploreState.value.findQuery
+                val res = if (q.isNotBlank()) discovery.searchFind(q, _exploreState.value.findScope) else null
+                _exploreState.update {
+                    it.copy(
+                        indexing = false,
+                        coverage = cov,
+                        findResult = res ?: it.findResult,
+                        statusMessage = "索引已更新：已覆盖 ${cov.indexedCount}/${cov.eligibleCount} 条可检索笔记",
+                    )
+                }
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _exploreState.update { s -> s.copy(indexing = false, errorMessage = "索引刷新失败") }
+            }
+        }
+    }
+
+    fun toggleEvidenceBasket(hit: EvidenceHit) {
+        _exploreState.update { state ->
+            val exists = state.evidenceBasket.any { it.noteId == hit.note.id }
+            val updated = if (exists) {
+                state.evidenceBasket.filterNot { it.noteId == hit.note.id }
+            } else {
+                state.evidenceBasket + EvidenceBasketItem(
+                    noteId = hit.note.id,
+                    noteRevision = hit.note.revision,
+                    noteTitle = hit.noteTitle,
+                    excerpt = hit.mergedExcerpt,
+                    blockId = hit.matchedBlockId,
+                    reasons = hit.reasons,
+                )
+            }
+            state.copy(evidenceBasket = updated)
+        }
+    }
+
+    fun clearEvidenceBasket() {
+        _exploreState.update { it.copy(evidenceBasket = emptyList()) }
+    }
+
+    fun saveEvidenceBasketAsNote() {
+        val state = _exploreState.value
+        val items = state.evidenceBasket
+        if (items.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                persistenceMutex.withLock {
+                    discovery.saveEvidenceBasketAsNote(state.findQuery, items)
+                }
+                _exploreState.update {
+                    it.copy(
+                        evidenceBasket = emptyList(),
+                        statusMessage = "已将 ${items.size} 条证据汇总为新笔记（带原笔记引用）",
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (err: Exception) {
+                _exploreState.update { it.copy(errorMessage = err.message ?: "生成整理笔记失败") }
+            }
+        }
+    }
+
+    fun excludeNoteFromFind(noteId: String) {
+        viewModelScope.launch {
+            explorePreferences.addExcludedFindNote(noteId)
+            val res = runCatching {
+                discovery.searchFind(_exploreState.value.findQuery, _exploreState.value.findScope)
+            }.getOrNull()
+            _exploreState.update { state ->
+                state.copy(
+                    findResult = res ?: state.findResult,
+                    evidenceBasket = state.evidenceBasket.filterNot { it.noteId == noteId },
+                    statusMessage = "已排除此笔记参与“找一找”（可在设置恢复）",
+                )
+            }
+        }
+    }
+
+    fun startWalk(seedNoteId: String? = null, seedTagId: String? = null) {
+        viewModelScope.launch {
+            _exploreState.update { it.copy(loading = true, walkPostcard = null, errorMessage = null) }
+            try {
+                val snap = discovery.startWalk(seedNoteId = seedNoteId, seedTagId = seedTagId)
+                _exploreState.update {
+                    if (snap == null) {
+                        it.copy(loading = false, errorMessage = "当前范围内没有可漫步的笔记，先写几条笔记吧")
+                    } else {
+                        it.copy(loading = false, walk = snap, walkPostcard = null)
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _exploreState.update { it.copy(loading = false, errorMessage = "启动漫步失败") }
+            }
+        }
+    }
+
+    fun stepWalkForward(forceCrossDirection: Boolean = false) {
+        val sessionId = _exploreState.value.walk?.session?.id ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.stepWalkForward(sessionId, forceCrossDirection)
+            }.onSuccess { snap ->
+                if (snap != null) {
+                    _exploreState.update { it.copy(walk = snap) }
+                }
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _exploreState.update { s -> s.copy(errorMessage = "找不到更多关联笔记了") }
+            }
+        }
+    }
+
+    fun stepWalkBack() {
+        val sessionId = _exploreState.value.walk?.session?.id ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.stepWalkBack(sessionId)
+            }.onSuccess { snap ->
+                if (snap != null) _exploreState.update { it.copy(walk = snap) }
+            }
+        }
+    }
+
+    fun saveWalkStepMemo(memo: String) {
+        val walk = _exploreState.value.walk ?: return
+        val step = walk.currentStep ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.saveWalkStepMemo(step.id, walk.session.id, memo)
+                discovery.loadWalkSnapshot(walk.session.id)
+            }.onSuccess { snap ->
+                _exploreState.update {
+                    it.copy(walk = snap ?: it.walk, statusMessage = "已记录这一站的随想")
+                }
+            }
+        }
+    }
+
+    fun finishWalkAndPreviewPostcard(hideDetailsForPrivacy: Boolean = _exploreState.value.walkPrivacyHidden) {
+        val sessionId = _exploreState.value.walk?.session?.id ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.buildWalkPostcard(sessionId, hideDetailsForPrivacy, markCompleted = true)
+            }.onSuccess { card ->
+                _exploreState.update {
+                    it.copy(walkPostcard = card, walkPrivacyHidden = hideDetailsForPrivacy)
+                }
+            }
+        }
+    }
+
+    fun toggleWalkPostcardPrivacy(hideDetailsForPrivacy: Boolean) {
+        val sessionId = _exploreState.value.walk?.session?.id ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.buildWalkPostcard(sessionId, hideDetailsForPrivacy, markCompleted = false)
+            }.onSuccess { card ->
+                _exploreState.update {
+                    it.copy(walkPostcard = card, walkPrivacyHidden = hideDetailsForPrivacy)
+                }
+            }
+        }
+    }
+
+    fun saveWalkPostcardAsNote() {
+        val postcard = _exploreState.value.walkPostcard ?: return
+        viewModelScope.launch {
+            try {
+                persistenceMutex.withLock {
+                    discovery.savePostcardAsNote(postcard)
+                }
+                _exploreState.update {
+                    it.copy(walkPostcard = null, walk = null, statusMessage = "漫步明信片已保存到你的笔记")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _exploreState.update { it.copy(errorMessage = "保存明信片失败，请重试") }
+            }
+        }
+    }
+
+    fun dismissWalkPostcard() {
+        _exploreState.update { it.copy(walkPostcard = null) }
+    }
+
+    fun clearActiveWalk() {
+        _exploreState.update { it.copy(walk = null, walkPostcard = null) }
+    }
+
+    fun refreshEditorRelatedNotes(noteId: String?) {
+        if (noteId == null) {
+            _editorDiscoveryState.update { it.copy(noteId = null, loadingRelated = false, relatedNotes = emptyList()) }
+            return
+        }
+        viewModelScope.launch {
+            _editorDiscoveryState.update { it.copy(noteId = noteId, loadingRelated = true) }
+            val matches = runCatching { discovery.relatedNotesFor(noteId) }.getOrDefault(emptyList())
+            _editorDiscoveryState.update { state ->
+                if (editor?.draft?.noteId != noteId) state
+                else state.copy(noteId = noteId, loadingRelated = false, relatedNotes = matches)
+            }
+        }
+    }
+
+    private fun resetEditorDiscoveryForSession(noteId: String?) {
+        edgeEchoJob?.cancel()
+        _editorDiscoveryState.value = EditorDiscoveryState(
+            noteId = noteId,
+            loadingRelated = noteId != null,
+            relatedNotes = emptyList(),
+            edgeEcho = null,
+            sessionMuted = false,
+            globalEchoEnabled = explorePreferences.edgeEchoEnabled,
+            lastAutoShownAtMs = 0L,
+            dismissedNoteIds = emptySet(),
+        )
+        if (noteId != null) {
+            refreshEditorRelatedNotes(noteId)
+        }
+    }
+
+    fun onEditorTextActivity(noteId: String?, blockText: String, isComposing: Boolean) {
+        edgeEchoJob?.cancel()
+        val state = _editorDiscoveryState.value
+        val nowMs = System.currentTimeMillis()
+        if (!DiscoveryEngines.shouldTriggerAutoEcho(
+                globalEnabled = state.globalEchoEnabled,
+                sessionMuted = state.sessionMuted,
+                isComposing = isComposing,
+                draftText = blockText,
+                lastAutoShownAtMs = state.lastAutoShownAtMs,
+                nowMs = nowMs,
+            )
+        ) {
+            return
+        }
+        edgeEchoJob = viewModelScope.launch {
+            delay(DiscoveryEngines.ECHO_DEBOUNCE_MS)
+            val currentSession = editor ?: return@launch
+            if (noteId != null && currentSession.draft.noteId != noteId) return@launch
+            val checkTimeMs = System.currentTimeMillis()
+            val latestState = _editorDiscoveryState.value
+            if (!DiscoveryEngines.shouldTriggerAutoEcho(
+                    globalEnabled = latestState.globalEchoEnabled,
+                    sessionMuted = latestState.sessionMuted,
+                    isComposing = false,
+                    draftText = blockText,
+                    lastAutoShownAtMs = latestState.lastAutoShownAtMs,
+                    nowMs = checkTimeMs,
+                )
+            ) {
+                return@launch
+            }
+            val hit = runCatching {
+                discovery.findLiveEdgeEcho(
+                    draftText = blockText,
+                    currentNoteId = currentSession.draft.noteId,
+                    dismissedNoteIds = latestState.dismissedNoteIds,
+                )
+            }.getOrNull() ?: return@launch
+
+            val verified = runCatching {
+                discovery.verifyEdgeEchoHit(
+                    hit = hit,
+                    currentNoteId = currentSession.draft.noteId,
+                    excludedNoteIds = explorePreferences.excludedFindNoteIds + latestState.dismissedNoteIds,
+                )
+            }.getOrNull() ?: return@launch
+
+            _editorDiscoveryState.update { s ->
+                s.copy(
+                    edgeEcho = verified,
+                    lastAutoShownAtMs = System.currentTimeMillis(),
+                )
+            }
+        }
+    }
+
+    fun dismissEdgeEcho(suppressNoteForSession: Boolean = true) {
+        _editorDiscoveryState.update { state ->
+            val id = state.edgeEcho?.note?.id
+            state.copy(
+                edgeEcho = null,
+                dismissedNoteIds = if (suppressNoteForSession && id != null) state.dismissedNoteIds + id else state.dismissedNoteIds,
+            )
+        }
+    }
+
+    fun muteEdgeEchoForSession() {
+        edgeEchoJob?.cancel()
+        _editorDiscoveryState.update { it.copy(sessionMuted = true, edgeEcho = null) }
+    }
+
+    fun setEdgeEchoGlobalEnabled(enabled: Boolean) {
+        explorePreferences.edgeEchoEnabled = enabled
+        if (!enabled) edgeEchoJob?.cancel()
+        _editorDiscoveryState.update {
+            it.copy(
+                globalEchoEnabled = enabled,
+                edgeEcho = if (enabled) it.edgeEcho else null,
+            )
+        }
+    }
+
+    fun openDiscoveryNote(noteId: String, focusBlockId: String? = null) {
+        viewModelScope.launch {
+            if (!openNote(noteId = noteId, focusBlockId = focusBlockId)) {
+                error = "该笔记暂时无法打开（可能已移入回收站）"
+            }
+        }
+    }
+
+    fun verifyAndOpenEdgeEchoTarget(hit: EvidenceHit) {
+        viewModelScope.launch {
+            val currentId = editor?.draft?.noteId
+            val verified = runCatching { discovery.verifyEdgeEchoHit(hit, currentId) }.getOrNull()
+            if (verified == null) {
+                _editorDiscoveryState.update { it.copy(edgeEcho = null) }
+                error = "该历史笔记已被删除或移入回收站"
+                return@launch
+            }
+            if (!openNote(noteId = verified.note.id, focusBlockId = verified.matchedBlockId)) {
+                error = "打开关联笔记失败，请重试"
+            }
+        }
+    }
+
     private suspend fun flushOpenEditorLocked() {
         val session = editor ?: return
         if (session.closing || session.writing) return
@@ -1665,6 +2204,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             val sequence = session.sequenceFor(document)
             if (session.existingNote && document.hasContent && sequence > session.committedSeq) {
                 val committed = repository.commit(encode(session, document, sequence))
+                runCatching { discovery.syncChunksForNote(committed) }
                 commitSessionExtras(session)
                 session.syncAfterExternalCommit(committed.revision)
             } else if (sequence > session.checkpointSeq && document.hasContent) {

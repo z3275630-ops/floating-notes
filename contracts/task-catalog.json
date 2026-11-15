@@ -69,8 +69,13 @@
       "milestone": "M0",
       "dependencies": [],
       "title": "资料、检索与证据可行性",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/5"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/5",
+      "branch": "feat/T15-m2-explore",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "T06",
@@ -204,8 +209,13 @@
         "T14"
       ],
       "title": "每日回顾",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/15"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/15",
+      "branch": "feat/T15-m2-explore",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "T16",
@@ -216,8 +226,13 @@
         "T12"
       ],
       "title": "共享检索索引",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/16"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/16",
+      "branch": "feat/T15-m2-explore",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "T17",
@@ -226,8 +241,13 @@
         "T16"
       ],
       "title": "相关笔记与找一找",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/17"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/17",
+      "branch": "feat/T15-m2-explore",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "T18",
@@ -237,8 +257,13 @@
         "T17"
       ],
       "title": "随机漫步与路径",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/18"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/18",
+      "branch": "feat/T15-m2-explore",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "T19",
@@ -446,8 +471,13 @@
         "T17"
       ],
       "title": "编辑边缘历史回响",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/38"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/38",
+      "branch": "feat/T15-m2-explore",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-M2-explore.md"
+      ]
     },
     {
       "id": "T37",

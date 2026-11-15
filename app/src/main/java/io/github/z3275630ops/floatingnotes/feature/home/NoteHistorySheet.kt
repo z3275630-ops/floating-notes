@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,6 +21,7 @@ import io.github.z3275630ops.floatingnotes.data.backup.HistoryUiState
 import io.github.z3275630ops.floatingnotes.data.backup.NoteRevisionSummary
 import io.github.z3275630ops.floatingnotes.data.backup.VersionDiffPreview
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintActivityIndicator
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedRow
@@ -114,7 +114,7 @@ internal fun NoteHistorySheet(
                     horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    MintActivityIndicator(color = scheme.primary)
                     Text("正在读取历史版本…", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
                 }
             } else if (state.revisions.isEmpty()) {

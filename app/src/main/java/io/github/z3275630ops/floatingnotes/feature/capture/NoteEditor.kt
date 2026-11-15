@@ -58,6 +58,10 @@ import io.github.z3275630ops.floatingnotes.data.local.NotebookEntity
 import io.github.z3275630ops.floatingnotes.data.local.RecurrenceRule
 import io.github.z3275630ops.floatingnotes.data.local.ReminderStatus
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
+import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
+import io.github.z3275630ops.floatingnotes.feature.explore.EdgeEchoPreviewSheet
+import io.github.z3275630ops.floatingnotes.feature.explore.EditorEdgeEchoStrip
+import io.github.z3275630ops.floatingnotes.feature.explore.EditorRelatedNotesSheet
 import io.github.z3275630ops.floatingnotes.feature.tasks.ReminderScheduler
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskRecurrence
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskScheduleModal
@@ -147,6 +151,7 @@ internal fun ColumnScope.NoteEditor(
     onOpenOrganize: (() -> Unit)? = null,
     onRequestNotificationPermission: (() -> Unit)? = null,
     onOpenRelated: ((String) -> Unit)? = null,
+    onStartWalkFromNote: ((String) -> Unit)? = null,
     trashedNoteIds: Set<String> = emptySet(),
     trashedNotes: List<NoteEntity> = emptyList(),
 ) {
@@ -161,6 +166,7 @@ internal fun ColumnScope.NoteEditor(
     val liveTags by model.organization.tags.collectAsStateWithLifecycle(initialValue = emptyList())
     val availableTags = if (tags.isNotEmpty()) tags else liveTags
     val noteTaskItems by model.taskItems.collectAsStateWithLifecycle()
+    val discoveryState by model.editorDiscoveryState.collectAsStateWithLifecycle()
 
     var capability by remember { mutableStateOf(ReminderScheduler.capability(context)) }
     DisposableEffect(lifecycleOwner) {
@@ -208,6 +214,8 @@ internal fun ColumnScope.NoteEditor(
     var focusedBlockId by remember(session.draft.id) { mutableStateOf<String?>(null) }
     var excerptTarget by remember { mutableStateOf<NoteEntity?>(null) }
     var pendingTriggerReplace by remember { mutableStateOf<PendingTriggerReplace?>(null) }
+    var showRelatedSheet by remember { mutableStateOf(false) }
+    var echoPreviewHit by remember { mutableStateOf<EvidenceHit?>(null) }
 
     val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
         model.importAttachments(session, it)
@@ -226,11 +234,16 @@ internal fun ColumnScope.NoteEditor(
             noteTagIds = noteTagIds,
             pendingTagIds = session.pendingTagIds,
             backlinksCount = backlinks.size,
+            relatedCount = discoveryState.relatedNotes.size,
             dark = dark,
             onOpenOrganize = onOpenOrganize,
             onOpenTagPicker = { tagPickerOpen = true },
             onRemovePendingTag = session::removePendingTag,
             onOpenBacklinks = { picker = "引用此笔记的记录" },
+            onOpenRelatedNotes = {
+                model.refreshEditorRelatedNotes(session.draft.noteId)
+                showRelatedSheet = true
+            },
         )
     } else if (session.pendingTagIds.isNotEmpty() || noteTagIds.isNotEmpty() || backlinks.isNotEmpty()) {
         FlowRow(
@@ -586,6 +599,30 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
+    val echoBlock = session.blocks.firstOrNull { it.id == focusedBlockId && it.editable }
+        ?: session.blocks.lastOrNull { it.editable }
+    val echoInitialText = remember(session.draft.id, echoBlock?.id) {
+        echoBlock?.text?.text?.toString().orEmpty()
+    }
+    val echoCurrentText = echoBlock?.text?.text?.toString().orEmpty()
+    val echoIsComposing = echoBlock?.text?.composition != null
+    LaunchedEffect(session.draft.id, echoBlock?.id, echoCurrentText, echoIsComposing) {
+        if (echoBlock != null && echoCurrentText != echoInitialText) {
+            model.onEditorTextActivity(
+                noteId = if (session.existingNote) session.draft.noteId else null,
+                blockText = echoCurrentText,
+                isComposing = echoIsComposing,
+            )
+        }
+    }
+
+    EditorEdgeEchoStrip(
+        hit = discoveryState.edgeEcho,
+        dark = dark,
+        onPreview = { hit -> echoPreviewHit = hit },
+        onDismiss = { model.dismissEdgeEcho(suppressNoteForSession = true) },
+    )
+
     HorizontalDivider(
         thickness = 0.5.dp,
         color = scheme.outlineVariant.copy(alpha = 0.35f),
@@ -732,6 +769,46 @@ internal fun ColumnScope.NoteEditor(
         )
     }
 
+    echoPreviewHit?.let { previewHit ->
+        EdgeEchoPreviewSheet(
+            hit = previewHit,
+            dark = dark,
+            backdrop = localBackdrop,
+            onDismiss = { echoPreviewHit = null },
+            onOpenTarget = { target ->
+                echoPreviewHit = null
+                model.dismissEdgeEcho(suppressNoteForSession = false)
+                model.verifyAndOpenEdgeEchoTarget(target)
+            },
+            onMuteSession = {
+                echoPreviewHit = null
+                model.muteEdgeEchoForSession()
+            },
+        )
+    }
+
+    if (showRelatedSheet) {
+        EditorRelatedNotesSheet(
+            noteId = session.draft.noteId,
+            state = discoveryState,
+            dark = dark,
+            backdrop = localBackdrop,
+            onDismiss = { showRelatedSheet = false },
+            onOpenRelatedNote = { match ->
+                showRelatedSheet = false
+                if (onOpenRelated != null) {
+                    onOpenRelated(match.note.id)
+                } else {
+                    model.openDiscoveryNote(match.note.id, match.targetBlockId)
+                }
+            },
+            onStartWalkFromCurrent = { nid ->
+                showRelatedSheet = false
+                onStartWalkFromNote?.invoke(nid)
+            },
+        )
+    }
+
     val scheduleBlock = scheduleBlockId?.let { targetId ->
         session.blocks.firstOrNull { it.id == targetId && it.type == "checkbox" }
     }
@@ -852,15 +929,17 @@ private fun EditorHeaderMetadata(
     noteTagIds: Set<String>,
     pendingTagIds: List<String>,
     backlinksCount: Int,
+    relatedCount: Int = 0,
     dark: Boolean,
     onOpenOrganize: (() -> Unit)?,
     onOpenTagPicker: () -> Unit,
     onRemovePendingTag: (String) -> Unit,
     onOpenBacklinks: () -> Unit,
+    onOpenRelatedNotes: (() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val allTagIds = (noteTagIds + pendingTagIds).toList()
-    val hasTokens = notebook != null || allTagIds.isNotEmpty() || backlinksCount > 0
+    val hasTokens = notebook != null || allTagIds.isNotEmpty() || backlinksCount > 0 || onOpenRelatedNotes != null
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -916,6 +995,17 @@ private fun EditorHeaderMetadata(
                     ) {
                         Text("反链 $backlinksCount")
                     }
+                }
+                if (onOpenRelatedNotes != null) {
+                    MintChip(
+                        label = if (relatedCount > 0) "相关笔记 $relatedCount" else "相关笔记",
+                        selected = relatedCount > 0,
+                        style = if (relatedCount > 0) MintChipStyle.Selected else MintChipStyle.Standard,
+                        leadingIcon = MintIcons.Explore,
+                        dark = dark,
+                        modifier = Modifier.testTag("editor-related-trigger"),
+                        onClick = onOpenRelatedNotes,
+                    )
                 }
             }
         }

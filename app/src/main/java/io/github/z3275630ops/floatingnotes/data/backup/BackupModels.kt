@@ -6,7 +6,7 @@ internal class BackupValidationException(message: String, cause: Throwable? = nu
 
 internal object BackupConstants {
     const val SUPPORTED_BACKUP_SCHEMA_VERSION = 1
-    const val SUPPORTED_DB_SCHEMA_VERSION = 5
+    const val SUPPORTED_DB_SCHEMA_VERSION = 6
     const val MAX_ARCHIVE_ENTRIES = 10_000
     const val MAX_ENTRY_BYTES = 128L * 1024L * 1024L
     const val MAX_TOTAL_UNCOMPRESSED_BYTES = 512L * 1024L * 1024L
