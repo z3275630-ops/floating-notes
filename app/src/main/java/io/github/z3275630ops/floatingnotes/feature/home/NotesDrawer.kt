@@ -63,6 +63,7 @@ internal fun NotesDrawer(
     trashSelected: Boolean = false,
     onOpenTasks: (() -> Unit)? = null,
     onOpenTrash: (() -> Unit)? = null,
+    onOpenStats: (() -> Unit)? = null,
     onOpenBackup: (() -> Unit)? = null,
     labs: (@Composable RowScope.() -> Unit)? = null,
     debugSampleSlot: (@Composable () -> Unit)? = null,
@@ -214,18 +215,34 @@ internal fun NotesDrawer(
                         }
                     }
                 }
-                if (onOpenBackup != null) {
+                if (onOpenStats != null || onOpenBackup != null) {
                     item(key = "drawer-backup-group") {
                         MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
-                            DrawerRow(
-                                title = "设置与数据管理",
-                                selected = false,
-                                dark = dark,
-                                tag = "drawer-backup",
-                                icon = MintIcons.Settings,
-                                showChevron = true,
-                                onClick = onOpenBackup,
-                            )
+                            if (onOpenStats != null) {
+                                DrawerRow(
+                                    title = "记录统计与热力图",
+                                    selected = false,
+                                    dark = dark,
+                                    tag = "drawer-stats",
+                                    icon = MintIcons.Chart,
+                                    showChevron = true,
+                                    onClick = onOpenStats,
+                                )
+                                if (onOpenBackup != null) {
+                                    MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                                }
+                            }
+                            if (onOpenBackup != null) {
+                                DrawerRow(
+                                    title = "设置与数据管理",
+                                    selected = false,
+                                    dark = dark,
+                                    tag = "drawer-backup",
+                                    icon = MintIcons.Settings,
+                                    showChevron = true,
+                                    onClick = onOpenBackup,
+                                )
+                            }
                         }
                     }
                 }

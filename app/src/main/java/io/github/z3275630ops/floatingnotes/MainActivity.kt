@@ -30,6 +30,7 @@ import io.github.z3275630ops.floatingnotes.feature.lab.InputLab
 import io.github.z3275630ops.floatingnotes.feature.lab.MaterialLab
 import io.github.z3275630ops.floatingnotes.feature.tasks.ReminderScheduler
 import io.github.z3275630ops.floatingnotes.feature.tasks.TasksScreen
+import io.github.z3275630ops.floatingnotes.feature.widget.WidgetContract
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintColorScheme
 import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
@@ -129,16 +130,23 @@ class MainActivity : ComponentActivity() {
 
     private fun extractDeepLink(intent: Intent?): ShellDeepLinkRequest? {
         intent ?: return null
-        val noteId = intent.getStringExtra(ReminderScheduler.EXTRA_NOTE_ID)?.takeIf { it.isNotBlank() }
+        val widgetAction = intent.getStringExtra(WidgetContract.EXTRA_WIDGET_ACTION)?.takeIf { it.isNotBlank() }
+        val sessionId = intent.getStringExtra(WidgetContract.EXTRA_REVIEW_SESSION_ID)?.takeIf { it.isNotBlank() }
+        val noteId = (
+            intent.getStringExtra(ReminderScheduler.EXTRA_NOTE_ID)
+                ?: intent.getStringExtra(WidgetContract.EXTRA_NOTE_ID)
+            )?.takeIf { it.isNotBlank() }
         val blockId = intent.getStringExtra(ReminderScheduler.EXTRA_BLOCK_ID)?.takeIf { it.isNotBlank() }
         val openTasks = intent.getBooleanExtra(ReminderScheduler.EXTRA_OPEN_TASKS, false)
-        if (!openTasks && noteId == null) return null
+        if (!openTasks && noteId == null && widgetAction == null) return null
         deepLinkSeq += 1L
         return ShellDeepLinkRequest(
             seq = deepLinkSeq,
             openTasks = openTasks,
             noteId = noteId,
             blockId = blockId,
+            widgetAction = widgetAction,
+            reviewSessionId = sessionId,
         )
     }
 

@@ -136,6 +136,9 @@ internal interface DiscoveryDao {
     @Query("SELECT * FROM review_sessions WHERE id = :id")
     suspend fun reviewSession(id: String): ReviewSessionEntity?
 
+    @Query("SELECT * FROM review_sessions ORDER BY created_at DESC LIMIT 1")
+    suspend fun latestReviewSession(): ReviewSessionEntity?
+
     @Upsert
     suspend fun upsertReviewSession(session: ReviewSessionEntity)
 

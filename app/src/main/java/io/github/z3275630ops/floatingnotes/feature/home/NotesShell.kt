@@ -58,6 +58,9 @@ import io.github.z3275630ops.floatingnotes.feature.capture.CaptureSheet
 import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
 import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreScreen
+import io.github.z3275630ops.floatingnotes.feature.share.ShareCardSheet
+import io.github.z3275630ops.floatingnotes.feature.stats.StatsSheet
+import io.github.z3275630ops.floatingnotes.feature.widget.WidgetContract
 import io.github.z3275630ops.floatingnotes.ui.designsystem.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -104,6 +107,8 @@ internal data class ShellDeepLinkRequest(
     val openTasks: Boolean,
     val noteId: String?,
     val blockId: String?,
+    val widgetAction: String? = null,
+    val reviewSessionId: String? = null,
 )
 
 @Composable
@@ -149,6 +154,11 @@ internal fun NotesShell(
     val edgeEchoEnabled by model.explorePreferences.observeEdgeEchoEnabled().collectAsStateWithLifecycle(
         initialValue = model.explorePreferences.edgeEchoEnabled,
     )
+    val widgetPrivacyEnabled by model.widgetPreferences.observePrivacyModeEnabled().collectAsStateWithLifecycle(
+        initialValue = model.widgetPreferences.privacyModeEnabled,
+    )
+    var showStatsSheet by rememberSaveable { mutableStateOf(false) }
+    var sharingNoteId by rememberSaveable { mutableStateOf<String?>(null) }
     var exploreSectionIndex by rememberSaveable { mutableStateOf(0) }
     val organization = model.organization
     val tags by organization.tags.collectAsStateWithLifecycle(emptyList())
@@ -299,6 +309,32 @@ internal fun NotesShell(
     LaunchedEffect(deepLinkRequest?.seq) {
         val request = deepLinkRequest ?: return@LaunchedEffect
         when {
+            request.widgetAction == WidgetContract.ACTION_QUICK_CAPTURE -> {
+                showTasksOverlay = false
+                showTrash = false
+                launchEditor(noteId = null)
+            }
+            request.widgetAction == WidgetContract.ACTION_OPEN_REVIEW_SESSION -> {
+                showTasksOverlay = false
+                showTrash = false
+                exploreSectionIndex = 0
+                page = Page.Explore
+                model.focusReviewSessionFromWidget(
+                    sessionId = request.reviewSessionId,
+                    noteId = request.noteId,
+                )
+            }
+            request.widgetAction == WidgetContract.ACTION_OPEN_EXPLORE -> {
+                showTasksOverlay = false
+                showTrash = false
+                exploreSectionIndex = 0
+                page = Page.Explore
+            }
+            request.widgetAction == WidgetContract.ACTION_OPEN_AGENT -> {
+                showTasksOverlay = false
+                showTrash = false
+                page = Page.Agent
+            }
             request.noteId != null -> {
                 showTasksOverlay = false
                 showTrash = false
@@ -394,6 +430,8 @@ internal fun NotesShell(
             onClearOutcome = { model.clearBackupOutcome() },
             edgeEchoEnabled = edgeEchoEnabled,
             onToggleEdgeEcho = { enabled -> model.setEdgeEchoGlobalEnabled(enabled) },
+            widgetPrivacyEnabled = widgetPrivacyEnabled,
+            onToggleWidgetPrivacy = { enabled -> model.setWidgetPrivacyModeEnabled(enabled) },
             onRestoreDiscoveryExclusions = {
                 model.restoreAllDiscoveryExclusions()
                 showBackupSheet = false
@@ -401,6 +439,47 @@ internal fun NotesShell(
                 page = Page.Explore
             },
         )
+    }
+
+    if (showStatsSheet) {
+        StatsSheet(
+            allNotes = notes + trashedNotes,
+            tagRefs = noteTags,
+            tags = tags,
+            dark = dark,
+            backdrop = backdrop,
+            onDismiss = { showStatsSheet = false },
+            onOpenNote = { noteId ->
+                showStatsSheet = false
+                showTrash = false
+                launchEditor(noteId)
+            },
+            onSelectTag = { tagId ->
+                showStatsSheet = false
+                showTrash = false
+                keyword.edit { replace(0, length, "") }
+                searchScopeJson = NoteScope().encode()
+                selectedTag = tagId
+                selectedNotebook = null
+                descendants = true
+                page = Page.Library
+            },
+        )
+    }
+
+    sharingNoteId?.let { targetId ->
+        val shareNote = notes.firstOrNull { it.id == targetId }
+        if (shareNote != null) {
+            ShareCardSheet(
+                note = shareNote,
+                tagNames = tagIdsByNoteId[shareNote.id].orEmpty().mapNotNull(tagPaths::get),
+                dark = dark,
+                backdrop = backdrop,
+                onDismiss = { sharingNoteId = null },
+            )
+        } else {
+            LaunchedEffect(targetId) { sharingNoteId = null }
+        }
     }
 
     ModalNavigationDrawer(
@@ -448,6 +527,10 @@ internal fun NotesShell(
                     showArchive = false
                     showTrash = true
                     scope.launch { drawer.close() }
+                },
+                onOpenStats = {
+                    scope.launch { drawer.close() }
+                    showStatsSheet = true
                 },
                 onOpenBackup = {
                     scope.launch { drawer.close() }
@@ -637,6 +720,7 @@ internal fun NotesShell(
                                                 onArchive = { model.archive(it) },
                                                 onOrganize = { organizeNote = it.id },
                                                 onHistory = { model.openVersionHistory(it.id) },
+                                                onShareCard = { sharingNoteId = it.id },
                                                 onMoveToTrash = { model.moveToTrash(it) },
                                             )
                                         }
@@ -809,6 +893,7 @@ internal fun NotesShell(
                                                 onArchive = { model.archive(it) },
                                                 onOrganize = { organizeNote = it.id },
                                                 onHistory = { model.openVersionHistory(it.id) },
+                                                onShareCard = { sharingNoteId = it.id },
                                                 onMoveToTrash = { model.moveToTrash(it) },
                                             )
                                         }
@@ -882,6 +967,8 @@ internal fun NotesShell(
                                                     recordFilter = RecordFilter.Todos
                                                     page = Page.Record
                                                 },
+                                                onOpenStats = { showStatsSheet = true },
+                                                onShareNote = { note -> sharingNoteId = note.id },
                                                 selectedSectionIndex = exploreSectionIndex,
                                                 onSelectSection = { exploreSectionIndex = it },
                                             )
@@ -1066,6 +1153,13 @@ internal fun NotesShell(
                                         ) {
                                             editorMenu = false
                                             model.openVersionHistory(activeNote.id)
+                                        }
+                                        ComposablesMenuItem(
+                                            label = "生成分享卡片",
+                                            icon = MintIcons.Share,
+                                        ) {
+                                            editorMenu = false
+                                            sharingNoteId = activeNote.id
                                         }
                                         ComposablesMenuItem(
                                             label = if (activeNote.archivedAt == null) "归档" else "取消归档",
@@ -1631,6 +1725,7 @@ private fun LazyListScope.groupedNoteBucket(
     onArchive: (NoteEntity) -> Unit,
     onOrganize: (NoteEntity) -> Unit,
     onHistory: (NoteEntity) -> Unit,
+    onShareCard: (NoteEntity) -> Unit = {},
     onMoveToTrash: (NoteEntity) -> Unit,
 ) {
     if (!bucket.title.isNullOrBlank()) {
@@ -1681,6 +1776,7 @@ private fun LazyListScope.groupedNoteBucket(
                 onArchive = { onArchive(note) },
                 onOrganize = { onOrganize(note) },
                 onHistory = { onHistory(note) },
+                onShareCard = { onShareCard(note) },
                 onMoveToTrash = { onMoveToTrash(note) },
             )
             if (!isLast) {
@@ -1704,6 +1800,7 @@ private fun NoteCard(
     onArchive: () -> Unit,
     onOrganize: () -> Unit,
     onHistory: () -> Unit = {},
+    onShareCard: () -> Unit = {},
     onMoveToTrash: () -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -1796,6 +1893,10 @@ private fun NoteCard(
                     ComposablesMenuItem("版本历史", icon = MintIcons.History) {
                         menu = false
                         onHistory()
+                    }
+                    ComposablesMenuItem("生成分享卡片", icon = MintIcons.Share) {
+                        menu = false
+                        onShareCard()
                     }
                     ComposablesMenuItem(
                         label = if (note.pinned) "取消置顶" else "置顶",

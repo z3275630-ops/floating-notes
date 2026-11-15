@@ -63,5 +63,36 @@
                 <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+        <activity
+            android:name=".feature.widget.WidgetConfigActivity"
+            android:exported="true"
+            android:label="@string/widget_daily_review_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+        <receiver
+            android:name=".feature.widget.FloatingNotesQuickCaptureWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_quick_capture_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_quick_capture_info" />
+        </receiver>
+        <receiver
+            android:name=".feature.widget.FloatingNotesReviewWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_daily_review_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="io.github.z3275630ops.floatingnotes.ACTION_REFRESH_WIDGET" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_daily_review_info" />
+        </receiver>
     </application>
 </manifest>

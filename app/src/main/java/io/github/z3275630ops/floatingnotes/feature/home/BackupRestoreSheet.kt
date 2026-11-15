@@ -1,5 +1,7 @@
 package io.github.z3275630ops.floatingnotes.feature.home
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -22,6 +25,8 @@ import io.github.z3275630ops.floatingnotes.data.backup.BackupUiState
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreMode
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.RestorePreflight
+import io.github.z3275630ops.floatingnotes.feature.widget.FloatingNotesQuickCaptureWidgetProvider
+import io.github.z3275630ops.floatingnotes.feature.widget.FloatingNotesReviewWidgetProvider
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintActivityIndicator
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintAlertDialog
@@ -55,11 +60,15 @@ internal fun BackupRestoreSheet(
     onClearOutcome: () -> Unit,
     edgeEchoEnabled: Boolean = true,
     onToggleEdgeEcho: (Boolean) -> Unit = {},
+    widgetPrivacyEnabled: Boolean = true,
+    onToggleWidgetPrivacy: (Boolean) -> Unit = {},
     onRestoreDiscoveryExclusions: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
     val today = remember { LocalDate.now().toString() }
     var showMarkdownConfirm by remember { mutableStateOf(false) }
+    var widgetPinHint by remember { mutableStateOf<String?>(null) }
 
     val fullBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
@@ -307,6 +316,46 @@ internal fun BackupRestoreSheet(
                         )
                     },
                     onClick = { onToggleEdgeEcho(!edgeEchoEnabled) },
+                )
+                MintGroupedDivider(dark = dark, startIndent = 48.dp)
+                MintGroupedRow(
+                    label = "桌面组件与锁屏隐私保护",
+                    subtitle = "默认开启：桌面回顾卡片隐藏敏感正文，点击才打开原文",
+                    leadingIcon = MintIcons.Archive,
+                    dark = dark,
+                    trailingContent = {
+                        MintSwitch(
+                            checked = widgetPrivacyEnabled,
+                            onCheckedChange = onToggleWidgetPrivacy,
+                            dark = dark,
+                            modifier = Modifier.testTag("settings-widget-privacy-toggle"),
+                        )
+                    },
+                    onClick = { onToggleWidgetPrivacy(!widgetPrivacyEnabled) },
+                )
+                MintGroupedDivider(dark = dark, startIndent = 48.dp)
+                MintGroupedRow(
+                    label = "添加桌面小组件（回顾 / 快速记录）",
+                    subtitle = widgetPinHint ?: "如手机桌面支持，可尝试直接固定；或长按桌面空白处添加「浮记」",
+                    leadingIcon = MintIcons.Plus,
+                    showChevron = true,
+                    dark = dark,
+                    modifier = Modifier.testTag("settings-pin-widget"),
+                    onClick = {
+                        val mgr = AppWidgetManager.getInstance(context)
+                        val supported = mgr.isRequestPinAppWidgetSupported
+                        if (supported) {
+                            val reviewProvider = ComponentName(context, FloatingNotesReviewWidgetProvider::class.java)
+                            val ok = mgr.requestPinAppWidget(reviewProvider, null, null)
+                            if (!ok) {
+                                val quickProvider = ComponentName(context, FloatingNotesQuickCaptureWidgetProvider::class.java)
+                                mgr.requestPinAppWidget(quickProvider, null, null)
+                            }
+                            widgetPinHint = "已请求系统添加桌面小组件；若桌面未弹出确认，请长按桌面空白处手动添加"
+                        } else {
+                            widgetPinHint = "当前桌面不支持一键固定，请长按手机桌面空白处 → 添加小组件 → 选择「浮记」"
+                        }
+                    },
                 )
                 if (onRestoreDiscoveryExclusions != null) {
                     MintGroupedDivider(dark = dark, startIndent = 48.dp)

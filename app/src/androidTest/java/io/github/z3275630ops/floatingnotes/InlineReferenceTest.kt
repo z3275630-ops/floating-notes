@@ -53,6 +53,7 @@ class InlineReferenceTest {
         await(hasTestTag("saved-note") and hasText(sourceTitle, substring = true))
 
         // 2. Open a new draft, attach a tag via inline '#' suggestion bar.
+        await(hasTestTag("new-note"))
         compose.onNodeWithTag("new-note").performClick()
         await(hasTestTag("capture-editor"))
         val editor = compose.onNodeWithTag("capture-editor")

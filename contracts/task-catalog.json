@@ -356,7 +356,7 @@
         "T09"
       ],
       "title": "统计和热力图",
-      "status": "planned",
+      "status": "implemented",
       "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/26"
     },
     {
@@ -389,7 +389,7 @@
         "T08"
       ],
       "title": "桌面组件和分享",
-      "status": "planned",
+      "status": "implemented",
       "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/29"
     },
     {

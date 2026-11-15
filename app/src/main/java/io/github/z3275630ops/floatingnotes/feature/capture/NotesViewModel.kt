@@ -35,6 +35,8 @@ import io.github.z3275630ops.floatingnotes.feature.agent.AgentUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorDiscoveryState
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.WalkMode
+import io.github.z3275630ops.floatingnotes.feature.widget.WidgetPreferences
+import io.github.z3275630ops.floatingnotes.feature.widget.WidgetUpdater
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentImportException
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentKind
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
@@ -247,6 +249,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     val organization = OrganizationRepository(database)
     val search = SearchRepository(database)
     val explorePreferences = ExplorePreferences(application)
+    internal val widgetPreferences = WidgetPreferences(application)
     internal val discovery = DiscoveryRepository(database, repository, explorePreferences)
     internal val agentRepository = AgentRepository(database, repository, organization, discovery)
     private val _agentState = MutableStateFlow(AgentUiState())
@@ -811,6 +814,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 }
                 if (!discard && didCommit) {
                     commitSessionExtras(session)
+                    WidgetUpdater.requestRefreshAll(getApplication())
                 }
             }
             val editedDuringCommit = !discard &&
@@ -1225,6 +1229,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         if (_historyState.value.noteId == note.id) {
                             _historyState.value = HistoryUiState()
                         }
+                        WidgetUpdater.requestRefreshAll(app)
                         error = null
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -1244,6 +1249,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         val sync = repository.restoreFromTrash(note.id)
                         runCatching { repository.loadNote(note.id)?.let { discovery.syncChunksForNote(it) } }
                         sync?.let { ReminderScheduler.syncReconcile(getApplication(), it) }
+                        WidgetUpdater.requestRefreshAll(getApplication())
                         error = null
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -1713,6 +1719,52 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     fun clearExploreMessage() {
         _exploreState.update { it.copy(statusMessage = null, errorMessage = null) }
+    }
+
+    fun setWidgetPrivacyModeEnabled(enabled: Boolean) {
+        widgetPreferences.privacyModeEnabled = enabled
+        WidgetUpdater.requestRefreshAll(getApplication())
+    }
+
+    fun focusReviewSessionFromWidget(sessionId: String?, noteId: String?) {
+        viewModelScope.launch {
+            _exploreState.update { it.copy(loading = true, errorMessage = null) }
+            try {
+                val coverage = discovery.ensureIndexFresh(forceRebuild = false)
+                val review = discovery.loadOrCreateDailyReview(startExtraRound = false)
+                val targetIndex = noteId?.let { target ->
+                    review.cards.indexOfFirst { it.note.id == target }.takeIf { it >= 0 }
+                }
+                val adjustedReview = if (targetIndex != null) {
+                    discovery.setReviewIndex(review.session.id, targetIndex)
+                    review.copy(currentIndex = targetIndex)
+                } else {
+                    review
+                }
+                val statusHint = when {
+                    sessionId != null && review.session.id != sessionId ->
+                        "桌面组件上的回顾会话已切换为今日最新回顾"
+                    noteId != null && targetIndex == null ->
+                        "桌面卡片对应的原笔记已变更或已移出回顾队列，已展示当前队列"
+                    else -> null
+                }
+                _exploreState.update {
+                    it.copy(
+                        loading = false,
+                        review = adjustedReview,
+                        coverage = coverage,
+                        statusMessage = statusHint ?: it.statusMessage,
+                    )
+                }
+                WidgetUpdater.requestRefreshAll(getApplication())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _exploreState.update {
+                    it.copy(loading = false, errorMessage = "从桌面组件打开回顾失败，请重试")
+                }
+            }
+        }
     }
 
     fun loadExploreDashboard(startExtraRound: Boolean = false) {

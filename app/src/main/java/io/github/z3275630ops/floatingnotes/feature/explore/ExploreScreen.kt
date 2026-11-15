@@ -104,6 +104,8 @@ internal fun ExploreScreen(
     onAnalyzeDualPair: () -> Unit = {},
     onMarkDualFarFetched: () -> Unit = {},
     onSaveDualAsNote: (String) -> Unit = {},
+    onOpenStats: () -> Unit = {},
+    onShareNote: (NoteEntity) -> Unit = {},
     selectedSectionIndex: Int? = null,
     onSelectSection: ((Int) -> Unit)? = null,
 ) {
@@ -120,6 +122,25 @@ internal fun ExploreScreen(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "知识库 $notesCount 篇 · $linksCount 条关联",
+                style = MaterialTheme.typography.labelMedium,
+                color = scheme.onSurfaceVariant,
+            )
+            MintChip(
+                label = "统计与热力图",
+                leadingIcon = MintIcons.Chart,
+                selected = false,
+                dark = dark,
+                modifier = Modifier.testTag("explore-open-stats"),
+                onClick = onOpenStats,
+            )
+        }
         MintSegmentedBar(
             options = ExploreSection.entries.map { it.label },
             selectedIndex = activeSectionIndex,
@@ -195,6 +216,8 @@ internal fun ExploreScreen(
                         onStartWalk(noteId, null)
                     },
                     onOpenTodos = onOpenTodos,
+                    onOpenStats = onOpenStats,
+                    onShareNote = onShareNote,
                 )
             }
             ExploreSection.Find -> {
@@ -262,6 +285,8 @@ private fun ReviewTabContent(
     onOpenNote: (String) -> Unit,
     onStartWalkFromNote: (String) -> Unit,
     onOpenTodos: () -> Unit,
+    onOpenStats: () -> Unit,
+    onShareNote: (NoteEntity) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val review = state.review
@@ -498,6 +523,21 @@ private fun ReviewTabContent(
                         }
                         Spacer(Modifier.weight(1f))
                         Text(
+                            text = "分享卡片",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+                            color = scheme.primary,
+                            modifier = Modifier
+                                .testTag("review-share-card-button")
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = { onShareNote(card.note) },
+                                )
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                        )
+                        Text(
                             text = "从这里漫步",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
                             color = scheme.primary,
@@ -619,17 +659,28 @@ private fun ReviewTabContent(
             }
         }
 
-        // Compact knowledge pulse summary card
+        // Compact knowledge pulse summary card + stats entry (T26 / S17)
         MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
             MintGroupedRow(
-                label = "知识脉络概览",
+                label = "记录统计与热力图",
                 subtitle = "$notesCount 篇笔记 · $linksCount 条引用 · " +
                     if (openTodosCount > 0) "待办 $openTodosCount 项" else "待办已清空",
-                leadingIcon = MintIcons.Checklist,
-                showChevron = openTodosCount > 0,
+                leadingIcon = MintIcons.Chart,
+                showChevron = true,
                 dark = dark,
-                onClick = if (openTodosCount > 0) onOpenTodos else null,
+                onClick = onOpenStats,
             )
+            if (openTodosCount > 0) {
+                MintGroupedDivider(dark = dark, startIndent = 48.dp)
+                MintGroupedRow(
+                    label = "待办清单",
+                    subtitle = "当前仍有 $openTodosCount 项未完成待办",
+                    leadingIcon = MintIcons.Checklist,
+                    showChevron = true,
+                    dark = dark,
+                    onClick = onOpenTodos,
+                )
+            }
         }
     }
 

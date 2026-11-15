@@ -325,6 +325,25 @@ internal object MintIcons {
         }
     }
 
+    val Chart: ImageVector by lazy {
+        strokeIcon("MintChart") {
+            moveTo(4.5f, 19.5f); horizontalLineTo(19.5f)
+            moveTo(7.5f, 19.5f); verticalLineTo(13f)
+            moveTo(12f, 19.5f); verticalLineTo(7f)
+            moveTo(16.5f, 19.5f); verticalLineTo(10f)
+        }
+    }
+
+    val Share: ImageVector by lazy {
+        strokeIcon("MintShare") {
+            moveTo(12f, 14f); verticalLineTo(4.5f)
+            moveTo(8.5f, 8f); lineTo(12f, 4.5f); lineTo(15.5f, 8f)
+            moveTo(6f, 11.5f); verticalLineTo(17.5f)
+            curveTo(6f, 18.6f, 6.9f, 19.5f, 8f, 19.5f); horizontalLineTo(16f)
+            curveTo(17.1f, 19.5f, 18f, 18.6f, 18f, 17.5f); verticalLineTo(11.5f)
+        }
+    }
+
     private fun strokeIcon(
         name: String,
         strokeWidth: Float = 1.85f,

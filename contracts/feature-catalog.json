@@ -251,7 +251,7 @@
       "id": "F13",
       "name": "统计",
       "milestone": "M4",
-      "status": "planned",
+      "status": "implemented",
       "spec": "docs/features/map-library-integrations.md",
       "screens": [
         "S17"
@@ -261,7 +261,9 @@
         "Q039",
         "Q040"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-T26-T29-stats-widgets.md"
+      ]
     },
     {
       "id": "F14",
@@ -337,7 +339,7 @@
       "id": "F18",
       "name": "桌面组件与分享",
       "milestone": "M4",
-      "status": "in_progress",
+      "status": "implemented",
       "spec": "docs/features/map-library-integrations.md",
       "screens": [
         "S19",
@@ -355,7 +357,8 @@
       ],
       "evidence": [
         "docs/quality/T02-validation.md",
-        "docs/quality/T35-validation.md"
+        "docs/quality/T35-validation.md",
+        "docs/handoffs/2026-11-15-T26-T29-stats-widgets.md"
       ]
     },
     {
