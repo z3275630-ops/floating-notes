@@ -2,7 +2,9 @@ package io.github.z3275630ops.floatingnotes.feature.capture
 
 import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.os.Build
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -25,7 +27,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -33,6 +37,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
@@ -148,6 +153,7 @@ internal fun ColumnScope.NoteEditor(
     backdrop: GlassBackdrop? = null,
     tier: GlassTier = GlassTier.Enhanced.supportedOn(Build.VERSION.SDK_INT),
     dark: Boolean = isSystemInDarkTheme(),
+    autoFocusKeyboard: Boolean = false,
     onOpenOrganize: (() -> Unit)? = null,
     onRequestNotificationPermission: (() -> Unit)? = null,
     onOpenRelated: ((String) -> Unit)? = null,
@@ -156,6 +162,7 @@ internal fun ColumnScope.NoteEditor(
     trashedNotes: List<NoteEntity> = emptyList(),
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
     val localBackdrop = backdrop ?: rememberGlassBackdrop()
@@ -315,12 +322,40 @@ internal fun ColumnScope.NoteEditor(
     }
 
     val focusBlockRequesters = remember(session.draft.id) { mutableMapOf<String, BringIntoViewRequester>() }
+    val blockFocusRequesters = remember(session.draft.id) { mutableMapOf<String, FocusRequester>() }
+
+    fun focusEditableBlock(targetId: String, moveToEnd: Boolean = false) {
+        val targetBlock = session.blocks.firstOrNull { it.id == targetId && it.editable } ?: return
+        focusedBlockId = targetBlock.id
+        if (moveToEnd) {
+            val end = targetBlock.text.text.length
+            targetBlock.text.edit { selection = TextRange(end) }
+        }
+        runCatching {
+            blockFocusRequesters[targetBlock.id]?.requestFocus()
+        }
+        keyboard?.show()
+        view.post {
+            val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
 
     LaunchedEffect(session.focusBlockId) {
         val targetId = session.focusBlockId ?: return@LaunchedEffect
+        withFrameNanos { }
         focusBlockRequesters[targetId]?.bringIntoView()
-        focusedBlockId = targetId
+        focusEditableBlock(targetId, moveToEnd = true)
         session.focusBlockId = null
+    }
+
+    LaunchedEffect(session.draft.id, autoFocusKeyboard) {
+        if (autoFocusKeyboard && !session.existingNote && !session.writing) {
+            val firstEditable = session.blocks.firstOrNull { it.editable } ?: return@LaunchedEffect
+            withFrameNanos { }
+            kotlinx.coroutines.delay(90)
+            focusEditableBlock(firstEditable.id, moveToEnd = false)
+        }
     }
 
     Column(
@@ -338,6 +373,9 @@ internal fun ColumnScope.NoteEditor(
             key(block.id) {
                 val requester = remember(block.id) {
                     focusBlockRequesters.getOrPut(block.id) { BringIntoViewRequester() }
+                }
+                val blockFocusReq = remember(block.id) {
+                    blockFocusRequesters.getOrPut(block.id) { FocusRequester() }
                 }
                 Column(
                     modifier = Modifier
@@ -389,6 +427,7 @@ internal fun ColumnScope.NoteEditor(
                                 enabled = !session.writing,
                                 modifier = Modifier
                                     .weight(1f)
+                                    .focusRequester(blockFocusReq)
                                     .onFocusChanged { focusState ->
                                         if (focusState.isFocused) {
                                             focusedBlockId = block.id
@@ -492,6 +531,26 @@ internal fun ColumnScope.NoteEditor(
                 }
             }
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 280.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    enabled = !session.writing,
+                    onClick = {
+                        val existingTarget = session.blocks.lastOrNull { it.editable }
+                        if (existingTarget != null && blockFocusRequesters.containsKey(existingTarget.id)) {
+                            focusEditableBlock(existingTarget.id, moveToEnd = true)
+                        } else {
+                            val tail = session.ensureTailEditableBlock()
+                            session.focusBlockId = tail.id
+                        }
+                    },
+                )
+                .testTag("editor-blank-canvas"),
+        )
     }
 
     val activeBlock = session.blocks.firstOrNull { it.id == focusedBlockId && it.editable }

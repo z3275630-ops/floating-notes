@@ -514,12 +514,15 @@ internal class BackupManager(
         val searchDao = database.search()
         val taskDao = database.taskReminders()
         val discoveryDao = database.discovery()
+        val agentDao = database.agent()
         val nowMs = now.toEpochMilli()
         val timeStr = timestamp.format(now)
 
         if (mode == RestoreMode.REPLACE_ALL) {
             val oldReminderIds = taskDao.allReminders().map { it.id }
 
+            agentDao.clearAllActions()
+            agentDao.clearAllRuns()
             discoveryDao.clearAllChunks()
             discoveryDao.clearAllReviewEvents()
             discoveryDao.clearAllReviewSessions()

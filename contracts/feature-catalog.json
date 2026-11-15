@@ -156,7 +156,7 @@
       "id": "F08",
       "name": "AI 洞察",
       "milestone": "M3",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/insight-agent.md",
       "screens": [
         "S11",
@@ -172,13 +172,15 @@
         "Q101",
         "Q102"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-T37-agent-ux.md"
+      ]
     },
     {
       "id": "F09",
       "name": "Agent",
       "milestone": "M3",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/insight-agent.md",
       "screens": [
         "S13",
@@ -190,7 +192,9 @@
         "Q027",
         "Q028"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-T37-agent-ux.md"
+      ]
     },
     {
       "id": "F10",

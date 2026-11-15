@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
@@ -42,7 +43,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -50,6 +54,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.z3275630ops.floatingnotes.data.discovery.DualCollisionBridge
+import io.github.z3275630ops.floatingnotes.data.discovery.DualCollisionPair
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalRetrievalEngine
 import io.github.z3275630ops.floatingnotes.data.discovery.WalkPostcardSummary
@@ -66,6 +72,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedRow
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSegmentedBar
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAnimatorsEnabled
@@ -445,12 +452,42 @@ internal fun WalkTabContent(
     onSavePostcardAsNote: () -> Unit,
     onDismissPostcard: () -> Unit,
     onOpenNote: (String) -> Unit,
+    onSelectWalkMode: (WalkMode) -> Unit = {},
+    onDrawNextDualPair: () -> Unit = {},
+    onStepDualBack: () -> Unit = {},
+    onAnalyzeDualPair: () -> Unit = {},
+    onMarkDualFarFetched: () -> Unit = {},
+    onSaveDualAsNote: (String) -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
     val walk = state.walk
     var showMemoSheet by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        MintSegmentedBar(
+            options = WalkMode.entries.map { it.label },
+            selectedIndex = if (state.walkMode == WalkMode.Single) 0 else 1,
+            onSelect = { idx ->
+                onSelectWalkMode(if (idx == 0) WalkMode.Single else WalkMode.Dual)
+            },
+            dark = dark,
+            optionTags = listOf("walk-mode-single", "walk-mode-dual"),
+        )
+
+        if (state.walkMode == WalkMode.Dual) {
+            DualWalkContent(
+                state = state,
+                dark = dark,
+                onDrawNext = onDrawNextDualPair,
+                onStepBack = onStepDualBack,
+                onAnalyze = onAnalyzeDualPair,
+                onMarkFarFetched = onMarkDualFarFetched,
+                onSaveAsNote = onSaveDualAsNote,
+                onOpenNote = onOpenNote,
+            )
+            return@Column
+        }
+
         if (walk == null || walk.currentStep == null || walk.currentNote == null) {
             MintGroupedSection(
                 dark = dark,
@@ -603,14 +640,17 @@ internal fun WalkTabContent(
                                 }
                             }
                         }
-                        val body = note.searchText.ifBlank { note.title.orEmpty() }
-                        Text(
-                            text = body,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = scheme.onSurface,
-                            maxLines = 10,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        val walkTitle = LocalRetrievalEngine.displayNoteTitle(note)
+                        val body = LocalRetrievalEngine.bodyExcludingTitle(note, note.searchText, walkTitle)
+                        if (body.isNotEmpty()) {
+                            Text(
+                                text = body,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = scheme.onSurface,
+                                maxLines = 10,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         step.userMemo?.takeIf { it.isNotBlank() }?.let { memo ->
                             Box(
                                 modifier = Modifier
@@ -841,3 +881,359 @@ internal fun formatShortDate(iso: String): String = runCatching {
     val zdt = Instant.parse(iso).atZone(ZoneId.systemDefault())
     DateTimeFormatter.ofPattern("yyyy/MM/dd").format(zdt)
 }.getOrElse { iso.take(10) }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DualWalkContent(
+    state: ExploreUiState,
+    dark: Boolean,
+    onDrawNext: () -> Unit,
+    onStepBack: () -> Unit,
+    onAnalyze: () -> Unit,
+    onMarkFarFetched: () -> Unit,
+    onSaveAsNote: (String) -> Unit,
+    onOpenNote: (String) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val pair = state.dualPair
+    val insufficient = state.dualInsufficientCount
+
+    if (insufficient != null || pair == null) {
+        MintGroupedSection(
+            dark = dark,
+            containerColor = mintCardSurface(dark),
+            modifier = Modifier.testTag("dual-walk-empty"),
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "双卡概念对撞",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = scheme.onSurface,
+                )
+                Text(
+                    text = "至少需要 2 条不同的非空笔记才能随机配对对撞（当前可用 ${insufficient ?: 0} 条），先去记一两条想法吧。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurfaceVariant,
+                )
+                MintPillButton(
+                    label = "重新检查笔记数量",
+                    primary = true,
+                    dark = dark,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onDrawNext,
+                )
+            }
+        }
+        return
+    }
+
+    var reflectionDraft by rememberSaveable(pair.pairId) { mutableStateOf("") }
+    val cfg = LocalConfiguration.current
+    val density = LocalDensity.current
+    val sideBySide = cfg.screenWidthDp >= 540 && density.fontScale < 1.35f
+
+    Column(
+        modifier = Modifier.testTag("dual-walk-workspace"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // Pair controls: back / next
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MintPillButton(
+                label = "上一组",
+                primary = false,
+                dark = dark,
+                enabled = state.dualHistory.isNotEmpty(),
+                modifier = Modifier.weight(1f).testTag("dual-back-button"),
+                onClick = onStepBack,
+            )
+            MintPillButton(
+                label = "换一组碰撞",
+                primary = true,
+                dark = dark,
+                icon = MintIcons.Explore,
+                modifier = Modifier.weight(1f).testTag("dual-next-button"),
+                onClick = onDrawNext,
+            )
+        }
+
+        if (sideBySide) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                DualCollisionNoteCard(
+                    badge = "卡片 A",
+                    title = pair.leftTitle,
+                    body = pair.leftBody,
+                    tags = pair.leftTags,
+                    dateLabel = formatShortDate(pair.leftNote.createdAt),
+                    dark = dark,
+                    onOpen = { onOpenNote(pair.leftNote.id) },
+                    modifier = Modifier.weight(1f).testTag("dual-card-left"),
+                )
+                DualCollisionNoteCard(
+                    badge = "卡片 B",
+                    title = pair.rightTitle,
+                    body = pair.rightBody,
+                    tags = pair.rightTags,
+                    dateLabel = formatShortDate(pair.rightNote.createdAt),
+                    dark = dark,
+                    onOpen = { onOpenNote(pair.rightNote.id) },
+                    modifier = Modifier.weight(1f).testTag("dual-card-right"),
+                )
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                DualCollisionNoteCard(
+                    badge = "卡片 A",
+                    title = pair.leftTitle,
+                    body = pair.leftBody,
+                    tags = pair.leftTags,
+                    dateLabel = formatShortDate(pair.leftNote.createdAt),
+                    dark = dark,
+                    onOpen = { onOpenNote(pair.leftNote.id) },
+                    modifier = Modifier.fillMaxWidth().testTag("dual-card-left"),
+                )
+                DualCollisionNoteCard(
+                    badge = "卡片 B",
+                    title = pair.rightTitle,
+                    body = pair.rightBody,
+                    tags = pair.rightTags,
+                    dateLabel = formatShortDate(pair.rightNote.createdAt),
+                    dark = dark,
+                    onOpen = { onOpenNote(pair.rightNote.id) },
+                    modifier = Modifier.fillMaxWidth().testTag("dual-card-right"),
+                )
+            }
+        }
+
+        // Reflection + Explicit Analyze + Save section
+        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(mintSecondaryFill(dark))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    BasicTextField(
+                        value = reflectionDraft,
+                        onValueChange = { reflectionDraft = it },
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = scheme.onSurface),
+                        cursorBrush = SolidColor(scheme.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 42.dp)
+                            .testTag("dual-reflection-input"),
+                        decorationBox = { inner ->
+                            Box(Modifier.fillMaxWidth()) {
+                                if (reflectionDraft.isEmpty()) {
+                                    Text(
+                                        text = "写下这两张卡片激发的新联想（不点分析也能直接存笔记）…",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = scheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                }
+
+                val bridge = state.dualBridge
+                if (bridge != null) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(mintSecondaryFill(dark))
+                            .padding(12.dp)
+                            .testTag("dual-bridge-panel"),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = bridge.headline,
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = scheme.primary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = if (state.dualBridgeFarFetched) "已标牵强" else "牵强",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                color = if (state.dualBridgeFarFetched) scheme.onSurfaceVariant else scheme.primary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(
+                                        enabled = !state.dualBridgeFarFetched,
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = onMarkFarFetched,
+                                    )
+                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                                    .testTag("dual-far-fetched-button"),
+                            )
+                        }
+                        if (!state.dualBridgeFarFetched) {
+                            bridge.points.forEach { pt ->
+                                Text(
+                                    text = "• $pt",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurface,
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "你标记了这条联系偏牵强，可以忽略上面提示，直接写自己的想法或换一组。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            text = bridge.engineNotice,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = scheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    MintPillButton(
+                        label = if (bridge == null) "寻找联系" else "重新分析",
+                        primary = false,
+                        dark = dark,
+                        modifier = Modifier.weight(1f).testTag("dual-analyze-button"),
+                        onClick = onAnalyze,
+                    )
+                    MintPillButton(
+                        label = "存为新笔记",
+                        primary = true,
+                        dark = dark,
+                        modifier = Modifier.weight(1f).testTag("dual-save-button"),
+                        onClick = { onSaveAsNote(reflectionDraft) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DualCollisionNoteCard(
+    badge: String,
+    title: String,
+    body: String,
+    tags: List<String>,
+    dateLabel: String,
+    dark: Boolean,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    MintGroupedSection(
+        dark = dark,
+        containerColor = mintCardSurface(dark),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(mintSecondaryFill(dark))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        text = badge,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = scheme.primary,
+                    )
+                }
+                Text(
+                    text = dateLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = scheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (body.isNotEmpty()) {
+                Text(
+                    text = body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (tags.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    tags.take(3).forEach { t ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(mintSecondaryFill(dark))
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = "#$t",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = scheme.primary,
+                            )
+                        }
+                    }
+                }
+            }
+            Text(
+                text = "查看原笔记",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = scheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onOpen,
+                    )
+                    .padding(vertical = 4.dp),
+            )
+        }
+    }
+}

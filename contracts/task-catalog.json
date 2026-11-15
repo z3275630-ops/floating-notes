@@ -84,8 +84,13 @@
         "T05"
       ],
       "title": "Agent 工具持久状态样例",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/6"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/6",
+      "branch": "feat/T37-ux-agent-m3",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-T37-agent-ux.md"
+      ]
     },
     {
       "id": "T07",
@@ -487,8 +492,13 @@
         "T20"
       ],
       "title": "随机漫步双卡概念对撞",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/39"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/39",
+      "branch": "feat/T37-ux-agent-m3",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-T37-agent-ux.md"
+      ]
     }
   ]
 }

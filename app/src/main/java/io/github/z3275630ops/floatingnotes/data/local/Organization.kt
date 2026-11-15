@@ -160,9 +160,11 @@ internal class OrganizationRepository(private val db: NotesDatabase) {
         }
     }
 
-    private fun nameKey(name: String) = Normalizer.normalize(displayName(name), Normalizer.Form.NFKC)
-        .lowercase(Locale.ROOT)
+    private fun nameKey(name: String) = tagNameKey(displayName(name))
 }
+
+internal fun tagNameKey(name: String): String =
+    Normalizer.normalize(name.trim(), Normalizer.Form.NFKC).lowercase(Locale.ROOT)
 
 internal fun tagSubtree(rows: List<TagEntity>, root: String): Set<String> {
     val children = rows.groupBy(TagEntity::parentId)

@@ -1,7 +1,9 @@
 package io.github.z3275630ops.floatingnotes.data.discovery
 
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
+import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.core.model.safeUtf16Slice
+import io.github.z3275630ops.floatingnotes.data.agent.LocalAgentEngine
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteLinkEntity
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
@@ -33,6 +35,29 @@ internal data class WalkPostcardSummary(
     val reflectionLines: List<String>,
     val markdownBody: String,
     val privacyHidden: Boolean,
+)
+
+internal data class DualCollisionPair(
+    val pairId: String,
+    val leftNote: NoteEntity,
+    val leftTitle: String,
+    val leftBody: String,
+    val leftTags: List<String>,
+    val leftRevision: Long,
+    val rightNote: NoteEntity,
+    val rightTitle: String,
+    val rightBody: String,
+    val rightTags: List<String>,
+    val rightRevision: Long,
+) {
+    val pairKey: String
+        get() = listOf(leftNote.id, rightNote.id).sorted().joinToString("|")
+}
+
+internal data class DualCollisionBridge(
+    val headline: String,
+    val points: List<String>,
+    val engineNotice: String,
 )
 
 internal object DiscoveryEngines {
@@ -357,5 +382,120 @@ internal object DiscoveryEngines {
         if (draftText.trim().length < 4) return false
         if (lastAutoShownAtMs > 0L && (nowMs - lastAutoShownAtMs) < ECHO_AUTO_INTERVAL_MS) return false
         return true
+    }
+
+    fun pickDualCollisionPair(
+        notes: List<NoteEntity>,
+        noteTagIdsByNote: Map<String, Set<String>>,
+        tagsById: Map<String, TagEntity>,
+        excludePairKeys: Set<String> = emptySet(),
+        random: Random = Random.Default,
+    ): Pair<DualCollisionPair?, Int> {
+        val eligible = notes.filter { n ->
+            n.deletedAt == null &&
+                n.archivedAt == null &&
+                (n.searchText.isNotBlank() || !n.title.isNullOrBlank())
+        }
+        if (eligible.size < 2) return null to eligible.size
+
+        val candidates = eligible.shuffled(random)
+        var chosenLeft: NoteEntity? = null
+        var chosenRight: NoteEntity? = null
+
+        for (left in candidates) {
+            val leftTags = noteTagIdsByNote[left.id].orEmpty()
+            val others = candidates.filter { it.id != left.id }
+            val unseen = others.filter { right ->
+                val key = listOf(left.id, right.id).sorted().joinToString("|")
+                key !in excludePairKeys
+            }.ifEmpty { others }
+
+            val contrasting = unseen.filter { right ->
+                val rightTags = noteTagIdsByNote[right.id].orEmpty()
+                leftTags.intersect(rightTags).isEmpty()
+            }
+            val right = (contrasting.ifEmpty { unseen }).firstOrNull()
+            if (right != null) {
+                chosenLeft = left
+                chosenRight = right
+                break
+            }
+        }
+
+        val left = chosenLeft ?: eligible[0]
+        val right = chosenRight ?: eligible.first { it.id != left.id }
+        val leftTitle = LocalRetrievalEngine.displayNoteTitle(left)
+        val rightTitle = LocalRetrievalEngine.displayNoteTitle(right)
+        val leftTagNames = noteTagIdsByNote[left.id].orEmpty().mapNotNull { tagsById[it]?.name }.sorted()
+        val rightTagNames = noteTagIdsByNote[right.id].orEmpty().mapNotNull { tagsById[it]?.name }.sorted()
+
+        return DualCollisionPair(
+            pairId = newId(),
+            leftNote = left,
+            leftTitle = leftTitle,
+            leftBody = LocalRetrievalEngine.bodyExcludingTitle(left, title = leftTitle),
+            leftTags = leftTagNames,
+            leftRevision = left.revision,
+            rightNote = right,
+            rightTitle = rightTitle,
+            rightBody = LocalRetrievalEngine.bodyExcludingTitle(right, title = rightTitle),
+            rightTags = rightTagNames,
+            rightRevision = right.revision,
+        ) to eligible.size
+    }
+
+    fun analyzeDualCollision(
+        pair: DualCollisionPair,
+        links: List<NoteLinkEntity>,
+    ): DualCollisionBridge {
+        val leftTokens = LocalRetrievalEngine.tokenizeForIndex("${pair.leftTitle} ${pair.leftNote.searchText}").filter { it.length >= 2 }.toSet()
+        val rightTokens = LocalRetrievalEngine.tokenizeForIndex("${pair.rightTitle} ${pair.rightNote.searchText}").filter { it.length >= 2 }.toSet()
+        val sharedTokens = leftTokens.intersect(rightTokens).take(4)
+        val sharedTags = pair.leftTags.intersect(pair.rightTags.toSet()).toList()
+        val directLinked = links.any {
+            (it.sourceId == pair.leftNote.id && it.targetId == pair.rightNote.id) ||
+                (it.sourceId == pair.rightNote.id && it.targetId == pair.leftNote.id)
+        }
+        val leftTime = runCatching { Instant.parse(pair.leftNote.createdAt) }.getOrNull()
+        val rightTime = runCatching { Instant.parse(pair.rightNote.createdAt) }.getOrNull()
+        val dayGap = if (leftTime != null && rightTime != null) {
+            abs(ChronoUnit.DAYS.between(leftTime, rightTime))
+        } else 0L
+
+        val points = buildList {
+            if (directLinked) {
+                add("两条笔记之间已经存在直接引用（@双链），可以顺着原语境合并重读。")
+            }
+            if (sharedTags.isNotEmpty()) {
+                add("共同归属标签：${sharedTags.joinToString("、") { "#$it" }}，属于同一关注域下的不同片段。")
+            } else if (pair.leftTags.isNotEmpty() || pair.rightTags.isNotEmpty()) {
+                val lt = pair.leftTags.take(2).joinToString(" ") { "#$it" }.ifEmpty { "无标签" }
+                val rt = pair.rightTags.take(2).joinToString(" ") { "#$it" }.ifEmpty { "无标签" }
+                add("跨领域对撞：左卡侧重 $lt，右卡侧重 $rt，试着用其中一条的思路检验另一条。")
+            }
+            if (sharedTokens.isNotEmpty()) {
+                add("共同出现的实词/概念：${sharedTokens.joinToString("、")}。")
+            } else {
+                val lTop = LocalAgentEngine.sanitizeQuoteText(pair.leftTitle)
+                val rTop = LocalAgentEngine.sanitizeQuoteText(pair.rightTitle)
+                add("表面用词几乎不重合，建议围绕“如果把「$lTop」的场景套用到「$rTop」会怎样”写一句联想。")
+            }
+            if (dayGap >= 7) {
+                add("两段记录相隔 $dayGap 天，能看出不同阶段的关注点差异。")
+            }
+        }
+
+        val headline = when {
+            directLinked -> "它们本就有引用关联，适合做一次合并延伸"
+            sharedTokens.isNotEmpty() -> "两条相隔记录在「${sharedTokens.first()}」上产生交集"
+            sharedTags.isNotEmpty() -> "同属 #${sharedTags.first()} 主题的两种不同切片"
+            else -> "这是一组跨主题偶然相遇，适合自己写下新联系"
+        }
+
+        return DualCollisionBridge(
+            headline = headline,
+            points = points,
+            engineNotice = "本机规则分析（未调用云端大模型） · 不满意可点“牵强”换一组",
+        )
     }
 }

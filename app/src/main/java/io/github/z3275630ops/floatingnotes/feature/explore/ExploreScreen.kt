@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalRetrievalEngine
 import io.github.z3275630ops.floatingnotes.data.discovery.ReviewCardModel
 import io.github.z3275630ops.floatingnotes.data.discovery.ReviewConfig
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
@@ -97,6 +98,12 @@ internal fun ExploreScreen(
     onDismissWalkPostcard: () -> Unit,
     onOpenNote: (String, String?) -> Unit,
     onOpenTodos: () -> Unit,
+    onSelectWalkMode: (WalkMode) -> Unit = {},
+    onDrawNextDualPair: () -> Unit = {},
+    onStepDualPairBack: () -> Unit = {},
+    onAnalyzeDualPair: () -> Unit = {},
+    onMarkDualFarFetched: () -> Unit = {},
+    onSaveDualAsNote: (String) -> Unit = {},
     selectedSectionIndex: Int? = null,
     onSelectSection: ((Int) -> Unit)? = null,
 ) {
@@ -212,6 +219,7 @@ internal fun ExploreScreen(
                     tags = tags,
                     dark = dark,
                     backdrop = backdrop,
+                    onSelectWalkMode = onSelectWalkMode,
                     onStartWalk = { tagId -> onStartWalk(null, tagId) },
                     onStepForward = onStepWalkForward,
                     onStepBack = onStepWalkBack,
@@ -220,6 +228,11 @@ internal fun ExploreScreen(
                     onTogglePrivacy = onToggleWalkPrivacy,
                     onSavePostcardAsNote = onSaveWalkPostcardAsNote,
                     onDismissPostcard = onDismissWalkPostcard,
+                    onDrawNextDualPair = onDrawNextDualPair,
+                    onStepDualBack = onStepDualPairBack,
+                    onAnalyzeDualPair = onAnalyzeDualPair,
+                    onMarkDualFarFetched = onMarkDualFarFetched,
+                    onSaveDualAsNote = onSaveDualAsNote,
                     onOpenNote = { noteId -> onOpenNote(noteId, null) },
                 )
             }
@@ -403,13 +416,20 @@ private fun ReviewTabContent(
                         }
                     }
 
-                    Text(
-                        text = if (expanded) card.fullText else card.previewExcerpt,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = scheme.onSurface,
-                        maxLines = if (expanded) 18 else 5,
-                        overflow = TextOverflow.Ellipsis,
+                    val displayBody = LocalRetrievalEngine.bodyExcludingTitle(
+                        note = card.note,
+                        rawBody = if (expanded) card.fullText else card.previewExcerpt,
+                        title = card.title,
                     )
+                    if (displayBody.isNotEmpty()) {
+                        Text(
+                            text = displayBody,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = scheme.onSurface,
+                            maxLines = if (expanded) 18 else 5,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
 
                     if (card.fullText.length > 140) {
                         Text(
@@ -602,8 +622,9 @@ private fun ReviewTabContent(
         // Compact knowledge pulse summary card
         MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
             MintGroupedRow(
-                label = "知识脉络概览 · $notesCount 篇笔记 · $linksCount 条引用",
-                subtitle = if (openTodosCount > 0) "还有 $openTodosCount 项待办未完成，点此查看" else "全部待办已清爽收尾",
+                label = "知识脉络概览",
+                subtitle = "$notesCount 篇笔记 · $linksCount 条引用 · " +
+                    if (openTodosCount > 0) "待办 $openTodosCount 项" else "待办已清空",
                 leadingIcon = MintIcons.Checklist,
                 showChevron = openTodosCount > 0,
                 dark = dark,

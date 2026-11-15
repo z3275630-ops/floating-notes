@@ -133,15 +133,18 @@ internal fun OrganizationPanel(
         }
 
         if (notebooks.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                 OrganizationSectionHeader(
                     title = "笔记本",
                     count = notebooks.size,
+                    icon = MintIcons.Folder,
+                    dark = dark,
                     expanded = notebooksExpanded,
                     onToggle = { notebooksExpandedOverride = !notebooksExpanded },
                 )
                 AnimatedVisibility(visible = notebooksExpanded) {
-                    MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                    Column {
+                        MintGroupedDivider(dark = dark, startIndent = 46.dp)
                         notebooks.forEachIndexed { index, notebook ->
                             if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
                             var menu by remember(notebook.id) { mutableStateOf(false) }
@@ -183,15 +186,18 @@ internal fun OrganizationPanel(
         }
 
         if (sortedTags.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                 OrganizationSectionHeader(
                     title = "标签",
                     count = sortedTags.size,
+                    icon = MintIcons.Tag,
+                    dark = dark,
                     expanded = tagsExpanded,
                     onToggle = { tagsExpandedOverride = !tagsExpanded },
                 )
                 AnimatedVisibility(visible = tagsExpanded) {
-                    MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                    Column {
+                        MintGroupedDivider(dark = dark, startIndent = 46.dp)
                         sortedTags.forEachIndexed { index, tag ->
                             if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
                             val name = paths.getValue(tag.id)
@@ -268,6 +274,8 @@ internal fun OrganizationPanel(
 private fun OrganizationSectionHeader(
     title: String,
     count: Int,
+    icon: ImageVector,
+    dark: Boolean,
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
@@ -275,29 +283,46 @@ private fun OrganizationSectionHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .defaultMinSize(minHeight = 48.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 role = Role.Button,
                 onClick = onToggle,
             )
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = scheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
         Text(
-            text = "$title ($count)",
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-            color = scheme.onSurfaceVariant,
+            text = title,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = scheme.onSurface,
             modifier = Modifier.weight(1f),
         )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(mintSecondaryFill(dark))
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+        ) {
+            Text(
+                text = count.toString(),
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                color = scheme.onSurfaceVariant,
+            )
+        }
         Icon(
             imageVector = if (expanded) MintIcons.ChevronDown else MintIcons.ChevronRight,
             contentDescription = if (expanded) "收起$title" else "展开$title",
             tint = scheme.onSurfaceVariant.copy(alpha = 0.7f),
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier.size(15.dp),
         )
     }
 }

@@ -51,6 +51,7 @@ import io.github.z3275630ops.floatingnotes.DebugSampleAction
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.data.local.*
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentWorkspace
 import io.github.z3275630ops.floatingnotes.feature.capture.AttachmentThumbnail
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureMotion
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureSheet
@@ -141,6 +142,7 @@ internal fun NotesShell(
     val trashPurgeImpact by model.trashPurgeImpact.collectAsStateWithLifecycle()
     val backupState by model.backupState.collectAsStateWithLifecycle()
     val exploreState by model.exploreState.collectAsStateWithLifecycle()
+    val agentState by model.agentState.collectAsStateWithLifecycle()
     val todoStartupEnabled by model.taskPreferences.observeTodoStartupEnabled().collectAsStateWithLifecycle(
         initialValue = model.taskPreferences.todoStartupEnabled,
     )
@@ -869,6 +871,12 @@ internal fun NotesShell(
                                                 onToggleWalkPrivacy = { priv -> model.toggleWalkPostcardPrivacy(priv) },
                                                 onSaveWalkPostcardAsNote = { model.saveWalkPostcardAsNote() },
                                                 onDismissWalkPostcard = { model.dismissWalkPostcard() },
+                                                onSelectWalkMode = { wm -> model.selectWalkMode(wm) },
+                                                onDrawNextDualPair = { model.drawNextDualPair() },
+                                                onStepDualPairBack = { model.stepDualPairBack() },
+                                                onAnalyzeDualPair = { model.analyzeCurrentDualPair() },
+                                                onMarkDualFarFetched = { model.markDualBridgeFarFetched() },
+                                                onSaveDualAsNote = { refl -> model.saveDualCollisionAsNote(refl) },
                                                 onOpenNote = { noteId, blockId -> launchEditor(noteId = noteId, focusBlockId = blockId) },
                                                 onOpenTodos = {
                                                     recordFilter = RecordFilter.Todos
@@ -882,10 +890,22 @@ internal fun NotesShell(
                                 } else {
                                     item("agent_section") {
                                         Box(modifier = Modifier.padding(top = 10.dp)) {
-                                            AgentPreviewSection(
+                                            AgentWorkspace(
+                                                state = agentState,
                                                 notesCount = notes.count { it.archivedAt == null },
+                                                tags = tags,
                                                 dark = dark,
-                                                onOpenLibrary = { page = Page.Library },
+                                                onPromptChange = { model.updateAgentPrompt(it) },
+                                                onSelectTimeRange = { model.selectAgentTimeRange(it) },
+                                                onSelectTagId = { model.selectAgentTagId(it) },
+                                                onRunSkill = { model.runAgentSkill(it) },
+                                                onRunQuestion = { model.runAgentQuestion(it) },
+                                                onStopRun = { model.stopCurrentAgentRun() },
+                                                onSelectPastRun = { model.loadPastAgentRun(it) },
+                                                onSaveAsNote = { model.commitSaveAgentRunAsNote() },
+                                                onExtractTodos = { model.commitExtractAgentTodosAsNote() },
+                                                onOpenNote = { nid -> launchEditor(noteId = nid) },
+                                                onClearMessage = { model.clearAgentMessage() },
                                                 onQuickCapture = { launchEditor() },
                                             )
                                         }
@@ -1127,6 +1147,7 @@ internal fun NotesShell(
                                 backdrop = backdrop,
                                 tier = supportedGlassTier,
                                 dark = dark,
+                                autoFocusKeyboard = open && !editingExisting,
                                 onOpenOrganize = activeNote?.let { note -> { organizeNote = note.id } },
                                 onRequestNotificationPermission = onRequestNotificationPermission,
                                 onOpenRelated = { id ->
@@ -1937,121 +1958,6 @@ private fun EmptyStateCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,
             )
-        }
-    }
-}
-
-@Composable
-private fun AgentPreviewSection(
-    notesCount: Int,
-    dark: Boolean,
-    onOpenLibrary: () -> Unit,
-    onQuickCapture: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        PreviewFeatureCard(
-            icon = MintIcons.Agent,
-            title = "本地优先 · 可确认整理",
-            badge = "隐私受控",
-            description = "默认遵守每条笔记的 AI 策略，不会在后台静默上传内容；所有归纳与待办提取均需你确认后写入。",
-            dark = dark,
-            actionLabel = "立即记一条新想法",
-            onAction = onQuickCapture,
-        )
-        PreviewFeatureCard(
-            icon = MintIcons.Explore,
-            title = "每日回顾与上下文串联",
-            badge = "即将上线 · 已有 $notesCount 条本地素材",
-            description = "基于本机笔记库、时间线索和双向引用，协助梳理周报要点、未完成待办与跨笔记主题。",
-            dark = dark,
-            actionLabel = "浏览现有笔记库",
-            onAction = onOpenLibrary,
-        )
-    }
-}
-
-@Composable
-private fun PreviewFeatureCard(
-    icon: ImageVector,
-    title: String,
-    badge: String,
-    description: String,
-    dark: Boolean,
-    actionLabel: String? = null,
-    onAction: (() -> Unit)? = null,
-) {
-    val scheme = MaterialTheme.colorScheme
-    MintGroupedSection(dark = dark) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(scheme.primary.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = scheme.primary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = scheme.onSurface,
-                    )
-                    Text(
-                        text = badge,
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                        color = scheme.primary,
-                    )
-                }
-            }
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = scheme.onSurfaceVariant,
-            )
-            if (actionLabel != null && onAction != null) {
-                MintGroupedDivider(dark = dark, startIndent = 0.dp)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .defaultMinSize(minHeight = 44.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Button,
-                            onClick = onAction,
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        text = actionLabel,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = scheme.primary,
-                    )
-                    Icon(
-                        imageVector = MintIcons.ChevronRight,
-                        contentDescription = null,
-                        tint = scheme.primary,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
         }
     }
 }

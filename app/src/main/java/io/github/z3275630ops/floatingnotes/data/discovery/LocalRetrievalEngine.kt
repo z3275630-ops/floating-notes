@@ -672,6 +672,41 @@ internal object LocalRetrievalEngine {
         return if (!firstLine.isNullOrEmpty()) safeUtf16Slice(firstLine, 0, 48) else "无标题笔记"
     }
 
+    /** Returns body text with redundant single-line title duplication stripped so cards stay clean. */
+    fun bodyExcludingTitle(
+        note: NoteEntity,
+        rawBody: String = note.searchText,
+        title: String = displayNoteTitle(note),
+    ): String {
+        val normalizedBody = rawBody.trim()
+        val normalizedTitle = title.trim()
+        if (normalizedBody.isEmpty() || normalizedBody == normalizedTitle) return ""
+        val baseTitle = normalizedTitle.removeSuffix("...").removeSuffix("…").trimEnd()
+        if (baseTitle.isEmpty()) return normalizedBody
+        if (note.title.isNullOrBlank()) {
+            val lines = normalizedBody.lines()
+            val firstIdx = lines.indexOfFirst { it.isNotBlank() }
+            if (firstIdx >= 0) {
+                val firstLine = lines[firstIdx].trim()
+                val remainder = lines.drop(firstIdx + 1).joinToString("\n").trim()
+                val prefixMatched = firstLine == baseTitle ||
+                    (baseTitle.length >= 24 && firstLine.startsWith(baseTitle))
+                if (prefixMatched && (remainder.isNotEmpty() || firstLine.length - baseTitle.length <= 24)) {
+                    return remainder
+                }
+            }
+        } else if (normalizedBody.startsWith(baseTitle)) {
+            val tail = normalizedBody.substring(baseTitle.length)
+            if (tail.isBlank()) return ""
+            if (tail.first() == '\n') return tail.trim()
+            if (baseTitle.length >= 20) {
+                val nl = tail.indexOf('\n')
+                return if (nl >= 0) tail.substring(nl + 1).trim() else ""
+            }
+        }
+        return normalizedBody
+    }
+
     fun contentDigest(text: String): String {
         val bytes = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }.take(16)

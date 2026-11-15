@@ -1,15 +1,21 @@
 package io.github.z3275630ops.floatingnotes.data.discovery
 
+import androidx.room.withTransaction
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
+import io.github.z3275630ops.floatingnotes.data.agent.AgentActionEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
+import io.github.z3275630ops.floatingnotes.data.local.NoteTagEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotesDatabase
 import io.github.z3275630ops.floatingnotes.data.local.NotesRepository
+import io.github.z3275630ops.floatingnotes.data.local.TagEntity
+import io.github.z3275630ops.floatingnotes.data.local.tagNameKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -637,6 +643,117 @@ internal class DiscoveryRepository(
         val created = notesRepository.commit(draft)
         syncChunksForNote(created)
         created
+    }
+
+    sealed class DualPairDrawResult {
+        data class Ready(val pair: DualCollisionPair, val eligibleCount: Int) : DualPairDrawResult()
+        data class Insufficient(val eligibleCount: Int) : DualPairDrawResult()
+    }
+
+    sealed class DualCollisionSaveResult {
+        data class Saved(val noteId: String, val title: String) : DualCollisionSaveResult()
+        data class AlreadySaved(val noteId: String?) : DualCollisionSaveResult()
+        data object SourceChangedOrDeleted : DualCollisionSaveResult()
+    }
+
+    suspend fun drawDualCollisionPair(excludePairKeys: Set<String> = emptySet()): DualPairDrawResult =
+        withContext(Dispatchers.IO) {
+            val allNotes = notesDao.allNotes()
+            val tagsById = orgDao.tags().associateBy { it.id }
+            val noteTagIdsMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+            val (pair, eligibleCount) = DiscoveryEngines.pickDualCollisionPair(
+                notes = allNotes,
+                noteTagIdsByNote = noteTagIdsMap,
+                tagsById = tagsById,
+                excludePairKeys = excludePairKeys,
+            )
+            if (pair == null) DualPairDrawResult.Insufficient(eligibleCount)
+            else DualPairDrawResult.Ready(pair, eligibleCount)
+        }
+
+    suspend fun analyzeDualCollision(pair: DualCollisionPair): DualCollisionBridge = withContext(Dispatchers.IO) {
+        val links = orgDao.noteLinks()
+        DiscoveryEngines.analyzeDualCollision(pair = pair, links = links)
+    }
+
+    suspend fun saveDualCollisionAsNote(
+        pair: DualCollisionPair,
+        bridge: DualCollisionBridge?,
+        userReflection: String,
+        farFetched: Boolean,
+        actionId: String = "dual_collision:${pair.pairId}",
+        now: Instant = Instant.now(),
+    ): DualCollisionSaveResult = withContext(Dispatchers.IO) {
+        val agentDao = database.agent()
+        val existing = agentDao.actionById(actionId)
+        if (existing != null && existing.status == "committed") {
+            return@withContext DualCollisionSaveResult.AlreadySaved(existing.targetNoteId)
+        }
+
+        val leftFresh = notesDao.note(pair.leftNote.id)
+        val rightFresh = notesDao.note(pair.rightNote.id)
+        if (leftFresh == null || rightFresh == null ||
+            leftFresh.deletedAt != null || rightFresh.deletedAt != null ||
+            leftFresh.revision != pair.leftRevision || rightFresh.revision != pair.rightRevision
+        ) {
+            return@withContext DualCollisionSaveResult.SourceChangedOrDeleted
+        }
+
+        val revJson = JSONObject()
+            .put(leftFresh.id, leftFresh.revision)
+            .put(rightFresh.id, rightFresh.revision)
+            .toString()
+
+        val saved = database.withTransaction {
+            val blocks = mutableListOf<NoteBlock>()
+            blocks.add(NoteBlock.paragraph("【双卡对撞】${pair.leftTitle} × ${pair.rightTitle}"))
+            val reflection = userReflection.trim()
+            if (reflection.isNotEmpty()) {
+                blocks.add(NoteBlock.paragraph("我的联想：$reflection"))
+            }
+            if (bridge != null && !farFetched) {
+                blocks.add(NoteBlock.paragraph("本机线索：${bridge.headline}"))
+                for (pt in bridge.points) {
+                    blocks.add(NoteBlock.paragraph("• $pt"))
+                }
+            }
+            blocks.add(NoteBlock.reference(leftFresh.id, leftFresh.revision, pair.leftTitle))
+            blocks.add(NoteBlock.reference(rightFresh.id, rightFresh.revision, pair.rightTitle))
+
+            val doc = NoteDocument(blocks)
+            val draft = notesRepository.newDraft("dual-collision-${newId()}").copy(
+                documentJson = doc.encode(),
+                editSeq = 1L,
+                sourceType = if (bridge != null && !farFetched) "walk_collision_ai" else "walk_collision",
+            )
+            val created = notesRepository.commit(draft)
+            attachTagByName(created.id, "双卡对撞")
+            if (bridge != null && !farFetched) {
+                attachTagByName(created.id, "本机分析")
+            }
+            agentDao.insertAction(
+                AgentActionEntity(
+                    actionId = actionId,
+                    runId = pair.pairId,
+                    actionType = "dual_collision_save",
+                    targetNoteId = created.id,
+                    sourceRevisionsJson = revJson,
+                    status = "committed",
+                    summary = "双卡对撞已存为笔记",
+                    createdAt = isoFormatter.format(now),
+                ),
+            )
+            created
+        }
+        syncChunksForNote(saved)
+        DualCollisionSaveResult.Saved(saved.id, LocalRetrievalEngine.displayNoteTitle(saved))
+    }
+
+    private suspend fun attachTagByName(noteId: String, tagName: String) {
+        val key = tagNameKey(tagName)
+        val existing = orgDao.tags().firstOrNull { it.parentId.isEmpty() && it.nameKey == key }
+        val tagId = existing?.id ?: TagEntity(newId(), "", tagName, key).also { orgDao.insertTag(it) }.id
+        orgDao.attachTag(NoteTagEntity(noteId, tagId))
     }
 
     private fun decodeStringArray(json: String): List<String> = runCatching {

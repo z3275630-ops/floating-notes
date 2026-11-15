@@ -2,6 +2,8 @@ package io.github.z3275630ops.floatingnotes.feature.explore
 
 import io.github.z3275630ops.floatingnotes.data.discovery.ActiveWalkSnapshot
 import io.github.z3275630ops.floatingnotes.data.discovery.DailyReviewSnapshot
+import io.github.z3275630ops.floatingnotes.data.discovery.DualCollisionBridge
+import io.github.z3275630ops.floatingnotes.data.discovery.DualCollisionPair
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceBasketItem
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.FindSearchResult
@@ -16,6 +18,11 @@ internal enum class ExploreSection(val label: String) {
     Walk("漫步"),
 }
 
+internal enum class WalkMode(val label: String) {
+    Single("单卡漫步"),
+    Dual("双卡对撞"),
+}
+
 internal data class ExploreUiState(
     val loading: Boolean = false,
     val indexing: Boolean = false,
@@ -28,6 +35,12 @@ internal data class ExploreUiState(
     val walk: ActiveWalkSnapshot? = null,
     val walkPostcard: WalkPostcardSummary? = null,
     val walkPrivacyHidden: Boolean = false,
+    val walkMode: WalkMode = WalkMode.Single,
+    val dualPair: DualCollisionPair? = null,
+    val dualHistory: List<DualCollisionPair> = emptyList(),
+    val dualBridge: DualCollisionBridge? = null,
+    val dualBridgeFarFetched: Boolean = false,
+    val dualInsufficientCount: Int? = null,
     val statusMessage: String? = null,
     val errorMessage: String? = null,
 )

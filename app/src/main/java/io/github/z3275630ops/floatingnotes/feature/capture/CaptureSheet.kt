@@ -34,6 +34,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -111,6 +112,7 @@ internal fun BoxScope.CaptureSheet(
     val dragStart by rememberUpdatedState(onDragStart)
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
+    val view = LocalView.current
     val contentFocus = remember { FocusRequester() }
 
     fun dismissCleanly(action: () -> Unit) {
@@ -122,10 +124,14 @@ internal fun BoxScope.CaptureSheet(
     LaunchedEffect(open, autoFocus) {
         if (open && autoFocus) {
             withFrameNanos { }
+            kotlinx.coroutines.delay(95)
             runCatching {
-                contentFocus.requestFocus()
-                focus.moveFocus(FocusDirection.Next)
                 keyboard?.show()
+                view.post {
+                    val imm = view.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                        as? android.view.inputmethod.InputMethodManager
+                    imm?.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                }
             }
         }
     }

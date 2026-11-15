@@ -12,6 +12,12 @@ import androidx.lifecycle.viewModelScope
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
+import io.github.z3275630ops.floatingnotes.data.agent.AgentActionCommitResult
+import io.github.z3275630ops.floatingnotes.data.agent.AgentRepository
+import io.github.z3275630ops.floatingnotes.data.agent.AgentRunEntity
+import io.github.z3275630ops.floatingnotes.data.agent.AgentRunResult
+import io.github.z3275630ops.floatingnotes.data.agent.AgentSkill
+import io.github.z3275630ops.floatingnotes.data.agent.AgentTimeRange
 import io.github.z3275630ops.floatingnotes.data.backup.BackupManager
 import io.github.z3275630ops.floatingnotes.data.backup.BackupUiState
 import io.github.z3275630ops.floatingnotes.data.backup.HistoryUiState
@@ -25,8 +31,10 @@ import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.ExplorePreferences
 import io.github.z3275630ops.floatingnotes.data.discovery.ReviewConfig
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorDiscoveryState
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreUiState
+import io.github.z3275630ops.floatingnotes.feature.explore.WalkMode
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentImportException
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentKind
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
@@ -218,6 +226,14 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         blocks.add(EditorBlock(NoteBlock.checkbox()))
         blocks.add(EditorBlock(NoteBlock.paragraph()))
     }
+
+    fun ensureTailEditableBlock(): EditorBlock {
+        val tail = blocks.lastOrNull()
+        if (tail != null && tail.editable) return tail
+        val added = EditorBlock(NoteBlock.paragraph())
+        blocks.add(added)
+        return added
+    }
 }
 
 internal enum class IncomingCapture { Opened, AlreadySaved, Failed }
@@ -232,6 +248,18 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     val search = SearchRepository(database)
     val explorePreferences = ExplorePreferences(application)
     internal val discovery = DiscoveryRepository(database, repository, explorePreferences)
+    internal val agentRepository = AgentRepository(database, repository, organization, discovery)
+    private val _agentState = MutableStateFlow(AgentUiState())
+    val agentState: StateFlow<AgentUiState> = _agentState.asStateFlow()
+    private var agentJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            agentRepository.observeRecentRuns(15).collect { runs ->
+                _agentState.update { it.copy(recentRuns = runs) }
+            }
+        }
+    }
     var editor by mutableStateOf<EditorSession?>(null)
         private set
     var error by mutableStateOf<String?>(null)
@@ -2053,6 +2081,276 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     fun clearActiveWalk() {
         _exploreState.update { it.copy(walk = null, walkPostcard = null) }
+    }
+
+    fun selectWalkMode(mode: WalkMode) {
+        _exploreState.update { it.copy(walkMode = mode, errorMessage = null, statusMessage = null) }
+        if (mode == WalkMode.Dual && _exploreState.value.dualPair == null) {
+            drawNextDualPair(pushHistory = false)
+        }
+    }
+
+    fun drawNextDualPair(pushHistory: Boolean = true) {
+        val current = _exploreState.value
+        val previous = current.dualPair
+        val excludeKeys = buildSet {
+            previous?.pairKey?.let(::add)
+            current.dualHistory.takeLast(6).forEach { add(it.pairKey) }
+        }
+        viewModelScope.launch {
+            runCatching {
+                discovery.drawDualCollisionPair(excludePairKeys = excludeKeys)
+            }.onSuccess { result ->
+                _exploreState.update { state ->
+                    when (result) {
+                        is DiscoveryRepository.DualPairDrawResult.Insufficient -> state.copy(
+                            dualPair = null,
+                            dualBridge = null,
+                            dualBridgeFarFetched = false,
+                            dualInsufficientCount = result.eligibleCount,
+                        )
+                        is DiscoveryRepository.DualPairDrawResult.Ready -> state.copy(
+                            dualPair = result.pair,
+                            dualHistory = if (pushHistory && previous != null) {
+                                (state.dualHistory + previous).takeLast(12)
+                            } else state.dualHistory,
+                            dualBridge = null,
+                            dualBridgeFarFetched = false,
+                            dualInsufficientCount = null,
+                        )
+                    }
+                }
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _exploreState.update { s -> s.copy(errorMessage = "抽取双卡失败，请重试") }
+            }
+        }
+    }
+
+    fun stepDualPairBack() {
+        _exploreState.update { state ->
+            val prev = state.dualHistory.lastOrNull() ?: return@update state
+            state.copy(
+                dualPair = prev,
+                dualHistory = state.dualHistory.dropLast(1),
+                dualBridge = null,
+                dualBridgeFarFetched = false,
+            )
+        }
+    }
+
+    fun analyzeCurrentDualPair() {
+        val pair = _exploreState.value.dualPair ?: return
+        viewModelScope.launch {
+            runCatching {
+                discovery.analyzeDualCollision(pair)
+            }.onSuccess { bridge ->
+                _exploreState.update {
+                    if (it.dualPair?.pairId == pair.pairId) {
+                        it.copy(dualBridge = bridge, dualBridgeFarFetched = false)
+                    } else it
+                }
+            }
+        }
+    }
+
+    fun markDualBridgeFarFetched() {
+        _exploreState.update {
+            it.copy(
+                dualBridgeFarFetched = true,
+                statusMessage = "已标记这组关联偏牵强，可以点“换一组”再试试",
+            )
+        }
+    }
+
+    fun saveDualCollisionAsNote(userReflection: String) {
+        val snap = _exploreState.value
+        val pair = snap.dualPair ?: return
+        viewModelScope.launch {
+            try {
+                val res = persistenceMutex.withLock {
+                    discovery.saveDualCollisionAsNote(
+                        pair = pair,
+                        bridge = snap.dualBridge,
+                        userReflection = userReflection,
+                        farFetched = snap.dualBridgeFarFetched,
+                    )
+                }
+                _exploreState.update { state ->
+                    when (res) {
+                        is DiscoveryRepository.DualCollisionSaveResult.Saved ->
+                            state.copy(statusMessage = "已将双卡对撞保存为新笔记《${res.title}》")
+                        is DiscoveryRepository.DualCollisionSaveResult.AlreadySaved ->
+                            state.copy(statusMessage = "这组对撞已经保存过笔记，不重复写入")
+                        DiscoveryRepository.DualCollisionSaveResult.SourceChangedOrDeleted ->
+                            state.copy(errorMessage = "来源笔记刚刚有修改或移除，请“换一组”重新读取后再保存")
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _exploreState.update { it.copy(errorMessage = "保存双卡笔记失败，请重试") }
+            }
+        }
+    }
+
+    fun updateAgentPrompt(prompt: String) {
+        _agentState.update { it.copy(promptDraft = prompt) }
+    }
+
+    fun selectAgentTimeRange(range: AgentTimeRange) {
+        _agentState.update { it.copy(timeRange = range) }
+    }
+
+    fun selectAgentTagId(tagId: String?) {
+        _agentState.update { it.copy(selectedTagId = tagId) }
+    }
+
+    fun runAgentSkill(skill: AgentSkill) {
+        executeAgentRun(skill = skill, prompt = skill.defaultPrompt)
+    }
+
+    fun runAgentQuestion(question: String) {
+        val clean = question.trim()
+        if (clean.isEmpty()) return
+        executeAgentRun(skill = AgentSkill.FreeQuestion, prompt = clean)
+    }
+
+    private fun executeAgentRun(skill: AgentSkill, prompt: String) {
+        agentJob?.cancel()
+        val current = _agentState.value
+        val scope = NoteScope(
+            includeTags = setOfNotNull(current.selectedTagId),
+            aiOnly = true,
+        )
+        _agentState.update {
+            it.copy(
+                running = true,
+                promptDraft = if (skill == AgentSkill.FreeQuestion) prompt else it.promptDraft,
+                statusMessage = null,
+                errorMessage = null,
+            )
+        }
+        agentJob = viewModelScope.launch {
+            try {
+                val (entity, result) = agentRepository.runAnalysis(
+                    skill = skill,
+                    prompt = prompt,
+                    scope = scope,
+                    timeRange = current.timeRange,
+                )
+                val actions = agentRepository.actionsForRun(entity.id)
+                _agentState.update {
+                    it.copy(
+                        running = false,
+                        activeRun = entity,
+                        activeResult = result,
+                        activeActions = actions,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                _agentState.update { it.copy(running = false, statusMessage = "已停止本机整理") }
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update {
+                    it.copy(running = false, errorMessage = "本机分析未能完成，请重试")
+                }
+            }
+        }
+    }
+
+    fun stopCurrentAgentRun() {
+        agentJob?.cancel()
+    }
+
+    fun loadPastAgentRun(run: AgentRunEntity) {
+        val decoded = AgentRunResult.decode(run.resultJson) ?: return
+        viewModelScope.launch {
+            val actions = runCatching { agentRepository.actionsForRun(run.id) }.getOrDefault(emptyList())
+            _agentState.update {
+                it.copy(
+                    running = false,
+                    activeRun = run,
+                    activeResult = decoded,
+                    activeActions = actions,
+                    statusMessage = null,
+                    errorMessage = null,
+                )
+            }
+        }
+    }
+
+    fun commitSaveAgentRunAsNote() {
+        val state = _agentState.value
+        val run = state.activeRun ?: return
+        val result = state.activeResult ?: return
+        viewModelScope.launch {
+            try {
+                val commitRes = persistenceMutex.withLock {
+                    agentRepository.commitSaveInsightAsNote(run, result)
+                }
+                val refreshedActions = agentRepository.actionsForRun(run.id)
+                _agentState.update { cur ->
+                    when (commitRes) {
+                        is AgentActionCommitResult.Committed -> cur.copy(
+                            activeActions = refreshedActions,
+                            statusMessage = commitRes.summary,
+                        )
+                        is AgentActionCommitResult.AlreadyApplied -> cur.copy(
+                            activeActions = refreshedActions,
+                            statusMessage = "已保存到笔记（不重复写入）",
+                        )
+                        is AgentActionCommitResult.ConflictDetected -> cur.copy(
+                            activeActions = refreshedActions,
+                            errorMessage = "来源笔记已更新或删除（${commitRes.changedNoteTitles.joinToString("、")}），请先重新整理再写入",
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update { it.copy(errorMessage = "存为笔记失败，请重试") }
+            }
+        }
+    }
+
+    fun commitExtractAgentTodosAsNote() {
+        val state = _agentState.value
+        val run = state.activeRun ?: return
+        val result = state.activeResult ?: return
+        if (result.suggestedTodos.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val commitRes = persistenceMutex.withLock {
+                    agentRepository.commitExtractTodosAsNote(run, result, result.suggestedTodos)
+                }
+                val refreshedActions = agentRepository.actionsForRun(run.id)
+                _agentState.update { cur ->
+                    when (commitRes) {
+                        is AgentActionCommitResult.Committed -> cur.copy(
+                            activeActions = refreshedActions,
+                            statusMessage = commitRes.summary,
+                        )
+                        is AgentActionCommitResult.AlreadyApplied -> cur.copy(
+                            activeActions = refreshedActions,
+                            statusMessage = "待办笔记已生成（不重复写入）",
+                        )
+                        is AgentActionCommitResult.ConflictDetected -> cur.copy(
+                            activeActions = refreshedActions,
+                            errorMessage = "来源笔记已变动（${commitRes.changedNoteTitles.joinToString("、")}），请先重新整理",
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update { it.copy(errorMessage = "生成待办失败，请重试") }
+            }
+        }
+    }
+
+    fun clearAgentMessage() {
+        _agentState.update { it.copy(statusMessage = null, errorMessage = null) }
     }
 
     fun refreshEditorRelatedNotes(noteId: String?) {

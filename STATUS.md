@@ -38,6 +38,8 @@
 
 - M2 探索闭环（T05、T15 每日回顾与那年今日、T16 共享本地检索索引、T17 相关笔记与自然语言找一找/证据篮、T18 随机漫步与路径/明信片、T36 编辑边缘历史回响）及全应用 iOS HIG 组件一致性打磨（新增定制 `MintSwitch`、`MintActivityIndicator` 替换残留 Material 开关与转圈控件）在 `feat/T15-m2-explore`（`versionCode 19`，`versionName "0.2.0-explore.1"`，调试包 `0.2.0-explore.1-debug`）完成实现与荣耀 X10 真机验证：完成 Room v5→v6 迁移（`6.json`，新增 `note_chunks`、`review_sessions`、`review_events`、`walk_sessions`、`walk_steps`），全量构建（`app-debug.apk` `9C603E69F69CE126C4CF664AE74D41614443912A9AA791E0051AF5A26710AEBB`、`app-release-unsigned.apk` `A1D819D6AA952A7FDCCF0AA11C0BD3B89250D065AD0B32345C99FDF0449993FA`、`app-benchmark.apk` `F7370C2BE9966CE2C651494EBE905016C23DF229F672438A997789BAACD029EB`）、24/24 项 JVM 单测、0 错误 Lint 及荣耀 X10 覆盖安装保留原有笔记且 17/17 类（62/62 项）`androidTest` 100% 通过。见 [M2 探索交接](docs/handoffs/2026-11-15-M2-explore.md) 与 [v0.2.0-explore.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.2.0-explore.1)。
 
+- T37（随机漫步双卡概念对撞）、T06（Agent 运行与动作持久化）及 M3 本地优先 Agent 工作区雏形、快速记录键盘/空白画布聚焦修复与 UI/UX 卡片打磨在 `feat/T37-ux-agent-m3`（`versionCode 20`，`versionName "0.2.1-m3-ux.1"`，调试包 `0.2.1-m3-ux.1-debug`）完成开发：完成 Room v6→v7 迁移（`7.json`，新增 `agent_runs` 与 `agent_actions`），接入本机 5 项整理技能与自由提问（遵守 `aiPolicy` 与 `sanitizeQuoteText` 注入过滤并显式标注本机运行无云端大模型），实现双卡概念对撞、`action_id` 幂等保存与来源 revision 冲突检测，并将笔记库文件夹/标签收进分组卡片、修复快速记录新建及点击空白区域唤起输入法的问题。在全功能版本上已完成荣耀 X10 覆盖安装（保留原有笔记）及 19 类 67/67 项 `androidTest` 100% 通过；随后补充的 `bodyExcludingTitle` 10 行文本去重微调已完成 28/28 项 JVM 单测、`lintDebug`（0 错误）与全量构建（`app-debug.apk` `4E740FE241511027E88134A9DDE01A774D22AFEDDE13827D3DCACE3BC377A070`、`app-release-unsigned.apk` `64E1C06F237D4849EE8CF96638AA759418E1F7706F868AE132636DDC7927B7CA`、`app-benchmark.apk` `E98296A3F7532631D2ACB6CC85A0FEABDEF4F710170307A4381314EB1EDE093A`），因荣耀 X10 随后进入 ADB `offline` 状态，该末次文本去重微调包尚待亮屏重装复验。见 [本轮交接说明](docs/handoffs/2026-11-15-T37-agent-ux.md)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -48,7 +50,7 @@
 
 - Android 首个本地记录切片与跨应用收集已提交。服务端、真实模型、完整标签检索与后续业务待实现。Room v1 已归档，后续 schema 变更需要迁移测试。
 - 已产出 T01 工程 APK 与 T08/T35 开发 APK。真机视觉、帧/热/电性能、模型质量、真实强杀与磁盘满演练未执行。
-- F01、F03、F12、F17、F18、F20 为 in_progress，F04（每日回顾）、F05（随机漫步）、F06（相关笔记）、F07（自然语言找一找）、F15（历史版本）为 implemented，已有真机与自动化证据。F01–F20 的完整验收尚未结束。
+- F01、F03、F12、F17、F18、F20 为 in_progress，F08（AI 洞察，含 T37 本机双卡对撞）与 F09（Agent，含 T06 运行/动作持久化与本机整理工作区雏形）推进至 in_progress，F04（每日回顾）、F05（随机漫步）、F06（相关笔记）、F07（自然语言找一找）、F15（历史版本）为 implemented，已有真机与自动化证据。F01–F20 的完整验收尚未结束。
 
 ## 仓库与任务状态
 
@@ -62,11 +64,11 @@
 
 - [v3.1 产品评审](docs/product/v3.1-evolution-review.md) 与 [首个 APK 切片](docs/delivery/first-apk-vertical-slice.md) 已由所有者授权采纳；当前产品规格为 v3.1，继承 v3.0 完整范围和数据 schema。
 - [ADR 0008](docs/decisions/0008-progressive-local-ai.md) 为 proposed 的技术候选；[ADR 0009](docs/decisions/0009-public-repository-private-data.md) 为 accepted 的公开仓库决策。
-- 设计基线新增 T35–T37 与 Q091–Q102。现已交付 T35、T36 开发包与荣耀 X10 真机证据，T37 仍待实现。
+- 设计基线新增 T35–T37 与 Q091–Q102。现已交付 T35、T36 与 T37（本机双卡概念对撞）开发包与荣耀 X10 自动化证据，云端语义桥接与服务端多端能力仍待推进。
 
 ## 下一步
 
-[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 `#`/`@` 即时识别、引用选区范围、T13 待办及本地提醒、T14 历史版本/回收站/本地备份及 Apple 备忘录风 UI 改造，以及 M2 探索闭环（T05/T15/T16/T17/T18/T36）均已实现并通过荣耀 X10 17 类 62 项 `androidTest` 全量测试；后续按依赖推进 M3/M4 服务端与 AI 洞察（T19/T20/T21/T37）及增量同步（T27/T28）。T11 真实来电、断网和取消重试验收，以及 20 条固定标注集检索 Recall@10 评测、release 真机基准跑分仍待执行。T04 的 A04–A12 按业务交互补齐。
+[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 `#`/`@` 即时识别、引用选区范围、T13 待办及本地提醒、T14 历史版本/回收站/本地备份及 Apple 备忘录风 UI 改造、M2 探索闭环（T05/T15/T16/T17/T18/T36），以及 T37 双卡对撞、T06 Agent 持久化与快速记录键盘修复均已实现并在荣耀 X10 完成 19 类 67/67 项 `androidTest`（末次 10 行分享链接去重微调已完成 28/28 项 JVM 单测与全量构建，待重连手机复验）；后续按依赖推进服务端与云端大模型洞察（T19/T20/T21）及增量同步（T27/T28）。T11 真实来电、断网和取消重试验收，以及 20 条固定标注集检索 Recall@10 评测、release 真机基准跑分仍待执行。T04 的 A04–A12 按业务交互补齐。
 
 ## 验证记录
 
