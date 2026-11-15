@@ -29,7 +29,7 @@
 ## 协作边界
 
 - 仅在用户明确授权或团队任务明确要求时进行多 Agent 并行。并行时按模块划分文件所有权，契约/schema/token 由一名集成人维护。
-- 派发子代理（subagent / swarm worker）时，默认使用 `hy4`（Gemini 4 Hydrogen），模型档位以 `high` 起步，复杂或高难度任务使用 `xhigh`；严禁使用 Claude 作为子代理（额度消耗过快），严禁使用 `low` 档模型。
+- 在 Antigravity 中派发子代理（subagent / swarm worker）时，默认使用 `hy4`（Gemini 4 Hydrogen），模型档位以 `high` 起步，复杂或高难度任务使用 `xhigh`；严禁使用 Claude 作为子代理（额度消耗过快），严禁使用 `low` 档模型（仅针对 Antigravity，Codex 不受此条限制）。
 - 分支名 `docs/Txx-topic`、`feat/Txx-topic`、`fix/Txx-topic`；一个 PR 完成一个可验收闭环。禁止强推覆盖别人的提交。
 - 共享文件变更必须列出受影响模块与契约版本。合并前读取最新主分支并解决真实冲突。
 - 不在日志、测试报告、Issue 或聊天里粘贴密钥、真实笔记、令牌和签名材料。
