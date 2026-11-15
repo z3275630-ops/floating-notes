@@ -46,6 +46,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCanvasColor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -291,13 +292,13 @@ internal fun BoxScope.CaptureSheet(
                         Icon(
                             imageVector = MintIcons.Back,
                             contentDescription = null,
-                            tint = scheme.primary,
-                            modifier = Modifier.size(20.dp),
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
                         )
                         Text(
                             text = dismissLabel,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
-                            color = scheme.primary,
+                            color = scheme.onSurfaceVariant,
                         )
                     }
                     if (title.isNotBlank()) {
@@ -337,7 +338,7 @@ internal fun BoxScope.CaptureSheet(
                         Text(
                             text = dismissLabel,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal),
-                            color = scheme.primary,
+                            color = scheme.onSurfaceVariant,
                         )
                     }
                     Text(
@@ -371,7 +372,7 @@ internal fun BoxScope.CaptureSheet(
     }
 
     if (fullScreen) {
-        val solidCanvas = if (dark) Color(0xFF0D1813) else Color(0xFFF3FAF5)
+        val solidCanvas = mintCanvasColor(dark)
         Box(modifier = panelModifier.background(solidCanvas)) {
             Box(
                 modifier = Modifier

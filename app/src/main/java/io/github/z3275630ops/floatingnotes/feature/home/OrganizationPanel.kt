@@ -297,7 +297,7 @@ private fun OrganizationSectionHeader(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = scheme.primary,
+            tint = scheme.onSurfaceVariant,
             modifier = Modifier.size(18.dp),
         )
         Text(
@@ -306,23 +306,16 @@ private fun OrganizationSectionHeader(
             color = scheme.onSurface,
             modifier = Modifier.weight(1f),
         )
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .background(mintSecondaryFill(dark))
-                .padding(horizontal = 8.dp, vertical = 2.dp),
-        ) {
-            Text(
-                text = count.toString(),
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                color = scheme.onSurfaceVariant,
-            )
-        }
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = scheme.onSurfaceVariant.copy(alpha = 0.72f),
+        )
         Icon(
             imageVector = if (expanded) MintIcons.ChevronDown else MintIcons.ChevronRight,
             contentDescription = if (expanded) "收起$title" else "展开$title",
-            tint = scheme.onSurfaceVariant.copy(alpha = 0.7f),
-            modifier = Modifier.size(15.dp),
+            tint = scheme.onSurfaceVariant.copy(alpha = 0.56f),
+            modifier = Modifier.size(16.dp),
         )
     }
 }

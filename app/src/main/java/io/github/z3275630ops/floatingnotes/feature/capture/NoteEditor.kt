@@ -84,8 +84,10 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedRow
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAiAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -401,8 +403,8 @@ internal fun ColumnScope.NoteEditor(
                             val isHeroTitle = index == 0 && block.type == "paragraph"
                             val blockTextStyle = when {
                                 isHeroTitle && session.existingNote -> MaterialTheme.typography.headlineSmall.copy(
-                                    fontSize = 26.sp,
-                                    lineHeight = 34.sp,
+                                    fontSize = 24.sp,
+                                    lineHeight = 32.sp,
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = (-0.3).sp,
                                     color = scheme.onSurface,
@@ -417,7 +419,7 @@ internal fun ColumnScope.NoteEditor(
                                 )
                                 else -> MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = 17.sp,
-                                    lineHeight = 25.sp,
+                                    lineHeight = 28.sp,
                                     color = if (block.checked) scheme.onSurfaceVariant else scheme.onSurface,
                                     textDecoration = if (block.checked) TextDecoration.LineThrough else null,
                                 )
@@ -688,6 +690,48 @@ internal fun ColumnScope.NoteEditor(
         onDismiss = { model.dismissEdgeEcho(suppressNoteForSession = true) },
     )
 
+    if (session.existingNote) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            val aiAccent = mintAiAccent(dark)
+            val relatedCount = discoveryState.relatedNotes.size
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(aiAccent.bg)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = {
+                            model.refreshEditorRelatedNotes(session.draft.noteId)
+                            showRelatedSheet = true
+                        },
+                    )
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .testTag("editor-related-trigger"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Icon(
+                    imageVector = MintIcons.Sparkles,
+                    contentDescription = null,
+                    tint = aiAccent.fg,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = if (relatedCount > 0) "相关笔记 $relatedCount" else "相关笔记",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = aiAccent.fg,
+                )
+            }
+        }
+    }
+
     HorizontalDivider(
         thickness = 0.5.dp,
         color = scheme.outlineVariant.copy(alpha = 0.35f),
@@ -709,7 +753,7 @@ internal fun ColumnScope.NoteEditor(
             onClick = session::addCheckbox,
         )
         EditorAccessoryPill(
-            icon = MintIcons.Image,
+            icon = MintIcons.Paperclip,
             label = if (session.importFailed) "重选" else "附件",
             enabled = !session.writing && !session.importing && !session.voiceBusy,
             dark = dark,
@@ -726,7 +770,7 @@ internal fun ColumnScope.NoteEditor(
         }
         if (onOpenRelated != null && notes.any { it.id != session.draft.noteId && it.id !in trashedNoteIds }) {
             EditorAccessoryPill(
-                icon = MintIcons.Link,
+                icon = MintIcons.AtSign,
                 label = "@ 引用",
                 enabled = !session.writing,
                 dark = dark,
@@ -1004,7 +1048,7 @@ private fun EditorHeaderMetadata(
 ) {
     val scheme = MaterialTheme.colorScheme
     val allTagIds = (noteTagIds + pendingTagIds).toList()
-    val hasTokens = notebook != null || allTagIds.isNotEmpty() || backlinksCount > 0 || onOpenRelatedNotes != null
+    val hasTokens = notebook != null || allTagIds.isNotEmpty() || backlinksCount > 0
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1014,10 +1058,11 @@ private fun EditorHeaderMetadata(
         if (activeNote != null) {
             val updated = remember(activeNote.updatedAt) { formatNoteTimestamp(activeNote.updatedAt) }
             val created = remember(activeNote.createdAt) { formatNoteTimestamp(activeNote.createdAt) }
+            val timeSummary = if (updated == created) updated else "编辑于 $updated · 创建于 $created"
             Text(
-                text = "更新于 $updated · 创建于 $created",
+                text = timeSummary,
                 style = MaterialTheme.typography.labelSmall,
-                color = scheme.onSurfaceVariant.copy(alpha = 0.72f),
+                color = mintTertiaryTextColor(dark),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -1060,17 +1105,6 @@ private fun EditorHeaderMetadata(
                     ) {
                         Text("反链 $backlinksCount")
                     }
-                }
-                if (onOpenRelatedNotes != null) {
-                    MintChip(
-                        label = if (relatedCount > 0) "相关笔记 $relatedCount" else "相关笔记",
-                        selected = relatedCount > 0,
-                        style = if (relatedCount > 0) MintChipStyle.Selected else MintChipStyle.Standard,
-                        leadingIcon = MintIcons.Explore,
-                        dark = dark,
-                        modifier = Modifier.testTag("editor-related-trigger"),
-                        onClick = onOpenRelatedNotes,
-                    )
                 }
             }
         }

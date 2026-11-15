@@ -43,8 +43,11 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedRow
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAiAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDividerColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
 
 internal data class AgentUiState(
     val running: Boolean = false,
@@ -82,6 +85,8 @@ internal fun AgentWorkspace(
     val scheme = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
     var showToolLog by rememberSaveable(state.activeRun?.id) { mutableStateOf(false) }
+    var showPrivacyDetails by rememberSaveable { mutableStateOf(false) }
+    val aiAccent = mintAiAccent(dark)
 
     Column(
         modifier = Modifier
@@ -89,47 +94,49 @@ internal fun AgentWorkspace(
             .testTag("agent-workspace"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Honest local engine & privacy boundary header card
-        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+        // Compact collapsible local privacy & engine pill
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(aiAccent.bg)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClick = { showPrivacyDetails = !showPrivacyDetails },
+                )
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(mintSecondaryFill(dark)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = MintIcons.Agent,
-                            contentDescription = null,
-                            tint = scheme.primary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "本机洞察助手",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = scheme.onSurface,
-                        )
-                        Text(
-                            text = "${LocalAgentEngine.ENGINE_NOTICE} · 共 $notesCount 条可浏览笔记",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = scheme.primary,
-                        )
-                    }
-                }
+                Icon(
+                    imageVector = MintIcons.Lock,
+                    contentDescription = null,
+                    tint = aiAccent.fg,
+                    modifier = Modifier.size(14.dp),
+                )
                 Text(
-                    text = "所有检索、归纳与待办梳理都在手机本地完成，默认遵守每条笔记的 AI 策略，写入新笔记前都会先由你确认。",
+                    text = "仅在本机运行 · 不上传云端 · ${notesCount} 篇可检索",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+                    color = aiAccent.fg,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = if (showPrivacyDetails) "收起" else "说明",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = mintTertiaryTextColor(dark),
+                )
+            }
+            AnimatedVisibility(visible = showPrivacyDetails) {
+                Text(
+                    text = "所有检索、归纳与待办梳理都在手机本地完成，默认遵守每条笔记的隐私策略，写入新笔记前都会先由你确认。",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
                 )

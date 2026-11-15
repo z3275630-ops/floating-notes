@@ -29,6 +29,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintColorScheme
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTypography
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -198,7 +199,10 @@ class WidgetConfigActivity : ComponentActivity() {
         setContent {
             val dark = isSystemInDarkTheme()
             var privacyEnabled by remember { mutableStateOf(widgetPrefs.privacyModeEnabled) }
-            MaterialTheme(colorScheme = mintColorScheme(dark)) {
+            MaterialTheme(
+                colorScheme = mintColorScheme(dark),
+                typography = mintTypography(),
+            ) {
                 val scheme = MaterialTheme.colorScheme
                 Column(
                     modifier = Modifier

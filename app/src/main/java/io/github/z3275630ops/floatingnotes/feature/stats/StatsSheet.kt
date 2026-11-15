@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteTagEntity
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
@@ -41,7 +42,11 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSegmentedBar
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintHeatmapPalette
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintLinkAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTodoAccent
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -94,8 +99,8 @@ internal fun StatsSheet(
         dark = dark,
         backdrop = backdrop,
         modifier = Modifier.testTag("stats-sheet"),
-        title = "记录统计与热力图",
-        subtitle = "按个人时区统计 · 区分手写与导入",
+        title = "统计与热力图",
+        subtitle = null,
         leadingLabel = "关闭",
         onLeadingClick = onDismiss,
         maxHeightFraction = 0.86f,
@@ -172,24 +177,49 @@ internal fun StatsSheet(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         StatMetricBox(
-                            title = "当前筛选总计",
+                            title = "总记录",
                             value = "${snapshot.scopedTotalCount}",
-                            caption = "活跃天数 ${snapshot.activeDaysInScope} 天",
+                            accent = scheme.primary,
                             dark = dark,
                             modifier = Modifier.weight(1f),
                         )
                         StatMetricBox(
-                            title = "${focusedMonth.monthValue} 月记录",
+                            title = "${focusedMonth.monthValue} 月新增",
                             value = "${snapshot.currentMonthComparison.currentCount}",
-                            caption = if (snapshot.consecutiveActiveDays > 0) "近期连续 ${snapshot.consecutiveActiveDays} 天" else "按自己节奏记录",
+                            accent = mintLinkAccent(dark).fg,
                             dark = dark,
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        StatMetricBox(
+                            title = "连续天数",
+                            value = "${snapshot.consecutiveActiveDays}",
+                            accent = mintTodoAccent(dark).fg,
+                            dark = dark,
+                            modifier = Modifier.weight(1f),
+                        )
+                        StatMetricBox(
+                            title = "活跃天数",
+                            value = "${snapshot.activeDaysInScope}",
+                            accent = scheme.onSurface,
+                            dark = dark,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    val cmp = snapshot.currentMonthComparison
+                    val summaryLabel = if (cmp.previousCount == 0) {
+                        "${focusedMonth.year} 年 ${focusedMonth.monthValue} 月共 ${cmp.currentCount} 条"
+                    } else {
+                        cmp.formatSummary("${focusedMonth.year}年${focusedMonth.monthValue}月")
+                    }
                     Text(
-                        text = snapshot.currentMonthComparison.formatSummary("${focusedMonth.year}年${focusedMonth.monthValue}月"),
+                        text = summaryLabel,
                         style = MaterialTheme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant,
+                        color = mintTertiaryTextColor(dark),
                         modifier = Modifier.testTag("stats-comparison-summary"),
                     )
                 }
@@ -445,7 +475,7 @@ internal fun StatsSheet(
 private fun StatMetricBox(
     title: String,
     value: String,
-    caption: String,
+    accent: Color,
     dark: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -454,21 +484,23 @@ private fun StatMetricBox(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
             .background(mintSecondaryFill(dark))
-            .padding(12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(title, style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
         Text(
-            text = value,
-            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-            color = scheme.primary,
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = scheme.onSurfaceVariant,
         )
         Text(
-            text = caption,
-            style = MaterialTheme.typography.labelSmall,
-            color = scheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            text = value,
+            style = MaterialTheme.typography.displayLarge.copy(
+                fontSize = 32.sp,
+                lineHeight = 36.sp,
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = "tnum",
+            ),
+            color = accent,
         )
     }
 }
@@ -489,34 +521,56 @@ private fun WeeksHeatmapGrid(
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.Bottom,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            modifier = Modifier.padding(top = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
             weekdayLabels.forEach { label ->
-                Box(modifier = Modifier.size(width = 18.dp, height = 24.dp), contentAlignment = Alignment.Center) {
-                    Text(label, style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
+                Box(modifier = Modifier.size(width = 16.dp, height = 14.dp), contentAlignment = Alignment.Center) {
+                    Text(label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp), color = mintTertiaryTextColor(dark))
                 }
             }
         }
         Row(
             modifier = Modifier
                 .weight(1f)
-                .horizontalScroll(scrollState),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .horizontalScroll(scrollState)
+                .padding(end = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
         ) {
+            var lastLabeledMonth = -1
             weekColumns.forEach { week ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val firstDay = week.firstOrNull()?.date
+                val monthLabel = if (firstDay != null && firstDay.monthValue != lastLabeledMonth) {
+                    lastLabeledMonth = firstDay.monthValue
+                    "${firstDay.monthValue}月"
+                } else ""
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Box(modifier = Modifier.height(15.dp), contentAlignment = Alignment.CenterStart) {
+                        if (monthLabel.isNotEmpty()) {
+                            Text(
+                                text = monthLabel,
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = mintTertiaryTextColor(dark),
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        }
+                    }
                     week.forEach { cell ->
                         val level = heatmapLevel(cell.count, maxDayCount)
                         val selected = cell.date == selectedDate
                         val bg = if (cell.isFuture) Color.Transparent else heatmapLevelColor(level, dark)
                         Box(
                             modifier = Modifier
-                                .size(24.dp)
-                                .clip(RoundedCornerShape(6.dp))
+                                .size(14.dp)
+                                .clip(RoundedCornerShape(3.5.dp))
                                 .background(bg)
                                 .then(
                                     if (selected) {
-                                        Modifier.border(1.8.dp, scheme.primary, RoundedCornerShape(6.dp))
+                                        Modifier.border(1.5.dp, scheme.primary, RoundedCornerShape(3.5.dp))
                                     } else {
                                         Modifier
                                     },
@@ -626,20 +680,7 @@ internal fun heatmapLevel(count: Int, maxCount: Int): Int {
     }
 }
 
-private fun heatmapLevelColor(level: Int, dark: Boolean): Color = if (dark) {
-    when (level) {
-        0 -> Color(0xFF202D27)
-        1 -> Color(0xFF1D4D39)
-        2 -> Color(0xFF226C4F)
-        3 -> Color(0xFF2B8E66)
-        else -> Color(0xFF39B582)
-    }
-} else {
-    when (level) {
-        0 -> Color(0xFFEBF2EE)
-        1 -> Color(0xFFC8EBD9)
-        2 -> Color(0xFF8FD5B4)
-        3 -> Color(0xFF43A97B)
-        else -> Color(0xFF196E4B)
-    }
+private fun heatmapLevelColor(level: Int, dark: Boolean): Color {
+    val palette = mintHeatmapPalette(dark)
+    return palette[level.coerceIn(0, palette.lastIndex)]
 }

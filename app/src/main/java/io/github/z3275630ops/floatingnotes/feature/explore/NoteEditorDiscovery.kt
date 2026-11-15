@@ -47,6 +47,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAiAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAnimatorsEnabled
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
@@ -70,12 +71,13 @@ internal fun EditorEdgeEchoStrip(
         modifier = modifier.focusProperties { canFocus = false },
     ) {
         val item = hit ?: return@AnimatedVisibility
+        val aiAccent = mintAiAccent(dark)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp, vertical = 4.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(mintSecondaryFill(dark))
+                .background(aiAccent.bg)
                 .focusProperties { canFocus = false }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -89,16 +91,16 @@ internal fun EditorEdgeEchoStrip(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Icon(
-                imageVector = MintIcons.Explore,
+                imageVector = MintIcons.Sparkles,
                 contentDescription = null,
-                tint = scheme.primary,
+                tint = aiAccent.fg,
                 modifier = Modifier.size(16.dp),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "旧日回响 · ${item.noteTitle}",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = scheme.primary,
+                    color = aiAccent.fg,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -113,7 +115,7 @@ internal fun EditorEdgeEchoStrip(
             Text(
                 text = "查看",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = scheme.primary,
+                color = aiAccent.fg,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
             Box(

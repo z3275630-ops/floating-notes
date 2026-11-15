@@ -9,6 +9,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -77,7 +79,10 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAnimatorsEnabled
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDividerColor
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintLinkAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -189,12 +194,12 @@ internal fun FindTabContent(
                     ) {
                         Text(
                             text = if (cov.isComplete) {
-                                "本机索引已覆盖 ${cov.indexedCount}/${cov.eligibleCount} 条可检索笔记"
+                                "已就绪 · ${cov.indexedCount}/${cov.eligibleCount} 篇可秒搜"
                             } else {
-                                "本机索引待同步：${cov.indexedCount}/${cov.eligibleCount} 条"
+                                "同步中 · ${cov.indexedCount}/${cov.eligibleCount} 篇"
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = scheme.onSurfaceVariant,
+                            color = mintTertiaryTextColor(dark),
                             modifier = Modifier.testTag("find-coverage-label"),
                         )
                         Row(
@@ -215,16 +220,16 @@ internal fun FindTabContent(
                                 MintActivityIndicator(sizeDp = 14.dp, color = scheme.primary)
                             } else {
                                 Icon(
-                                    imageVector = MintIcons.History,
+                                    imageVector = MintIcons.Refresh,
                                     contentDescription = "刷新索引",
-                                    tint = scheme.primary,
+                                    tint = scheme.onSurfaceVariant,
                                     modifier = Modifier.size(14.dp),
                                 )
                             }
                             Text(
-                                text = "刷新索引",
+                                text = "刷新",
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                                color = scheme.primary,
+                                color = scheme.onSurfaceVariant,
                             )
                         }
                     }
@@ -233,9 +238,10 @@ internal fun FindTabContent(
         }
 
         if (state.evidenceBasket.isNotEmpty()) {
+            val basketAccent = mintLinkAccent(dark)
             MintGroupedSection(
                 dark = dark,
-                containerColor = scheme.primary.copy(alpha = if (dark) 0.22f else 0.10f),
+                containerColor = basketAccent.bg,
                 modifier = Modifier.testTag("find-evidence-basket-bar"),
             ) {
                 Row(
@@ -247,12 +253,12 @@ internal fun FindTabContent(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "证据篮已收集 ${state.evidenceBasket.size} 条线索",
+                            text = "已收集 ${state.evidenceBasket.size} 条线索",
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                            color = scheme.primary,
+                            color = basketAccent.fg,
                         )
                         Text(
-                            text = "可一键生成带原笔记引用的整理笔记",
+                            text = "可一键汇成带引用的整理笔记",
                             style = MaterialTheme.typography.bodySmall,
                             color = scheme.onSurfaceVariant,
                         )
@@ -539,7 +545,7 @@ internal fun WalkTabContent(
                         }
                     }
                     Text(
-                        text = "每次出发会从一条笔记开始：约 70% 沿紧密脉络延伸，20% 换条小路跨主题衔接，10% 遇见久未翻看的记录。途中随时可退回上一条，不丢失走过的痕迹。",
+                        text = "从一篇过往笔记出发，沿着共同主题与时间线索慢慢串联，随时可退回上一站，留住沿途冒出的灵感。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = scheme.onSurfaceVariant,
                     )
@@ -944,30 +950,31 @@ private fun DualWalkContent(
     val density = LocalDensity.current
     val sideBySide = cfg.screenWidthDp >= 540 && density.fontScale < 1.35f
 
+    val linkAccent = mintLinkAccent(dark)
+
     Column(
         modifier = Modifier.testTag("dual-walk-workspace"),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Pair controls: back / next
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MintPillButton(
+            MintChip(
                 label = "上一组",
-                primary = false,
+                leadingIcon = MintIcons.Back,
+                selected = false,
                 dark = dark,
-                enabled = state.dualHistory.isNotEmpty(),
-                modifier = Modifier.weight(1f).testTag("dual-back-button"),
-                onClick = onStepBack,
+                modifier = Modifier.testTag("dual-back-button"),
+                onClick = { if (state.dualHistory.isNotEmpty()) onStepBack() },
             )
-            MintPillButton(
-                label = "换一组碰撞",
-                primary = true,
+            MintChip(
+                label = "换一组",
+                leadingIcon = MintIcons.Refresh,
+                selected = true,
                 dark = dark,
-                icon = MintIcons.Explore,
-                modifier = Modifier.weight(1f).testTag("dual-next-button"),
+                modifier = Modifier.testTag("dual-next-button"),
                 onClick = onDrawNext,
             )
         }
@@ -975,8 +982,8 @@ private fun DualWalkContent(
         if (sideBySide) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 DualCollisionNoteCard(
                     badge = "卡片 A",
@@ -988,6 +995,21 @@ private fun DualWalkContent(
                     onOpen = { onOpenNote(pair.leftNote.id) },
                     modifier = Modifier.weight(1f).testTag("dual-card-left"),
                 )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(linkAccent.bg)
+                        .border(1.dp, linkAccent.fg.copy(alpha = 0.35f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = MintIcons.Link,
+                        contentDescription = null,
+                        tint = linkAccent.fg,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
                 DualCollisionNoteCard(
                     badge = "卡片 B",
                     title = pair.rightTitle,
@@ -1000,7 +1022,7 @@ private fun DualWalkContent(
                 )
             }
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 DualCollisionNoteCard(
                     badge = "卡片 A",
                     title = pair.leftTitle,
@@ -1011,6 +1033,44 @@ private fun DualWalkContent(
                     onOpen = { onOpenNote(pair.leftNote.id) },
                     modifier = Modifier.fillMaxWidth().testTag("dual-card-left"),
                 )
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(1.5.dp)
+                            .height(10.dp)
+                            .background(linkAccent.fg.copy(alpha = 0.45f)),
+                    )
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(linkAccent.bg)
+                            .border(0.6.dp, linkAccent.fg.copy(alpha = 0.32f), RoundedCornerShape(50))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            imageVector = MintIcons.Link,
+                            contentDescription = null,
+                            tint = linkAccent.fg,
+                            modifier = Modifier.size(12.dp),
+                        )
+                        Text(
+                            text = "跨笔记碰撞",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                            color = linkAccent.fg,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(1.5.dp)
+                            .height(10.dp)
+                            .background(linkAccent.fg.copy(alpha = 0.45f)),
+                    )
+                }
                 DualCollisionNoteCard(
                     badge = "卡片 B",
                     title = pair.rightTitle,
@@ -1131,14 +1191,16 @@ private fun DualWalkContent(
                         label = if (bridge == null) "寻找联系" else "重新分析",
                         primary = false,
                         dark = dark,
+                        icon = MintIcons.Sparkles,
                         modifier = Modifier.weight(1f).testTag("dual-analyze-button"),
                         onClick = onAnalyze,
                     )
                     MintPillButton(
-                        label = "存为新笔记",
+                        label = "建立链接",
                         primary = true,
                         dark = dark,
-                        modifier = Modifier.weight(1f).testTag("dual-save-button"),
+                        icon = MintIcons.Link,
+                        modifier = Modifier.weight(1.15f).testTag("dual-save-button"),
                         onClick = { onSaveAsNote(reflectionDraft) },
                     )
                 }
@@ -1183,13 +1245,13 @@ private fun DualCollisionNoteCard(
                     Text(
                         text = badge,
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = scheme.primary,
+                        color = mintLinkAccent(dark).fg,
                     )
                 }
                 Text(
                     text = dateLabel,
                     style = MaterialTheme.typography.labelSmall,
-                    color = scheme.onSurfaceVariant,
+                    color = mintTertiaryTextColor(dark),
                 )
             }
             Text(

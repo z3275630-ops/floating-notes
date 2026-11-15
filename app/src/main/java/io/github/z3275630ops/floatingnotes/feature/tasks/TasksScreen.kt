@@ -69,6 +69,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
+import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
+import io.github.z3275630ops.floatingnotes.data.local.DraftEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotesRepository
 import io.github.z3275630ops.floatingnotes.data.local.RecurrenceRule
 import io.github.z3275630ops.floatingnotes.data.local.ReminderPolicy
@@ -80,6 +83,7 @@ import io.github.z3275630ops.floatingnotes.data.local.TaskToggleResult
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintAlertDialog
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChip
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChipStyle
@@ -87,21 +91,24 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedRow
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSegmentedBar
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
 import io.github.z3275630ops.floatingnotes.ui.designsystem.NoteMenuTrigger
 import io.github.z3275630ops.floatingnotes.ui.designsystem.glassSource
-import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAmbient
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAnimatorsEnabled
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCanvasColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDestructiveColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSpringSpec
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTodoAccent
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.UUID
 
 internal data class TasksScheduleDraft(
     val noteId: String,
@@ -282,6 +289,28 @@ internal fun TasksScreen(
             }
         },
         onOpenNote = onOpenNote,
+        onQuickAddTask = { taskText ->
+            scope.launch {
+                val trimmed = taskText.trim()
+                if (trimmed.isNotEmpty()) {
+                    val zone = ZoneId.systemDefault()
+                    val block = NoteBlock.checkbox(text = trimmed, dueDate = LocalDate.now(zone).toString())
+                    val doc = NoteDocument(listOf(block))
+                    val noteId = UUID.randomUUID().toString()
+                    val draft = DraftEntity(
+                        id = UUID.randomUUID().toString(),
+                        slot = "quick-task-$noteId",
+                        noteId = noteId,
+                        baseRevision = 0L,
+                        documentJson = doc.encode(),
+                        editSeq = 1L,
+                        updatedAt = Instant.now().toString(),
+                    )
+                    repository.commit(draft)
+                    statusBanner = "已添加到今日待办"
+                }
+            }
+        },
         onClose = onClose,
         backdrop = backdrop,
         tier = tier,
@@ -322,6 +351,7 @@ internal fun TasksScreenContent(
     zoneId: ZoneId = ZoneId.systemDefault(),
     today: LocalDate = LocalDate.now(zoneId),
     onRequestNotificationPermission: (() -> Unit)? = null,
+    onQuickAddTask: ((String) -> Unit)? = null,
 ) {
     val activeRemindersCount = remember(items) {
         items.count { !it.checked && it.reminderId != null && it.reminderStatus == ReminderStatus.ACTIVE }
@@ -367,7 +397,9 @@ internal fun TasksScreenContent(
         }
     }
 
-    val opaqueCanvas = if (dark) Color(0xFF0D1813) else Color(0xFFF3FAF5)
+    val opaqueCanvas = mintCanvasColor(dark)
+    var showQuickAddDialog by remember { mutableStateOf(false) }
+    var quickAddText by remember { mutableStateOf("") }
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -378,7 +410,6 @@ internal fun TasksScreenContent(
             modifier = Modifier
                 .fillMaxSize()
                 .background(opaqueCanvas)
-                .mintAmbient(dark)
                 .glassSource(backdrop)
                 .clearAndSetSemantics { }
                 .clickable(
@@ -485,10 +516,22 @@ internal fun TasksScreenContent(
                     TasksFilter.TODAY -> {
                         if (overdueItems.isEmpty() && todayItems.isEmpty() && unscheduledItems.isEmpty()) {
                             item("empty_today") {
+                                val doneCount = completedItems.size + extraOccurrences.size
                                 TasksEmptyCard(
                                     title = "今天没有待办",
-                                    subtitle = "在笔记正文添加复选框，或从「未来」调整日期后会自动出现在这里。",
+                                    subtitle = if (doneCount > 0) {
+                                        "今日已清空 · 已完成 $doneCount 项"
+                                    } else {
+                                        "随时记一条待办事项，或者在笔记里插入复选框"
+                                    },
                                     dark = dark,
+                                    actionLabel = if (onQuickAddTask != null) "添加待办" else null,
+                                    onAction = if (onQuickAddTask != null) {
+                                        {
+                                            quickAddText = ""
+                                            showQuickAddDialog = true
+                                        }
+                                    } else null,
                                 )
                             }
                         } else {
@@ -689,6 +732,32 @@ internal fun TasksScreenContent(
                 onRequestNotificationPermission = onRequestNotificationPermission,
             )
         }
+
+        if (showQuickAddDialog && onQuickAddTask != null) {
+            MintAlertDialog(
+                onDismissRequest = { showQuickAddDialog = false },
+                dark = dark,
+                backdrop = backdrop,
+                title = "添加今日待办",
+                subtitle = "会自动保存为一条带复选框的轻量记录",
+                dismissLabel = "取消",
+                onDismissAction = { showQuickAddDialog = false },
+                confirmLabel = "保存",
+                onConfirmAction = {
+                    if (quickAddText.isNotBlank()) {
+                        onQuickAddTask(quickAddText)
+                        showQuickAddDialog = false
+                    }
+                },
+            ) {
+                MintTextField(
+                    value = quickAddText,
+                    onValueChange = { quickAddText = it },
+                    placeholder = "例如：明天提交季度总结",
+                    dark = dark,
+                )
+            }
+        }
     }
 }
 
@@ -733,13 +802,13 @@ private fun TasksHeaderBar(
                     Icon(
                         imageVector = MintIcons.Back,
                         contentDescription = "返回笔记",
-                        tint = scheme.primary,
+                        tint = scheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
                     )
                     Text(
                         text = "笔记",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = scheme.primary,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                        color = scheme.onSurfaceVariant,
                     )
                 }
             } else {
@@ -752,7 +821,7 @@ private fun TasksHeaderBar(
                     tag = "tasks_more_menu",
                     icon = MintIcons.More,
                     containerColor = mintSecondaryFill(dark),
-                    tint = scheme.primary,
+                    tint = scheme.onSurfaceVariant,
                     onClick = { showMoreMenu = true },
                 )
                 ComposablesMenu(
@@ -797,17 +866,13 @@ private fun TasksHeaderBar(
         ) {
             Text(
                 text = "待办",
-                style = MaterialTheme.typography.headlineLarge.copy(
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.5).sp,
-                ),
+                style = MaterialTheme.typography.displayLarge,
                 color = scheme.onSurface,
             )
             Text(
                 text = "$openCount 项未完成",
-                style = MaterialTheme.typography.bodyMedium,
-                color = scheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
+                color = if (openCount > 0) mintTodoAccent(dark).fg else scheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
@@ -1190,7 +1255,10 @@ private fun TasksEmptyCard(
     title: String,
     subtitle: String,
     dark: Boolean,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
 ) {
+    val todoAccent = mintTodoAccent(dark)
     MintGroupedSection(
         dark = dark,
         modifier = Modifier
@@ -1202,8 +1270,22 @@ private fun TasksEmptyCard(
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(todoAccent.bg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = MintIcons.Checklist,
+                    contentDescription = null,
+                    tint = todoAccent.fg,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
@@ -1214,6 +1296,15 @@ private fun TasksEmptyCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (actionLabel != null && onAction != null) {
+                MintPillButton(
+                    label = actionLabel,
+                    primary = true,
+                    dark = dark,
+                    icon = MintIcons.Compose,
+                    onClick = onAction,
+                )
+            }
         }
     }
 }
@@ -1247,7 +1338,7 @@ private fun TaskCircleCheckbox(
     ) {
         Canvas(modifier = Modifier.size(22.dp)) {
             if (checked) {
-                drawCircle(color = primary.copy(alpha = 0.58f))
+                drawCircle(color = primary.copy(alpha = 0.55f))
                 drawLine(
                     color = checkColor,
                     start = Offset(size.width * 0.26f, size.height * 0.52f),
@@ -1282,10 +1373,9 @@ private fun MintCapsuleSwitch(
     val scheme = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
     val targetTrack = when {
-        checked && dark -> Color(0xFF2E7657)
         checked -> scheme.primary
-        dark -> Color(0xFF23382D)
-        else -> Color(0xFFD5E4DA)
+        dark -> Color(0xFF32302B)
+        else -> Color(0xFFD8D4CA)
     }
     val trackColor by animateColorAsState(
         targetValue = targetTrack,

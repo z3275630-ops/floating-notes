@@ -54,26 +54,23 @@ internal fun GlassAction(
     val fill: Brush = if (enabled) {
         mintHighlight(dark)
     } else {
-        SolidColor(if (dark) Color(0xFF22352B) else Color(0xFFDDE8E1))
+        SolidColor(mintSecondaryFill(dark))
     }
     val edge: Brush = if (enabled) {
-        Brush.linearGradient(listOf(
-            Color.White.copy(alpha = if (dark) .38f else .90f),
-            Color.White.copy(alpha = if (dark) .08f else .30f),
-        ))
+        SolidColor(Color.Transparent)
     } else {
-        SolidColor(if (dark) Color.White.copy(alpha = 0.12f) else Color(0xFFB6C9BE).copy(alpha = 0.85f))
+        SolidColor(mintDividerColor(dark))
     }
-    val shadowTint = if (dark) Color(0x55040A07) else Color(0x28126543)
+    val shadowTint = if (dark) Color(0x40000000) else Color(0x281F6B4F)
     val boxModifier = modifier
         .graphicsLayer { scaleX = activeScale; scaleY = activeScale }
         .let { base ->
-            if (enabled) base.shadow(10.dp, shape, ambientColor = shadowTint, spotColor = shadowTint)
+            if (enabled) base.shadow(8.dp, shape, ambientColor = shadowTint, spotColor = shadowTint)
             else base
         }
         .clip(shape)
         .background(fill)
-        .border(1.dp, edge, shape)
+        .border(0.6.dp, edge, shape)
         .clickable(
             enabled = enabled,
             interactionSource = source,
@@ -88,9 +85,9 @@ internal fun GlassAction(
         contentAlignment = Alignment.Center,
     ) {
         val textColor = if (enabled) {
-            MaterialTheme.colorScheme.onPrimaryContainer
+            MaterialTheme.colorScheme.onPrimary
         } else {
-            if (dark) Color(0xFF7E9487) else Color(0xFF6E8377)
+            mintTertiaryTextColor(dark)
         }
         Row(
             horizontalArrangement = Arrangement.spacedBy(7.dp),

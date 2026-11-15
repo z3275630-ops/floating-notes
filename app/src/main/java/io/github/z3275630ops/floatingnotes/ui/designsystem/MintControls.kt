@@ -118,17 +118,13 @@ internal fun MintGroupedSection(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(shapeRadius)
-    val hairline = if (dark) {
-        Color(0xFF95E5B9).copy(alpha = 0.10f)
-    } else {
-        Color(0xFF1E5037).copy(alpha = 0.08f)
-    }
+    val hairline = mintDividerColor(dark)
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
             .background(containerColor, shape)
-            .border(0.5.dp, hairline, shape),
+            .border(0.6.dp, hairline, shape),
         content = content,
     )
 }
@@ -198,7 +194,7 @@ internal fun MintGroupedRow(
                 tint = iconTint ?: when {
                     destructive -> mintDestructiveColor(dark)
                     selected -> scheme.primary
-                    else -> scheme.primary
+                    else -> scheme.onSurfaceVariant
                 },
                 modifier = Modifier.size(19.dp),
             )
@@ -227,8 +223,8 @@ internal fun MintGroupedRow(
         if (!trailingText.isNullOrBlank()) {
             Text(
                 text = trailingText,
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+                color = mintTertiaryTextColor(dark),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -245,8 +241,8 @@ internal fun MintGroupedRow(
             Icon(
                 imageVector = MintIcons.ChevronRight,
                 contentDescription = null,
-                tint = scheme.onSurfaceVariant.copy(alpha = 0.55f),
-                modifier = Modifier.size(15.dp),
+                tint = mintTertiaryTextColor(dark),
+                modifier = Modifier.size(16.dp),
             )
         }
     }
@@ -350,8 +346,8 @@ internal fun MintBottomSheet(
                                 ) {
                                     Text(
                                         text = leadingLabel,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = scheme.primary,
+                                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp),
+                                        color = scheme.onSurfaceVariant,
                                         maxLines = 1,
                                     )
                                 }
@@ -941,30 +937,30 @@ internal fun MintChip(
 
     val containerColor = when (style) {
         MintChipStyle.ActiveFilter, MintChipStyle.Selected ->
-            if (dark) Color(0xFF23523E) else Color(0xFFD7F2E4)
+            scheme.primaryContainer
         MintChipStyle.SmartFolder ->
-            if (dark) Color(0xFF1D3027) else Color(0xFFFBFDF9)
+            mintCardSurface(dark)
         MintChipStyle.Standard ->
-            if (dark) Color(0xFF192921) else Color(0xFFF3F8F4)
+            mintSecondaryFill(dark)
     }
     val contentColor = when (style) {
         MintChipStyle.ActiveFilter, MintChipStyle.Selected ->
-            if (dark) Color(0xFFAAF0CB) else Color(0xFF0E5A3A)
+            scheme.onPrimaryContainer
         MintChipStyle.SmartFolder -> scheme.onSurface
         MintChipStyle.Standard -> scheme.onSurfaceVariant
     }
     val borderColor = when (style) {
         MintChipStyle.ActiveFilter, MintChipStyle.Selected ->
-            scheme.primary.copy(alpha = if (dark) 0.7f else 0.48f)
+            scheme.primary.copy(alpha = if (dark) 0.55f else 0.35f)
         MintChipStyle.SmartFolder ->
-            scheme.outline.copy(alpha = if (dark) 0.48f else 0.35f)
+            mintDividerColor(dark)
         MintChipStyle.Standard ->
-            scheme.outline.copy(alpha = if (dark) 0.32f else 0.24f)
+            mintDividerColor(dark)
     }
 
     Box(
         modifier = modifier
-            .defaultMinSize(minHeight = 48.dp)
+            .defaultMinSize(minHeight = 40.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -991,7 +987,7 @@ internal fun MintChip(
     ) {
         Row(
             modifier = Modifier
-                .defaultMinSize(minHeight = 36.dp)
+                .defaultMinSize(minHeight = 32.dp)
                 .clip(shape)
                 .background(containerColor, shape)
                 .then(
@@ -1001,8 +997,8 @@ internal fun MintChip(
                 .padding(
                     start = if (leadingIcon != null) 10.dp else 12.dp,
                     end = if (removable || trailingCount != null) 9.dp else 12.dp,
-                    top = 6.dp,
-                    bottom = 6.dp,
+                    top = 5.dp,
+                    bottom = 5.dp,
                 ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1011,13 +1007,14 @@ internal fun MintChip(
                 Icon(
                     imageVector = leadingIcon,
                     contentDescription = null,
-                    tint = if (style == MintChipStyle.SmartFolder) scheme.primary else contentColor,
-                    modifier = Modifier.size(15.dp),
+                    tint = if (style == MintChipStyle.SmartFolder) scheme.onSurfaceVariant else contentColor,
+                    modifier = Modifier.size(14.dp),
                 )
             }
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelLarge.copy(
+                style = MaterialTheme.typography.labelMedium.copy(
+                    letterSpacing = 0.sp,
                     fontWeight = if (selected || style == MintChipStyle.SmartFolder) FontWeight.SemiBold else FontWeight.Medium,
                 ),
                 color = contentColor,
@@ -1062,18 +1059,18 @@ internal fun MintSegmentedBar(
 ) {
     if (options.isEmpty()) return
     val scheme = MaterialTheme.colorScheme
-    val trackColor = if (dark) Color(0xFF172720) else Color(0xFFE5EFE8)
-    val thumbColor = if (dark) Color(0xFF285845) else Color(0xFFFFFFFF)
+    val trackColor = mintSecondaryFill(dark)
+    val thumbColor = if (dark) Color(0xFF33312B) else Color(0xFFFFFFFF)
 
     Box(
         modifier = modifier
-            .defaultMinSize(minHeight = 44.dp)
+            .defaultMinSize(minHeight = 36.dp)
             .clip(RoundedCornerShape(50))
             .background(trackColor, RoundedCornerShape(50))
             .padding(3.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(36.dp)) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(30.dp)) {
             val count = options.size
             val segmentWidth = maxWidth / count
             val safeIndex = selectedIndex.coerceIn(0, count - 1)
@@ -1121,7 +1118,7 @@ internal fun MintSegmentedBar(
                     ) {
                         Text(
                             text = label,
-                            style = MaterialTheme.typography.labelLarge.copy(
+                            style = MaterialTheme.typography.bodyMedium.copy(
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                             ),
                             color = if (selected) scheme.onSurface else scheme.onSurfaceVariant,
@@ -1221,28 +1218,23 @@ internal fun MintPillButton(
     val shape = RoundedCornerShape(12.dp)
 
     val containerBrush = when {
-        !enabled && primary -> SolidColor(if (dark) Color(0xFF21362B) else Color(0xFFE0EBE4))
-        !enabled -> SolidColor(if (dark) Color(0xFF192821) else Color(0xFFEBF2EE))
-        primary -> Brush.horizontalGradient(
-            if (dark) listOf(Color(0xFF2B6B52), Color(0xFF375633))
-            else listOf(Color(0xFF126543), Color(0xFF1F7A53)),
-        )
-        destructive -> SolidColor(scheme.error.copy(alpha = if (dark) 0.24f else 0.12f))
-        else -> SolidColor(if (dark) Color(0xFF1D3027) else Color(0xFFEEF3F0))
+        !enabled -> SolidColor(mintSecondaryFill(dark))
+        primary -> SolidColor(scheme.primary)
+        destructive -> SolidColor(scheme.error.copy(alpha = if (dark) 0.22f else 0.11f))
+        else -> SolidColor(mintSecondaryFill(dark))
     }
     val labelColor = when {
-        !enabled -> if (dark) Color(0xFF8FA899) else Color(0xFF5D7166)
-        primary -> Color.White
+        !enabled -> mintTertiaryTextColor(dark)
+        primary -> scheme.onPrimary
         destructive -> scheme.error
         else -> scheme.onSurface
     }
 
     val border = when {
-        !enabled && primary -> if (dark) Color.White.copy(alpha = 0.12f) else Color(0xFFB6C9BE)
-        !enabled -> scheme.outline.copy(alpha = if (dark) 0.24f else 0.22f)
-        primary -> Color.White.copy(alpha = if (dark) 0.22f else 0.35f)
-        destructive -> scheme.error.copy(alpha = 0.35f)
-        else -> scheme.outline.copy(alpha = if (dark) 0.42f else 0.30f)
+        !enabled -> mintDividerColor(dark)
+        primary -> Color.Transparent
+        destructive -> scheme.error.copy(alpha = 0.28f)
+        else -> mintDividerColor(dark)
     }
 
     Row(
@@ -1255,8 +1247,7 @@ internal fun MintPillButton(
             .clip(shape)
             .background(containerBrush, shape)
             .then(
-                if (!primary && !enabled) Modifier.border(0.6.dp, border, shape)
-                else if (destructive) Modifier.border(0.6.dp, border, shape)
+                if (!primary) Modifier.border(0.6.dp, border, shape)
                 else Modifier
             )
             .clickable(
@@ -1266,7 +1257,7 @@ internal fun MintPillButton(
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 15.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1302,9 +1293,9 @@ internal fun MintSwitch(
     val trackColor by animateColorAsState(
         targetValue = when {
             !enabled && checked -> scheme.primary.copy(alpha = 0.45f)
-            !enabled -> if (dark) Color(0xFF28342D) else Color(0xFFD5DED9)
-            checked -> if (dark) Color(0xFF2F8B62) else Color(0xFF1E7E55)
-            else -> if (dark) Color(0xFF313D37) else Color(0xFFD1DAD4)
+            !enabled -> mintSecondaryFill(dark)
+            checked -> scheme.primary
+            else -> mintStrongDividerColor(dark)
         },
         animationSpec = if (animEnabled) mintSpringSpec() else snap(),
         label = "mint-switch-track",

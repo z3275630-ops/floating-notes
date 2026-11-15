@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -167,6 +168,7 @@ internal fun NotesShell(
     var showStatsSheet by rememberSaveable { mutableStateOf(false) }
     var sharingNoteId by rememberSaveable { mutableStateOf<String?>(null) }
     var exploreSectionIndex by rememberSaveable { mutableStateOf(0) }
+    var showDraftsSheet by rememberSaveable { mutableStateOf(false) }
     val organization = model.organization
     val tags by organization.tags.collectAsStateWithLifecycle(emptyList())
     val notebooks by organization.notebooks.collectAsStateWithLifecycle(emptyList())
@@ -489,10 +491,43 @@ internal fun NotesShell(
         }
     }
 
+    if (showDraftsSheet) {
+        val visibleCaptures = captures
+        if (visibleCaptures.isEmpty()) {
+            LaunchedEffect(Unit) { showDraftsSheet = false }
+        } else {
+            MintBottomSheet(
+                title = "待整理草稿 (${visibleCaptures.size})",
+                dark = dark,
+                backdrop = backdrop,
+                onDismissRequest = { showDraftsSheet = false },
+                leadingLabel = "关闭",
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    visibleCaptures.forEach { draft ->
+                        DraftBannerCard(
+                            sourceUrl = draft.sourceUrl,
+                            dark = dark,
+                            onClick = {
+                                showDraftsSheet = false
+                                launchEditor(captureSlot = draft.slot)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawer,
         gesturesEnabled = !motion.visible && !showTasksOverlay,
-        scrimColor = Color(0xFF0D2118).copy(alpha = if (dark) .54f else .30f),
+        scrimColor = Color.Black.copy(alpha = if (dark) .54f else .28f),
         drawerContent = {
             NotesDrawer(
                 backdrop = backdrop,
@@ -637,7 +672,7 @@ internal fun NotesShell(
                                             contentDescription = "设置与数据管理",
                                             dark = dark,
                                             icon = MintIcons.Settings,
-                                            tint = scheme.primary,
+                                            tint = scheme.onSurfaceVariant,
                                             containerColor = mintSecondaryFill(dark),
                                             modifier = Modifier.testTag("open-backup-settings"),
                                         )
@@ -711,6 +746,16 @@ internal fun NotesShell(
                                                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                                                     )
                                                 }
+                                            }
+                                        }
+                                    } else if (!librarySearching && !hasOrgFilter) {
+                                        item("lib_idle_guide") {
+                                            Box(modifier = Modifier.padding(top = 6.dp)) {
+                                                EmptyStateCard(
+                                                    title = "按条件精准定位",
+                                                    subtitle = "在上方输入关键词、点击筛选器，或展开笔记本与标签浏览对应笔记。",
+                                                    dark = dark,
+                                                )
                                             }
                                         }
                                     } else if (visible.isEmpty()) {
@@ -796,12 +841,12 @@ internal fun NotesShell(
                                     }
                                     val headerSubtitle = when (current) {
                                         Page.Record -> when {
-                                            showArchive -> "${archivedFiltered.size} 条已归档笔记"
+                                            showArchive -> "${archivedFiltered.size} 条已归档"
                                             notes.isEmpty() -> "记下一件今天想留住的事"
                                             else -> "${archivedFiltered.size} 条笔记"
                                         }
-                                        Page.Explore -> "按时间与关联浏览你的笔记脉络"
-                                        Page.Agent -> "本地优先的隐私智能助手"
+                                        Page.Explore -> null
+                                        Page.Agent -> "本机私有"
                                         Page.Library -> null
                                     }
                                     ShellTopHeader(
@@ -828,13 +873,13 @@ internal fun NotesShell(
                                                     Icon(
                                                         imageVector = MintIcons.Checklist,
                                                         contentDescription = null,
-                                                        tint = scheme.primary,
+                                                        tint = mintTodoAccent(dark).fg,
                                                         modifier = Modifier.size(17.dp),
                                                     )
                                                     Text(
                                                         text = "待办清单",
                                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                                        color = scheme.primary,
+                                                        color = scheme.onSurface,
                                                     )
                                                 }
                                             }
@@ -844,6 +889,15 @@ internal fun NotesShell(
 
                                 if (current == Page.Record) {
                                     if (!showArchive) {
+                                        item("record_quick_prompt") {
+                                            QuickComposeTriggerBar(
+                                                dark = dark,
+                                                onClick = { launchEditor() },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 10.dp),
+                                            )
+                                        }
                                         item("record_filter_bar") {
                                             MintSegmentedBar(
                                                 options = listOf(RecordFilter.All.label, RecordFilter.Todos.label),
@@ -867,14 +921,23 @@ internal fun NotesShell(
                                             )
                                         }
                                     }
-                                    if (!showArchive) {
-                                        items(captures, key = { it.id }) { draft ->
+                                    if (!showArchive && captures.isNotEmpty()) {
+                                        item("record_drafts") {
                                             Box(modifier = Modifier.padding(top = 8.dp)) {
-                                                DraftBannerCard(
-                                                    sourceUrl = draft.sourceUrl,
-                                                    dark = dark,
-                                                    onClick = { launchEditor(captureSlot = draft.slot) },
-                                                )
+                                                if (captures.size == 1) {
+                                                    val draft = captures.first()
+                                                    DraftBannerCard(
+                                                        sourceUrl = draft.sourceUrl,
+                                                        dark = dark,
+                                                        onClick = { launchEditor(captureSlot = draft.slot) },
+                                                    )
+                                                } else {
+                                                    DraftsSummaryBanner(
+                                                        count = captures.size,
+                                                        dark = dark,
+                                                        onClick = { showDraftsSheet = true },
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -1025,7 +1088,7 @@ internal fun NotesShell(
 
                 val imeVisibleForScrim = WindowInsets.ime.getBottom(LocalDensity.current) > 0
                 if (!motion.visible && !drawer.isOpen && !showTasksOverlay && !showTrash && !imeVisibleForScrim) {
-                    val canvasTint = if (dark) Color(0xFF101F1B) else Color(0xFFF3F8F4)
+                    val canvasTint = mintCanvasColor(dark)
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -1048,7 +1111,7 @@ internal fun NotesShell(
                 Box(
                     Modifier
                         .matchParentSize()
-                        .background(if (dark) Color(0xFF0D1813) else Color(0xFFF3FAF5)),
+                        .background(mintCanvasColor(dark)),
                 ) {
                     Box(
                         Modifier
@@ -1149,17 +1212,10 @@ internal fun NotesShell(
                                     contentDescription = if (activeNote.pinned) "取消置顶" else "置顶",
                                     dark = dark,
                                     icon = MintIcons.Pin,
-                                    tint = if (activeNote.pinned) scheme.primary else scheme.onSurfaceVariant,
+                                    tint = if (activeNote.pinned) mintTodoAccent(dark).fg else scheme.onSurfaceVariant,
                                     containerColor = if (activeNote.pinned) {
-                                        if (dark) Color(0xFF23523E) else Color(0xFFD7F2E4)
+                                        mintTodoAccent(dark).bg
                                     } else Color.Transparent,
-                                )
-                                MintIconButton(
-                                    onClick = { organizeNote = activeNote.id },
-                                    contentDescription = "整理笔记",
-                                    dark = dark,
-                                    icon = MintIcons.Tag,
-                                    containerColor = Color.Transparent,
                                 )
                                 Box {
                                     NoteMenuTrigger(
@@ -1227,17 +1283,31 @@ internal fun NotesShell(
                     } else if (session != null) {
                         {
                             val canSave = session.document().hasContent
-                            TextButton(
-                                onClick = { close(save = true) },
-                                enabled = canSave,
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                            Box(
+                                modifier = Modifier
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .clickable(
+                                        enabled = canSave,
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = { close(save = true) },
+                                    ),
+                                contentAlignment = Alignment.Center,
                             ) {
-                                Text(
-                                    text = "保存",
-                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                                    color = if (canSave) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.38f),
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(if (canSave) scheme.primary else mintSecondaryFill(dark))
+                                        .padding(horizontal = 16.dp, vertical = 7.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "保存",
+                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                        color = if (canSave) scheme.onPrimary else mintDisabledTextColor(dark),
+                                    )
+                                }
                             }
                         }
                     } else null,
@@ -1462,13 +1532,13 @@ private fun ShellTopHeader(
                 Icon(
                     imageVector = MintIcons.Menu,
                     contentDescription = null,
-                    tint = scheme.primary,
+                    tint = scheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )
                 Text(
                     text = "文件夹",
                     style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                    color = scheme.primary,
+                    color = scheme.onSurfaceVariant,
                 )
             }
             if (trailingAction != null) {
@@ -1481,11 +1551,7 @@ private fun ShellTopHeader(
         }
         Text(
             text = title,
-            style = MaterialTheme.typography.headlineLarge.copy(
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.5).sp,
-            ),
+            style = MaterialTheme.typography.displayLarge,
             color = scheme.onSurface,
         )
         if (!subtitle.isNullOrBlank()) {
@@ -1509,7 +1575,7 @@ private fun FloatingNavigation(
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val pillColor = if (dark) Color(0xFF285845) else Color.White.copy(alpha = 0.88f)
+    val pillColor = if (dark) Color(0xFF282724) else Color.White
     GlassSurface(backdrop, GlassTier.Enhanced, dark, modifier, shapeRadius = 30.dp) {
         BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
             val tabWidth = maxWidth / Page.entries.size
@@ -1526,7 +1592,7 @@ private fun FloatingNavigation(
                     .width(tabWidth)
                     .height(50.dp)
                     .then(
-                        if (!dark) Modifier.shadow(2.dp, RoundedCornerShape(25.dp), ambientColor = Color(0x16000000), spotColor = Color(0x16000000))
+                        if (!dark) Modifier.shadow(2.dp, RoundedCornerShape(25.dp), ambientColor = Color(0x14000000), spotColor = Color(0x14000000))
                         else Modifier
                     )
                     .clip(RoundedCornerShape(25.dp))
@@ -1561,12 +1627,14 @@ private fun FloatingNavigation(
                             imageVector = icon,
                             contentDescription = null,
                             tint = tint,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(20.dp),
                         )
                         Text(
                             text = target.label,
                             color = tint,
                             style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                             ),
                             maxLines = 1,
@@ -1587,54 +1655,92 @@ private fun CircularComposeFab(
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
-    GlassSurface(
-        backdrop = backdrop,
-        tier = tier,
-        dark = dark,
-        shapeRadius = 29.dp,
-        shape = CircleShape,
-        elevatedModal = true,
+    val shadowColor = if (dark) Color(0x55000000) else Color(0x3D1F6B4F)
+    Box(
         modifier = modifier
-            .size(58.dp)
-            .semantics { contentDescription = "快速记录" },
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    role = Role.Button,
-                    onClickLabel = "快速记录",
-                    onClick = onClick,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = MintIcons.Compose,
-                contentDescription = null,
-                tint = scheme.primary,
-                modifier = Modifier.size(24.dp),
+            .size(56.dp)
+            .semantics { contentDescription = "快速记录" }
+            .shadow(
+                elevation = 8.dp,
+                shape = CircleShape,
+                ambientColor = shadowColor,
+                spotColor = shadowColor,
             )
-        }
+            .clip(CircleShape)
+            .background(scheme.primary, CircleShape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = "快速记录",
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = MintIcons.Compose,
+            contentDescription = null,
+            tint = scheme.onPrimary,
+            modifier = Modifier.size(23.dp),
+        )
     }
 }
 
 @Composable
-private fun DraftBannerCard(
-    sourceUrl: String?,
+private fun QuickComposeTriggerBar(
+    dark: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 46.dp)
+            .clip(shape)
+            .background(mintCardSurface(dark), shape)
+            .border(0.6.dp, mintDividerColor(dark), shape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = MintIcons.Compose,
+            contentDescription = null,
+            tint = scheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = "写点什么…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = mintTertiaryTextColor(dark),
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun DraftsSummaryBanner(
+    count: Int,
     dark: Boolean,
     onClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(16.dp)
-    val fill = if (dark) Color(0xFF1D3329) else Color(0xFFEAF7EF)
+    val accent = mintTodoAccent(dark)
+    val shape = RoundedCornerShape(14.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 52.dp)
             .clip(shape)
-            .background(fill, shape)
+            .background(accent.bg, shape)
+            .border(0.6.dp, accent.fg.copy(alpha = 0.28f), shape)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1647,16 +1753,71 @@ private fun DraftBannerCard(
     ) {
         Box(
             modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(scheme.primary.copy(alpha = 0.14f)),
+                .size(30.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(accent.fg.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = MintIcons.Compose,
+                contentDescription = null,
+                tint = accent.fg,
+                modifier = Modifier.size(15.dp),
+            )
+        }
+        Text(
+            text = "待整理草稿 · 共 $count 条",
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = scheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = MintIcons.ChevronRight,
+            contentDescription = null,
+            tint = mintTertiaryTextColor(dark),
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
+@Composable
+private fun DraftBannerCard(
+    sourceUrl: String?,
+    dark: Boolean,
+    onClick: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val accent = mintLinkAccent(dark)
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 52.dp)
+            .clip(shape)
+            .background(accent.bg, shape)
+            .border(0.6.dp, accent.fg.copy(alpha = 0.25f), shape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(accent.fg.copy(alpha = 0.14f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = MintIcons.Link,
                 contentDescription = null,
-                tint = scheme.primary,
-                modifier = Modifier.size(16.dp),
+                tint = accent.fg,
+                modifier = Modifier.size(15.dp),
             )
         }
         Column(modifier = Modifier.weight(1f)) {
@@ -1678,7 +1839,7 @@ private fun DraftBannerCard(
         Icon(
             imageVector = MintIcons.ChevronRight,
             contentDescription = null,
-            tint = scheme.primary,
+            tint = mintTertiaryTextColor(dark),
             modifier = Modifier.size(16.dp),
         )
     }
@@ -1752,9 +1913,9 @@ private fun LazyListScope.groupedNoteBucket(
         item("hdr_${bucket.key}") {
             Text(
                 text = bucket.title,
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = topSpacing, bottom = 6.dp),
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = mintTertiaryTextColor(dark),
+                modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = topSpacing, bottom = 6.dp),
             )
         }
     } else if (topSpacing > 0.dp) {
@@ -1850,6 +2011,7 @@ private fun NoteCard(
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 if (note.pinned) {
+                    val pinTint = mintTodoAccent(dark).fg
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1857,13 +2019,13 @@ private fun NoteCard(
                         Icon(
                             imageVector = MintIcons.Pin,
                             contentDescription = null,
-                            tint = scheme.primary,
+                            tint = pinTint,
                             modifier = Modifier.size(12.dp),
                         )
                         Text(
                             text = "已置顶",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = scheme.primary,
+                            color = pinTint,
                         )
                     }
                 }
@@ -1890,31 +2052,6 @@ private fun NoteCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                }
-                if (meta.relativeTime.isNotBlank() || meta.domainLabel != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        if (meta.relativeTime.isNotBlank()) {
-                            Text(
-                                text = meta.relativeTime,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 12.sp,
-                                    fontFeatureSettings = "tnum",
-                                ),
-                                color = scheme.onSurfaceVariant.copy(alpha = 0.78f),
-                                maxLines = 1,
-                            )
-                        }
-                        if (meta.domainLabel != null) {
-                            InlineMetadataTag(
-                                text = meta.domainLabel,
-                                icon = MintIcons.Link,
-                                tint = scheme.primary.copy(alpha = 0.82f),
-                            )
-                        }
-                    }
                 }
             }
             Box {
@@ -1976,30 +2113,50 @@ private fun NoteCard(
             }
         }
 
-        val hasQuietMeta = !notebookName.isNullOrBlank() ||
+        val hasUnifiedMeta = meta.relativeTime.isNotBlank() ||
+            meta.domainLabel != null ||
+            !notebookName.isNullOrBlank() ||
             tagLabels.isNotEmpty() ||
             meta.totalTodos > 0 ||
             meta.mediaTypes.isNotEmpty() ||
             dueBadge != null
-        if (hasQuietMeta) {
+        if (hasUnifiedMeta) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(end = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                if (meta.relativeTime.isNotBlank()) {
+                    Text(
+                        text = meta.relativeTime,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 12.sp,
+                            fontFeatureSettings = "tnum",
+                        ),
+                        color = mintTertiaryTextColor(dark),
+                        maxLines = 1,
+                    )
+                }
                 if (meta.totalTodos > 0) {
                     val allDone = meta.doneTodos == meta.totalTodos
                     InlineMetadataTag(
                         text = "${meta.doneTodos}/${meta.totalTodos}",
                         icon = MintIcons.Checklist,
-                        tint = if (allDone) scheme.onSurfaceVariant else scheme.primary,
+                        tint = if (allDone) mintTertiaryTextColor(dark) else mintTodoAccent(dark).fg,
                     )
                 }
                 if (dueBadge != null) {
                     InlineMetadataTag(
                         text = dueBadge,
                         icon = MintIcons.Bell,
-                        tint = scheme.primary,
+                        tint = mintTodoAccent(dark).fg,
+                    )
+                }
+                if (meta.domainLabel != null) {
+                    InlineMetadataTag(
+                        text = meta.domainLabel,
+                        icon = MintIcons.Link,
+                        tint = mintLinkAccent(dark).fg,
                     )
                 }
                 if (!notebookName.isNullOrBlank()) {
@@ -2013,7 +2170,7 @@ private fun NoteCard(
                     Text(
                         text = "#$tag",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                        color = scheme.primary.copy(alpha = 0.85f),
+                        color = scheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -2022,7 +2179,7 @@ private fun NoteCard(
                     Text(
                         text = "+${tagLabels.size - 2}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = scheme.onSurfaceVariant,
+                        color = mintTertiaryTextColor(dark),
                     )
                 }
                 meta.mediaTypes.take(2).forEach { type ->
@@ -2034,7 +2191,7 @@ private fun NoteCard(
                     Icon(
                         imageVector = mediaIcon,
                         contentDescription = null,
-                        tint = scheme.onSurfaceVariant,
+                        tint = mintTertiaryTextColor(dark),
                         modifier = Modifier.size(13.dp),
                     )
                 }

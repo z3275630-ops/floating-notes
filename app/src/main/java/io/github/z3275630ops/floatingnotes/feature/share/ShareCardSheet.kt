@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -35,6 +36,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDividerColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -153,13 +155,11 @@ internal fun ShareCardSheet(
                 }
             }
 
-            // Rendered image preview strip
+            // Rendered image preview (clean flattened stage)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(mintSecondaryFill(dark))
-                    .padding(12.dp),
+                    .padding(vertical = 2.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 if (rendering && renderedPages.isEmpty()) {
@@ -171,6 +171,19 @@ internal fun ShareCardSheet(
                         MintActivityIndicator()
                         Text("正在本机生成卡片预览…", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                     }
+                } else if (renderedPages.size == 1) {
+                    val page = renderedPages.first()
+                    Image(
+                        bitmap = page.bitmap.asImageBitmap(),
+                        contentDescription = "分享卡片第 ${page.pageIndex} 页",
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 316.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(0.6.dp, mintDividerColor(dark), RoundedCornerShape(16.dp))
+                            .testTag("share-preview-page-${page.pageIndex}"),
+                    )
                 } else {
                     Row(
                         modifier = Modifier
@@ -188,17 +201,16 @@ internal fun ShareCardSheet(
                                     contentDescription = "分享卡片第 ${page.pageIndex} 页",
                                     contentScale = ContentScale.FillWidth,
                                     modifier = Modifier
-                                        .width(248.dp)
+                                        .width(268.dp)
                                         .clip(RoundedCornerShape(16.dp))
+                                        .border(0.6.dp, mintDividerColor(dark), RoundedCornerShape(16.dp))
                                         .testTag("share-preview-page-${page.pageIndex}"),
                                 )
-                                if (renderedPages.size > 1) {
-                                    Text(
-                                        text = "第 ${page.pageIndex} / ${renderedPages.size} 页",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = scheme.onSurfaceVariant,
-                                    )
-                                }
+                                Text(
+                                    text = "第 ${page.pageIndex} / ${renderedPages.size} 页",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = scheme.onSurfaceVariant,
+                                )
                             }
                         }
                     }

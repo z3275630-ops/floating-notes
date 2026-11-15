@@ -72,7 +72,7 @@ internal fun ComposablesSearchField(
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val type = MaterialTheme.typography.bodyMedium
-    val fill = containerColor ?: scheme.surfaceContainerHigh.copy(alpha = 0.85f)
+    val fill = containerColor ?: scheme.surfaceContainerHigh
     BasicTextField(
         state = state,
         modifier = modifier

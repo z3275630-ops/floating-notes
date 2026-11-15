@@ -39,8 +39,8 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
-import io.github.z3275630ops.floatingnotes.ui.designsystem.mintHighlight
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -313,9 +313,9 @@ internal fun NotesDrawer(
 private fun DrawerHeading(title: String) {
     Text(
         text = title,
-        modifier = Modifier.padding(start = 6.dp, top = 4.dp),
-        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 6.dp, top = 6.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.outline,
     )
 }
 
@@ -335,7 +335,7 @@ private fun DrawerRow(
         Modifier
             .padding(horizontal = 6.dp, vertical = 3.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(scheme.primary.copy(alpha = if (dark) 0.18f else 0.10f))
+            .background(scheme.primaryContainer)
     } else {
         Modifier
     }
@@ -359,7 +359,7 @@ private fun DrawerRow(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = scheme.primary,
+            tint = if (selected) scheme.primary else scheme.onSurfaceVariant,
             modifier = Modifier.size(18.dp),
         )
         Text(
@@ -368,23 +368,23 @@ private fun DrawerRow(
             style = MaterialTheme.typography.bodyMedium.copy(
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             ),
-            color = scheme.onSurface,
+            color = if (selected) scheme.onPrimaryContainer else scheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         if (count != null) {
             Text(
                 text = count.toString(),
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                color = if (selected) scheme.primary else scheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                color = if (selected) scheme.primary else mintTertiaryTextColor(dark),
             )
         }
         if (showChevron) {
             Icon(
                 imageVector = MintIcons.ChevronRight,
                 contentDescription = null,
-                tint = scheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.size(14.dp),
+                tint = mintTertiaryTextColor(dark),
+                modifier = Modifier.size(16.dp),
             )
         }
     }

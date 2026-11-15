@@ -43,6 +43,8 @@ import io.github.z3275630ops.floatingnotes.data.discovery.ReviewConfig
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenuItem
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintActivityIndicator
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
@@ -56,8 +58,11 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSegmentedBar
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
+import io.github.z3275630ops.floatingnotes.ui.designsystem.NoteMenuTrigger
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDestructiveColor
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintReviewAccent
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 
 @Composable
@@ -128,9 +133,9 @@ internal fun ExploreScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "知识库 $notesCount 篇 · $linksCount 条关联",
+                text = "$notesCount 篇 · $linksCount 条关联",
                 style = MaterialTheme.typography.labelMedium,
-                color = scheme.onSurfaceVariant,
+                color = mintTertiaryTextColor(dark),
             )
             MintChip(
                 label = "统计与热力图",
@@ -352,21 +357,24 @@ private fun ReviewTabContent(
             val card = cards[idx]
             val expanded = expandedCardId == card.note.id
 
+            var reviewMenu by remember { mutableStateOf(false) }
+            val reviewAccent = mintReviewAccent(dark)
+
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = "今日回顾 · 第 ${idx + 1} / ${cards.size} 篇（第 ${review.session.round} 轮）",
+                    text = "今日回顾 · 第 ${idx + 1}/${cards.size} 篇",
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = scheme.onSurfaceVariant,
+                    color = reviewAccent.fg,
                     modifier = Modifier.testTag("review-progress-label"),
                 )
                 Text(
                     text = "偏好设置",
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = scheme.primary,
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                    color = scheme.onSurfaceVariant,
                     modifier = Modifier
                         .testTag("review-settings-button")
                         .clip(RoundedCornerShape(8.dp))
@@ -397,23 +405,56 @@ private fun ReviewTabContent(
                         Text(
                             text = formatShortDate(card.note.createdAt),
                             style = MaterialTheme.typography.labelMedium,
-                            color = scheme.primary,
+                            color = reviewAccent.fg,
                         )
-                        Text(
-                            text = "跳回原笔记 ›",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = scheme.primary,
-                            modifier = Modifier
-                                .testTag("review-open-source")
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    role = Role.Button,
-                                    onClick = { onOpenNote(card.note.id) },
-                                )
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = "跳回原笔记 ›",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .testTag("review-open-source")
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = { onOpenNote(card.note.id) },
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                            )
+                            Box {
+                                NoteMenuTrigger(
+                                    label = "更多回顾操作",
+                                    tag = "review-more-menu",
+                                ) { reviewMenu = true }
+                                ComposablesMenu(expanded = reviewMenu, onDismiss = { reviewMenu = false }) {
+                                    ComposablesMenuItem("分享卡片", icon = MintIcons.Share) {
+                                        reviewMenu = false
+                                        onShareNote(card.note)
+                                    }
+                                    ComposablesMenuItem("从这里漫步", icon = MintIcons.Explore) {
+                                        reviewMenu = false
+                                        onStartWalkFromNote(card.note.id)
+                                    }
+                                    ComposablesMenuItem("7 天内不再出现", icon = MintIcons.History) {
+                                        reviewMenu = false
+                                        onSuppress7Days(card.note.id)
+                                    }
+                                    ComposablesMenuItem(
+                                        label = "不再出现在回顾中",
+                                        icon = MintIcons.Trash,
+                                        destructive = true,
+                                    ) {
+                                        reviewMenu = false
+                                        onExcludeCard(card.note.id)
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     Text(
@@ -482,7 +523,7 @@ private fun ReviewTabContent(
                             label = "写批注",
                             primary = true,
                             dark = dark,
-                            modifier = Modifier.weight(1f).testTag("review-annotate-button"),
+                            modifier = Modifier.weight(1.25f).testTag("review-annotate-button"),
                             onClick = { annotatingCard = card },
                         )
                         MintPillButton(
@@ -496,111 +537,55 @@ private fun ReviewTabContent(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        MintPillButton(
-                            label = "上一张",
-                            primary = false,
-                            dark = dark,
-                            enabled = idx > 0,
-                            modifier = Modifier.weight(1f),
-                            onClick = { onSelectIndex(idx - 1) },
+                        Text(
+                            text = "‹ 上一张",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                            color = if (idx > 0) scheme.onSurfaceVariant else mintTertiaryTextColor(dark).copy(alpha = 0.45f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(
+                                    enabled = idx > 0,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = { onSelectIndex(idx - 1) },
+                                )
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
                         )
                         if (idx < cards.lastIndex) {
-                            MintPillButton(
-                                label = "下一张",
-                                primary = false,
-                                dark = dark,
-                                modifier = Modifier.weight(1f),
-                                onClick = { onSelectIndex(idx + 1) },
+                            Text(
+                                text = "下一张 ›",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = { onSelectIndex(idx + 1) },
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
                             )
                         } else {
-                            MintPillButton(
-                                label = "再抽一轮",
-                                primary = false,
-                                dark = dark,
-                                modifier = Modifier.weight(1f),
-                                onClick = onStartExtraRound,
+                            Text(
+                                text = "再抽一轮",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = reviewAccent.fg,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = onStartExtraRound,
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
                             )
                         }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "分享卡片",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
-                            color = scheme.primary,
-                            maxLines = 1,
-                            softWrap = false,
-                            modifier = Modifier
-                                .testTag("review-share-card-button")
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    role = Role.Button,
-                                    onClick = { onShareNote(card.note) },
-                                )
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                        )
-                        Text(
-                            text = "从这里漫步",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
-                            color = scheme.primary,
-                            maxLines = 1,
-                            softWrap = false,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    role = Role.Button,
-                                    onClick = { onStartWalkFromNote(card.note.id) },
-                                )
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                        )
-                    }
-
-                    MintGroupedDivider(dark = dark, startIndent = 0.dp)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            text = "7 天内不再出现",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .testTag("review-suppress-button")
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    role = Role.Button,
-                                    onClick = { onSuppress7Days(card.note.id) },
-                                )
-                                .padding(vertical = 6.dp, horizontal = 4.dp),
-                        )
-                        Text(
-                            text = "不再出现在回顾中",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = mintDestructiveColor(dark),
-                            modifier = Modifier
-                                .testTag("review-exclude-button")
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    role = Role.Button,
-                                    onClick = { onExcludeCard(card.note.id) },
-                                )
-                                .padding(vertical = 6.dp, horizontal = 4.dp),
-                        )
                     }
                 }
             }

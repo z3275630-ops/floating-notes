@@ -120,13 +120,13 @@ internal fun TrashView(
                         Icon(
                             imageVector = MintIcons.Menu,
                             contentDescription = "打开笔记导航",
-                            tint = scheme.primary,
+                            tint = scheme.onSurfaceVariant,
                             modifier = Modifier.size(18.dp),
                         )
                         Text(
                             text = "文件夹",
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                            color = scheme.primary,
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                            color = scheme.onSurfaceVariant,
                         )
                     }
                     if (trashedNotes.isNotEmpty()) {
@@ -148,11 +148,7 @@ internal fun TrashView(
                 }
                 Text(
                     text = "最近删除",
-                    style = MaterialTheme.typography.headlineLarge.copy(
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.5).sp,
-                    ),
+                    style = MaterialTheme.typography.displayLarge,
                     color = scheme.onSurface,
                 )
                 Text(

@@ -119,9 +119,9 @@ internal fun LibrarySearchControls(
                 contentDescription = "筛选",
                 dark = dark,
                 icon = MintIcons.Filter,
-                tint = if (active) scheme.onPrimaryContainer else scheme.onSurface,
+                tint = if (active) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
                 containerColor = if (active) {
-                    if (dark) Color(0xFF23523E) else Color(0xFFD7F2E4)
+                    scheme.primaryContainer
                 } else {
                     mintSecondaryFill(dark)
                 },
@@ -133,6 +133,7 @@ internal fun LibrarySearchControls(
                         contentDescription = "更多搜索操作",
                         dark = dark,
                         icon = MintIcons.More,
+                        tint = scheme.onSurfaceVariant,
                         containerColor = mintSecondaryFill(dark),
                     )
                     ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {

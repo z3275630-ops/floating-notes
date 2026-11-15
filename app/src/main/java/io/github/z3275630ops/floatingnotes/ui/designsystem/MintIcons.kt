@@ -52,79 +52,82 @@ internal object MintIcons {
     }
 
     val Check: ImageVector by lazy {
-        strokeIcon("MintCheck", strokeWidth = 2.2f) {
-            moveTo(5.5f, 12.5f); lineTo(10f, 17f); lineTo(18.5f, 7.5f)
+        strokeIcon("MintCheck") {
+            moveTo(5.5f, 12.5f); lineTo(10f, 17f); lineTo(18.5f, 7f)
         }
     }
 
     val ChevronRight: ImageVector by lazy {
-        strokeIcon("MintChevronRight") {
+        strokeIcon("MintChevronRight", strokeWidth = 1.6f) {
             moveTo(9.5f, 6.5f); lineTo(15f, 12f); lineTo(9.5f, 17.5f)
         }
     }
 
     val ChevronDown: ImageVector by lazy {
-        strokeIcon("MintChevronDown") {
+        strokeIcon("MintChevronDown", strokeWidth = 1.6f) {
             moveTo(6.5f, 9.5f); lineTo(12f, 15f); lineTo(17.5f, 9.5f)
         }
     }
 
     val Records: ImageVector by lazy {
         strokeIcon("MintRecords") {
-            roundedRect(4.5f, 3.5f, 19.5f, 20.5f, 3f)
-            moveTo(8f, 8.5f); horizontalLineTo(16f)
-            moveTo(8f, 12.5f); horizontalLineTo(16f)
-            moveTo(8f, 16.5f); horizontalLineTo(13f)
+            roundedRect(4.5f, 4f, 16.5f, 20f, 2f)
+            moveTo(3.5f, 8f); horizontalLineTo(5.5f)
+            moveTo(3.5f, 12f); horizontalLineTo(5.5f)
+            moveTo(3.5f, 16f); horizontalLineTo(5.5f)
+            moveTo(8.5f, 9f); horizontalLineTo(13.5f)
+            moveTo(8.5f, 13f); horizontalLineTo(12.5f)
+            moveTo(15f, 15.5f); lineTo(20.5f, 10f); lineTo(18.5f, 8f); lineTo(13f, 13.5f); close()
         }
     }
 
     val Explore: ImageVector by lazy {
         strokeIcon("MintExplore") {
-            moveTo(12f, 3.5f)
-            lineTo(14.1f, 9.9f)
-            lineTo(20.5f, 12f)
-            lineTo(14.1f, 14.1f)
-            lineTo(12f, 20.5f)
-            lineTo(9.9f, 14.1f)
-            lineTo(3.5f, 12f)
-            lineTo(9.9f, 9.9f)
+            circle(12f, 12f, 8.5f)
+            moveTo(15.2f, 8.8f)
+            lineTo(13.5f, 13.5f)
+            lineTo(8.8f, 15.2f)
+            lineTo(10.5f, 10.5f)
             close()
         }
     }
 
-    val Agent: ImageVector by lazy {
-        strokeIcon("MintAgent") {
-            roundedRect(4f, 4.5f, 20f, 17.5f, 4.5f)
-            moveTo(9.5f, 17.5f); lineTo(7.5f, 20.5f); lineTo(13f, 17.5f)
-            moveTo(9f, 10.5f); horizontalLineTo(9.05f)
-            moveTo(12f, 10.5f); horizontalLineTo(12.05f)
-            moveTo(15f, 10.5f); horizontalLineTo(15.05f)
+    val Sparkles: ImageVector by lazy {
+        strokeIcon("MintSparkles") {
+            moveTo(12f, 3.8f)
+            lineTo(14f, 10f)
+            lineTo(20.2f, 12f)
+            lineTo(14f, 14f)
+            lineTo(12f, 20.2f)
+            lineTo(10f, 14f)
+            lineTo(3.8f, 12f)
+            lineTo(10f, 10f)
+            close()
         }
     }
 
+    val Agent: ImageVector by lazy { Sparkles }
+
     val Library: ImageVector by lazy {
         strokeIcon("MintLibrary") {
-            roundedRect(4f, 4.5f, 9f, 19.5f, 1.5f)
-            roundedRect(10f, 6f, 15f, 19.5f, 1.5f)
-            moveTo(16.5f, 5.5f); lineTo(20.5f, 19f)
+            roundedRect(4.5f, 5.5f, 8.8f, 19.5f, 1.5f)
+            roundedRect(9.8f, 4f, 14.2f, 19.5f, 1.5f)
+            roundedRect(15.2f, 7f, 19.5f, 19.5f, 1.5f)
         }
     }
 
     val Checklist: ImageVector by lazy {
         strokeIcon("MintChecklist") {
-            roundedRect(4f, 4.5f, 10f, 10.5f, 2f)
-            moveTo(5.6f, 7.6f); lineTo(7f, 9f); lineTo(8.8f, 6.6f)
-            moveTo(13f, 7.5f); horizontalLineTo(20f)
-            roundedRect(4f, 13.5f, 10f, 19.5f, 2f)
-            moveTo(13f, 16.5f); horizontalLineTo(20f)
+            roundedRect(4.5f, 4.5f, 19.5f, 19.5f, 3f)
+            moveTo(8.5f, 12f); lineTo(11f, 14.5f); lineTo(15.5f, 9.5f)
         }
     }
 
     val Pin: ImageVector by lazy {
         strokeIcon("MintPin") {
-            moveTo(14.5f, 4f); lineTo(20f, 9.5f)
-            moveTo(15.5f, 5f); lineTo(10.5f, 10f); lineTo(6.5f, 10.5f); lineTo(13.5f, 17.5f); lineTo(14f, 13.5f); lineTo(19f, 8.5f)
-            moveTo(10f, 14f); lineTo(4.5f, 19.5f)
+            moveTo(8f, 4.5f); horizontalLineTo(16f)
+            moveTo(9.5f, 4.5f); verticalLineTo(10.5f); lineTo(6.5f, 14f); horizontalLineTo(17.5f); lineTo(14.5f, 10.5f); verticalLineTo(4.5f)
+            moveTo(12f, 14f); verticalLineTo(20.5f)
         }
     }
 
@@ -304,14 +307,76 @@ internal object MintIcons {
         }
     }
 
+    val AtSign: ImageVector by lazy {
+        strokeIcon("MintAtSign") {
+            circle(12f, 12f, 3.6f)
+            moveTo(15.6f, 10.5f); verticalLineTo(13.5f)
+            curveTo(15.6f, 15.1f, 17.2f, 16f, 18.6f, 15.2f)
+            curveTo(19.6f, 14.5f, 20f, 13.3f, 20f, 12f)
+            curveTo(20f, 7.6f, 16.4f, 4f, 12f, 4f)
+            curveTo(7.6f, 4f, 4f, 7.6f, 4f, 12f)
+            curveTo(4f, 16.4f, 7.6f, 20f, 12f, 20f)
+            curveTo(14f, 20f, 15.8f, 19.3f, 17.2f, 18.1f)
+        }
+    }
+
+    val Paperclip: ImageVector by lazy {
+        strokeIcon("MintPaperclip") {
+            moveTo(18.8f, 11.2f); lineTo(10.8f, 19.2f)
+            curveTo(8.8f, 21.2f, 5.6f, 21.2f, 3.6f, 19.2f)
+            curveTo(1.6f, 17.2f, 1.6f, 14f, 3.6f, 12f)
+            lineTo(12.2f, 3.4f)
+            curveTo(13.5f, 2.1f, 15.7f, 2.1f, 17f, 3.4f)
+            curveTo(18.3f, 4.7f, 18.3f, 6.9f, 17f, 8.2f)
+            lineTo(8.8f, 16.4f)
+            curveTo(8.1f, 17.1f, 7f, 17.1f, 6.3f, 16.4f)
+            curveTo(5.6f, 15.7f, 5.6f, 14.6f, 6.3f, 13.9f)
+            lineTo(13.6f, 6.6f)
+        }
+    }
+
+    val Refresh: ImageVector by lazy {
+        strokeIcon("MintRefresh") {
+            moveTo(19.5f, 12f)
+            curveTo(19.5f, 16.1f, 16.1f, 19.5f, 12f, 19.5f)
+            curveTo(7.9f, 19.5f, 4.5f, 16.1f, 4.5f, 12f)
+            curveTo(4.5f, 7.9f, 7.9f, 4.5f, 12f, 4.5f)
+            curveTo(14.5f, 4.5f, 16.8f, 5.8f, 18.2f, 7.7f)
+            moveTo(19.5f, 4.5f); verticalLineTo(8.5f); horizontalLineTo(15.5f)
+        }
+    }
+
+    val FileDown: ImageVector by lazy {
+        strokeIcon("MintFileDown") {
+            moveTo(14f, 4f); horizontalLineTo(7f); curveTo(5.9f, 4f, 5f, 4.9f, 5f, 6f)
+            verticalLineTo(18f); curveTo(5f, 19.1f, 5.9f, 20f, 7f, 20f); horizontalLineTo(17f)
+            curveTo(18.1f, 20f, 19f, 19.1f, 19f, 18f); verticalLineTo(9f); lineTo(14f, 4f)
+            moveTo(14f, 4f); verticalLineTo(9f); horizontalLineTo(19f)
+            moveTo(12f, 11.5f); verticalLineTo(17f)
+            moveTo(9.5f, 14.5f); lineTo(12f, 17f); lineTo(14.5f, 14.5f)
+        }
+    }
+
+    val Lock: ImageVector by lazy {
+        strokeIcon("MintLock") {
+            roundedRect(5f, 11f, 19f, 20f, 2f)
+            moveTo(8f, 11f); verticalLineTo(8f)
+            curveTo(8f, 5.8f, 9.8f, 4f, 12f, 4f)
+            curveTo(14.2f, 4f, 16f, 5.8f, 16f, 8f); verticalLineTo(11f)
+        }
+    }
+
     val Settings: ImageVector by lazy {
         strokeIcon("MintSettings") {
-            moveTo(4.5f, 7.5f); horizontalLineTo(19.5f)
-            moveTo(4.5f, 12f); horizontalLineTo(19.5f)
-            moveTo(4.5f, 16.5f); horizontalLineTo(19.5f)
-            circle(8.5f, 7.5f, 1.8f)
-            circle(15.5f, 12f, 1.8f)
-            circle(10.5f, 16.5f, 1.8f)
+            moveTo(4.5f, 7.5f); horizontalLineTo(7f)
+            moveTo(11f, 7.5f); horizontalLineTo(19.5f)
+            circle(9f, 7.5f, 2f)
+            moveTo(4.5f, 12f); horizontalLineTo(13f)
+            moveTo(17f, 12f); horizontalLineTo(19.5f)
+            circle(15f, 12f, 2f)
+            moveTo(4.5f, 16.5f); horizontalLineTo(8.5f)
+            moveTo(12.5f, 16.5f); horizontalLineTo(19.5f)
+            circle(10.5f, 16.5f, 2f)
         }
     }
 
@@ -328,9 +393,9 @@ internal object MintIcons {
     val Chart: ImageVector by lazy {
         strokeIcon("MintChart") {
             moveTo(4.5f, 19.5f); horizontalLineTo(19.5f)
-            moveTo(7.5f, 19.5f); verticalLineTo(13f)
+            moveTo(8f, 19.5f); verticalLineTo(13.5f)
             moveTo(12f, 19.5f); verticalLineTo(7f)
-            moveTo(16.5f, 19.5f); verticalLineTo(10f)
+            moveTo(16f, 19.5f); verticalLineTo(10.5f)
         }
     }
 
@@ -346,7 +411,7 @@ internal object MintIcons {
 
     private fun strokeIcon(
         name: String,
-        strokeWidth: Float = 1.85f,
+        strokeWidth: Float = 1.75f,
         block: PathBuilder.() -> Unit,
     ): ImageVector = ImageVector.Builder(
         name = name,

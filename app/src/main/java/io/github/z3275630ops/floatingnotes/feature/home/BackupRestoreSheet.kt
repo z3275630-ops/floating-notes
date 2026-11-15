@@ -253,7 +253,7 @@ internal fun BackupRestoreSheet(
                 MintGroupedRow(
                     label = "导出 Markdown 压缩包",
                     subtitle = "导出通用可读 .md 与附件文件，适用于迁移或阅读归档",
-                    leadingIcon = MintIcons.Library,
+                    leadingIcon = MintIcons.FileDown,
                     showChevron = true,
                     enabled = !state.busy,
                     dark = dark,

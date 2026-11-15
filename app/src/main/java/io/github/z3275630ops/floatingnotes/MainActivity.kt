@@ -33,6 +33,7 @@ import io.github.z3275630ops.floatingnotes.feature.tasks.TasksScreen
 import io.github.z3275630ops.floatingnotes.feature.widget.WidgetContract
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintColorScheme
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTypography
 import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
 
 private enum class Lab { Material, Input }
@@ -172,5 +173,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun FloatingNotesTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    MaterialTheme(colorScheme = mintColorScheme(dark), content = content)
+    MaterialTheme(
+        colorScheme = mintColorScheme(dark),
+        typography = mintTypography(),
+        content = content,
+    )
 }
