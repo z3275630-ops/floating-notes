@@ -107,15 +107,15 @@ fun GlassSurface(
     val tint = if (dark) {
         if (elevatedModal) Color(0xFF15231C) else MaterialTheme.colorScheme.surface
     } else {
-        if (elevatedModal) Color(0xFFFAFDF9) else Color(0xFFF6FAF5)
+        if (elevatedModal) Color(0xFFFCFDFC) else Color(0xFFF8FBF9)
     }
     val alpha = when (effective) {
-        GlassTier.Reduced -> if (elevatedModal) 1f else .96f
+        GlassTier.Reduced -> if (elevatedModal) 1f else .98f
         GlassTier.Standard -> if (elevatedModal) (if (dark) .92f else .90f) else (if (dark) .84f else .78f)
         GlassTier.Enhanced -> if (elevatedModal) (if (dark) .90f else .84f) else (if (dark) .80f else .58f)
     }
-    val elevation = if (!showShadow) 0.dp else if (elevatedModal) 12.dp else 6.dp
-    val shadowTint = if (dark) Color(0x55040A07) else Color(0x18126543)
+    val elevation = if (!showShadow) 0.dp else if (elevatedModal) 10.dp else 4.dp
+    val shadowTint = if (dark) Color(0x44040A07) else Color(0x10126543)
     Box(
         modifier
             .then(
@@ -142,22 +142,37 @@ fun GlassSurface(
             colors = listOf(tint.copy(alpha = if (effective == GlassTier.Reduced) 1f else alpha), tint),
             endY = with(density) { sampleTopHeight.toPx() },
         ))
+        val specularTopAlpha = if (effective == GlassTier.Reduced) (if (dark) .02f else .06f) else (if (dark) .05f else .18f)
+        val specularBottomAlpha = if (effective == GlassTier.Reduced) (if (dark) .02f else .03f) else (if (dark) .06f else .10f)
+        val borderModifier = if (!showBorder) {
+            Modifier
+        } else if (effective == GlassTier.Reduced) {
+            Modifier.border(
+                width = 0.6.dp,
+                color = if (dark) Color(0xFF95E5B9).copy(alpha = 0.14f) else Color(0xFF1E5037).copy(alpha = 0.09f),
+                shape = shape,
+            )
+        } else {
+            Modifier.border(
+                0.8.dp,
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = if (dark) .22f else .86f),
+                        Color(0xFFD5EDE0).copy(alpha = if (dark) .06f else .28f),
+                        Color(0xFF3A8567).copy(alpha = if (dark) .22f else .16f),
+                    ),
+                ),
+                shape,
+            )
+        }
         Box(
             Modifier.matchParentSize().then(surface)
                 .background(Brush.verticalGradient(listOf(
-                    Color.White.copy(alpha = if (dark) .05f else .18f),
+                    Color.White.copy(alpha = specularTopAlpha),
                     Color.Transparent,
-                    Color(0xFF92DFC2).copy(alpha = if (dark) .06f else .10f),
+                    Color(0xFF92DFC2).copy(alpha = specularBottomAlpha),
                 )))
-                .then(
-                    if (showBorder) {
-                        Modifier.border(0.8.dp, Brush.verticalGradient(listOf(
-                            Color.White.copy(alpha = if (dark) .22f else .86f),
-                            Color(0xFFD5EDE0).copy(alpha = if (dark) .06f else .28f),
-                            Color(0xFF3A8567).copy(alpha = if (dark) .22f else .16f),
-                        )), shape)
-                    } else Modifier
-                )
+                .then(borderModifier)
         )
         content()
     }

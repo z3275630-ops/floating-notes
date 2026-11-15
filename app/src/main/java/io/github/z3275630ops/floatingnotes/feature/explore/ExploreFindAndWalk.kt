@@ -463,16 +463,25 @@ internal fun WalkTabContent(
     val walk = state.walk
     var showMemoSheet by remember { mutableStateOf(false) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        MintSegmentedBar(
-            options = WalkMode.entries.map { it.label },
-            selectedIndex = if (state.walkMode == WalkMode.Single) 0 else 1,
-            onSelect = { idx ->
-                onSelectWalkMode(if (idx == 0) WalkMode.Single else WalkMode.Dual)
-            },
-            dark = dark,
-            optionTags = listOf("walk-mode-single", "walk-mode-dual"),
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            WalkMode.entries.forEach { mode ->
+                val selected = state.walkMode == mode
+                MintChip(
+                    label = mode.label,
+                    selected = selected,
+                    style = if (selected) MintChipStyle.Selected else MintChipStyle.Standard,
+                    dark = dark,
+                    role = Role.Tab,
+                    modifier = Modifier.testTag(if (mode == WalkMode.Single) "walk-mode-single" else "walk-mode-dual"),
+                    onClick = { onSelectWalkMode(mode) },
+                )
+            }
+        }
 
         if (state.walkMode == WalkMode.Dual) {
             DualWalkContent(

@@ -2,8 +2,14 @@ package io.github.z3275630ops.floatingnotes.feature.home
 
 import android.os.Build
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -87,6 +93,7 @@ private enum class RecordFilter(val label: String) {
 private data class NoteCardMeta(
     val title: String,
     val preview: String,
+    val domainLabel: String? = null,
     val media: List<NoteBlock>,
     val mediaTypes: Set<String>,
     val doneTodos: Int,
@@ -578,7 +585,20 @@ internal fun NotesShell(
                         onOpenBackupExport = { showBackupSheet = true },
                     )
                 } else {
-                    Crossfade(page, label = "home-page") { current ->
+                    val tabAnimEnabled = mintAnimatorsEnabled()
+                    AnimatedContent(
+                        targetState = page,
+                        transitionSpec = {
+                            if (!tabAnimEnabled) {
+                                fadeIn(snap()) togetherWith fadeOut(snap())
+                            } else {
+                                (fadeIn(tween(150, delayMillis = 75)) +
+                                    slideInVertically(tween(150, delayMillis = 75)) { (it * 0.015f).toInt() }) togetherWith
+                                    fadeOut(tween(75))
+                            }
+                        },
+                        label = "home-page",
+                    ) { current ->
                         if (current == Page.Library) {
                             val visible = if (librarySearching) {
                                 libraryResults.orEmpty().take(libraryLimit)
@@ -650,7 +670,7 @@ internal fun NotesShell(
                                         .weight(1f)
                                         .fillMaxWidth()
                                         .testTag("library-list"),
-                                    contentPadding = PaddingValues(top = 10.dp, bottom = 104.dp),
+                                    contentPadding = PaddingValues(top = 10.dp, bottom = 116.dp),
                                 ) {
                                     if (!librarySearching) {
                                         item("org_panel") {
@@ -766,7 +786,7 @@ internal fun NotesShell(
                                         WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
                                     )
                                     .navigationBarsPadding(),
-                                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 0.dp, bottom = 104.dp),
+                                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 0.dp, bottom = 116.dp),
                             ) {
                                 item("shell_header") {
                                     val headerTitle = if (current == Page.Record) {
@@ -1005,18 +1025,18 @@ internal fun NotesShell(
 
                 val imeVisibleForScrim = WindowInsets.ime.getBottom(LocalDensity.current) > 0
                 if (!motion.visible && !drawer.isOpen && !showTasksOverlay && !showTrash && !imeVisibleForScrim) {
-                    val canvasTint = if (dark) Color(0xFF0D1914) else Color(0xFFF4F8F2)
+                    val canvasTint = if (dark) Color(0xFF101F1B) else Color(0xFFF3F8F4)
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(96.dp)
+                            .height(108.dp)
                             .background(
                                 Brush.verticalGradient(
                                     listOf(
                                         Color.Transparent,
-                                        canvasTint.copy(alpha = 0.78f),
-                                        canvasTint.copy(alpha = 0.96f),
+                                        canvasTint.copy(alpha = 0.88f),
+                                        canvasTint,
                                     ),
                                 ),
                             ),
@@ -1440,7 +1460,7 @@ private fun ShellTopHeader(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Icon(
-                    imageVector = MintIcons.Back,
+                    imageVector = MintIcons.Menu,
                     contentDescription = null,
                     tint = scheme.primary,
                     modifier = Modifier.size(18.dp),
@@ -1850,6 +1870,8 @@ private fun NoteCard(
                 Text(
                     text = meta.title,
                     style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 16.sp,
+                        lineHeight = 22.sp,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = (-0.15).sp,
                     ),
@@ -1857,7 +1879,19 @@ private fun NoteCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (meta.relativeTime.isNotBlank() || meta.preview.isNotBlank()) {
+                if (meta.preview.isNotBlank()) {
+                    Text(
+                        text = meta.preview,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                        ),
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (meta.relativeTime.isNotBlank() || meta.domainLabel != null) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1865,19 +1899,19 @@ private fun NoteCard(
                         if (meta.relativeTime.isNotBlank()) {
                             Text(
                                 text = meta.relativeTime,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = scheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 12.sp,
+                                    fontFeatureSettings = "tnum",
+                                ),
+                                color = scheme.onSurfaceVariant.copy(alpha = 0.78f),
                                 maxLines = 1,
                             )
                         }
-                        if (meta.preview.isNotBlank()) {
-                            Text(
-                                text = meta.preview,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = scheme.onSurfaceVariant.copy(alpha = 0.85f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
+                        if (meta.domainLabel != null) {
+                            InlineMetadataTag(
+                                text = meta.domainLabel,
+                                icon = MintIcons.Link,
+                                tint = scheme.primary.copy(alpha = 0.82f),
                             )
                         }
                     }
@@ -2205,24 +2239,37 @@ private fun deriveNoteCardMeta(note: NoteEntity): NoteCardMeta {
     }
 
     val explicitTitle = note.title?.trim()?.takeIf { it.isNotEmpty() }
-    val title: String
-    val preview: String
+    val rawTitle: String
+    val rawPreview: String
     if (explicitTitle != null) {
-        title = explicitTitle
+        rawTitle = explicitTitle
         val rest = if (rawLines.firstOrNull() == explicitTitle) rawLines.drop(1) else rawLines
-        preview = rest.joinToString(" · ")
+        rawPreview = rest.joinToString(" · ")
     } else if (rawLines.isNotEmpty()) {
-        title = rawLines.first()
-        preview = rawLines.drop(1).joinToString(" · ")
+        rawTitle = rawLines.first()
+        rawPreview = rawLines.drop(1).joinToString(" · ")
     } else {
-        title = note.searchText.trim().ifBlank { if (media.isEmpty()) "笔记" else "媒体笔记" }
-        preview = ""
+        rawTitle = note.searchText.trim().ifBlank { if (media.isEmpty()) "笔记" else "媒体笔记" }
+        rawPreview = ""
     }
+
+    val urlRegex = Regex("""https?://[^\s]+""")
+    val matchedUrl = urlRegex.find(rawTitle)?.value
+        ?: urlRegex.find(rawPreview)?.value
+        ?: note.sourceUrl?.trim()?.takeIf { it.startsWith("http") }
+    val domainLabel = matchedUrl?.let { raw ->
+        runCatching {
+            java.net.URI(raw).host?.removePrefix("www.")?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
+    val cleanedTitle = rawTitle.replace(urlRegex, "").trim().ifBlank { domainLabel ?: rawTitle }
+    val cleanedPreview = rawPreview.replace(urlRegex, "").replace(Regex("""^\s*·\s*|\s*·\s*$"""), "").trim()
 
     val relativeTime = formatRelativeTimestamp(note.updatedAt.ifBlank { note.createdAt })
     return NoteCardMeta(
-        title = title,
-        preview = preview,
+        title = cleanedTitle,
+        preview = cleanedPreview,
+        domainLabel = domainLabel,
         media = media,
         mediaTypes = mediaTypes,
         doneTodos = doneTodos,

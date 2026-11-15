@@ -178,7 +178,7 @@ class M4StatsShareWidgetTest {
             // Switch template and toggle optional source metadata
             compose.onNodeWithTag("share-template-Minimal").performScrollTo().performClick()
             compose.onNodeWithTag("share-include-source-toggle").performScrollTo().performClick()
-            compose.onNodeWithTag("share-open-system-chooser").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("share-open-system-chooser").assertIsDisplayed()
             // Ensure status text does NOT falsely claim share succeeded before chooser finishes (Q055)
             compose.onNodeWithTag("share-status-text").assertDoesNotExist()
         }

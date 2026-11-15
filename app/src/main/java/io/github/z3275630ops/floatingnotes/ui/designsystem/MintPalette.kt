@@ -61,16 +61,16 @@ internal fun mintColorScheme(dark: Boolean) = if (dark) darkColorScheme(
 )
 
 internal fun Modifier.mintAmbient(dark: Boolean): Modifier = drawWithCache {
-    val base = if (dark) Color(0xFF101F1B) else Color(0xFFF5FAF4)
+    val base = if (dark) Color(0xFF101F1B) else Color(0xFFF3F8F4)
     val radius = maxOf(size.width, size.height)
     fun halo(color: Color, x: Float, y: Float, spread: Float) = Brush.radialGradient(
         listOf(color, color.copy(alpha = 0f)),
         center = Offset(size.width * x, size.height * y),
         radius = (radius * spread).coerceAtLeast(1f),
     )
-    val mint = halo(if (dark) Color(0xFF2B5145) else Color(0xFFC3E9D6), .12f, .08f, .67f)
-    val sprout = halo(if (dark) Color(0xFF35432D) else Color(0xFFE3EFC8), .92f, .78f, .55f)
-    val pearl = halo(if (dark) Color(0xFF25413B) else Color(0xFFE0F1EC), .03f, .85f, .48f)
+    val mint = halo(if (dark) Color(0xFF2B5145) else Color(0xFFD2EFE0), .12f, .08f, .67f)
+    val sprout = halo(if (dark) Color(0xFF35432D) else Color(0xFFE9F2D4), .92f, .78f, .55f)
+    val pearl = halo(if (dark) Color(0xFF25413B) else Color(0xFFE6F3EF), .03f, .85f, .48f)
     onDrawBehind {
         drawRect(base)
         drawRect(mint)
@@ -85,7 +85,7 @@ internal fun mintHighlight(dark: Boolean) = Brush.horizontalGradient(
 )
 
 internal fun mintCardSurface(dark: Boolean): Color =
-    if (dark) Color(0xFF182720) else Color(0xFFFAFDF9)
+    if (dark) Color(0xFF182720) else Color(0xFFFCFDFC)
 
 internal fun mintElevatedSurface(dark: Boolean): Color =
     if (dark) Color(0xFF1F3229) else Color(0xFFFFFFFF)

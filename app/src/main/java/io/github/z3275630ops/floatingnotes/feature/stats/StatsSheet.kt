@@ -95,7 +95,7 @@ internal fun StatsSheet(
         backdrop = backdrop,
         modifier = Modifier.testTag("stats-sheet"),
         title = "记录统计与热力图",
-        subtitle = "按个人时区口径统计 · 区分手写、导入与本机整理",
+        subtitle = "按个人时区统计 · 区分手写与导入",
         leadingLabel = "关闭",
         onLeadingClick = onDismiss,
         maxHeightFraction = 0.86f,

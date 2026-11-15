@@ -3,8 +3,10 @@ package io.github.z3275630ops.floatingnotes.feature.agent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -244,9 +246,12 @@ internal fun AgentWorkspace(
                     }
                 }
 
-                FlowRow(
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     AgentTimeRange.entries.forEach { range ->
                         MintChip(
@@ -257,8 +262,9 @@ internal fun AgentWorkspace(
                         )
                     }
                     tags.take(4).forEach { tag ->
+                        val shortName = if (tag.name.length > 9) tag.name.take(8) + "…" else tag.name
                         MintChip(
-                            label = "#${tag.name}",
+                            label = "#$shortName",
                             selected = state.selectedTagId == tag.id,
                             dark = dark,
                             onClick = {

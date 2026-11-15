@@ -333,9 +333,9 @@ private fun DrawerRow(
     val scheme = MaterialTheme.colorScheme
     val highlight = if (selected) {
         Modifier
-            .padding(horizontal = 4.dp, vertical = 3.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(mintHighlight(dark))
+            .padding(horizontal = 6.dp, vertical = 3.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(scheme.primary.copy(alpha = if (dark) 0.18f else 0.10f))
     } else {
         Modifier
     }

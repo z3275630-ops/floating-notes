@@ -408,10 +408,10 @@ internal fun ColumnScope.NoteEditor(
                                     color = scheme.onSurface,
                                     textDecoration = if (block.checked) TextDecoration.LineThrough else null,
                                 )
-                                isHeroTitle -> MaterialTheme.typography.titleLarge.copy(
-                                    fontSize = 21.sp,
-                                    lineHeight = 29.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                isHeroTitle -> MaterialTheme.typography.titleMedium.copy(
+                                    fontSize = 18.sp,
+                                    lineHeight = 26.sp,
+                                    fontWeight = FontWeight.Medium,
                                     color = scheme.onSurface,
                                     textDecoration = if (block.checked) TextDecoration.LineThrough else null,
                                 )
@@ -442,10 +442,7 @@ internal fun ColumnScope.NoteEditor(
                                         if (block.text.text.isEmpty()) {
                                             val placeholder = when {
                                                 block.type == "checkbox" -> "待办事项"
-                                                index == 0 && session.blocks.size == 1 -> {
-                                                    if (isHeroTitle) "写下标题或想法…（支持 #标签、@引用）"
-                                                    else "写下一个想法…（支持 #标签、@引用）"
-                                                }
+                                                index == 0 && session.blocks.size == 1 -> "写点什么…  #标签 @引用"
                                                 else -> ""
                                             }
                                             if (placeholder.isNotEmpty()) {
@@ -550,7 +547,16 @@ internal fun ColumnScope.NoteEditor(
                     },
                 )
                 .testTag("editor-blank-canvas"),
-        )
+        ) {
+            if (session.existingNote && session.blocks.size == 1 && session.blocks.first().text.text.isNotBlank()) {
+                Text(
+                    text = "轻点此处继续书写正文…",
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp),
+                    color = scheme.onSurfaceVariant.copy(alpha = 0.42f),
+                    modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                )
+            }
+        }
     }
 
     val activeBlock = session.blocks.firstOrNull { it.id == focusedBlockId && it.editable }

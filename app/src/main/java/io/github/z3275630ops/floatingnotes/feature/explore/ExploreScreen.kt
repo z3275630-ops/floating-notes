@@ -504,6 +504,7 @@ private fun ReviewTabContent(
                             primary = false,
                             dark = dark,
                             enabled = idx > 0,
+                            modifier = Modifier.weight(1f),
                             onClick = { onSelectIndex(idx - 1) },
                         )
                         if (idx < cards.lastIndex) {
@@ -511,6 +512,7 @@ private fun ReviewTabContent(
                                 label = "下一张",
                                 primary = false,
                                 dark = dark,
+                                modifier = Modifier.weight(1f),
                                 onClick = { onSelectIndex(idx + 1) },
                             )
                         } else {
@@ -518,14 +520,23 @@ private fun ReviewTabContent(
                                 label = "再抽一轮",
                                 primary = false,
                                 dark = dark,
+                                modifier = Modifier.weight(1f),
                                 onClick = onStartExtraRound,
                             )
                         }
-                        Spacer(Modifier.weight(1f))
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
                             text = "分享卡片",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
                             color = scheme.primary,
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier
                                 .testTag("review-share-card-button")
                                 .clip(RoundedCornerShape(8.dp))
@@ -535,12 +546,14 @@ private fun ReviewTabContent(
                                     role = Role.Button,
                                     onClick = { onShareNote(card.note) },
                                 )
-                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
                         )
                         Text(
                             text = "从这里漫步",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
                             color = scheme.primary,
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable(
@@ -549,7 +562,7 @@ private fun ReviewTabContent(
                                     role = Role.Button,
                                     onClick = { onStartWalkFromNote(card.note.id) },
                                 )
-                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
                         )
                     }
 

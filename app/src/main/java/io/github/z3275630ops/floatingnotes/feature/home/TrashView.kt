@@ -118,7 +118,7 @@ internal fun TrashView(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Icon(
-                            imageVector = MintIcons.Back,
+                            imageVector = MintIcons.Menu,
                             contentDescription = "打开笔记导航",
                             tint = scheme.primary,
                             modifier = Modifier.size(18.dp),

@@ -117,11 +117,18 @@ internal fun MintGroupedSection(
     containerColor: Color = mintCardSurface(dark),
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val shape = RoundedCornerShape(shapeRadius)
+    val hairline = if (dark) {
+        Color(0xFF95E5B9).copy(alpha = 0.10f)
+    } else {
+        Color(0xFF1E5037).copy(alpha = 0.08f)
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(shapeRadius))
-            .background(containerColor),
+            .clip(shape)
+            .background(containerColor, shape)
+            .border(0.5.dp, hairline, shape),
         content = content,
     )
 }
@@ -287,7 +294,7 @@ internal fun MintBottomSheet(
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .background(Color.Black.copy(alpha = if (dark) 0.44f else 0.24f))
+                    .background(Color.Black.copy(alpha = if (dark) 0.48f else 0.28f))
                     .then(
                         if (dismissOnClickOutside) {
                             Modifier.clickable(
@@ -303,8 +310,8 @@ internal fun MintBottomSheet(
                 backdrop = backdrop,
                 tier = GlassTier.Reduced,
                 dark = dark,
-                shapeRadius = 28.dp,
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                shapeRadius = 22.dp,
+                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
                 elevatedModal = true,
                 modifier = modifier
                     .align(Alignment.BottomCenter)
@@ -333,7 +340,7 @@ internal fun MintBottomSheet(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(0.85f),
                             contentAlignment = Alignment.CenterStart,
                         ) {
                             if (!leadingLabel.isNullOrBlank()) {
@@ -351,7 +358,7 @@ internal fun MintBottomSheet(
                             }
                         }
                         Column(
-                            modifier = Modifier.weight(1.8f),
+                            modifier = Modifier.weight(2.2f),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
@@ -371,14 +378,14 @@ internal fun MintBottomSheet(
                                     text = subtitle,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = scheme.onSurfaceVariant,
-                                    maxLines = 2,
+                                    maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     textAlign = TextAlign.Center,
                                 )
                             }
                         }
                         Box(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(0.85f),
                             contentAlignment = Alignment.CenterEnd,
                         ) {
                             if (!trailingLabel.isNullOrBlank() && onTrailingClick != null) {
@@ -394,7 +401,7 @@ internal fun MintBottomSheet(
                                         text = trailingLabel,
                                         style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
                                         color = when {
-                                            !trailingEnabled -> scheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                            !trailingEnabled -> scheme.onSurfaceVariant.copy(alpha = 0.45f)
                                             trailingDestructive -> mintDestructiveColor(dark)
                                             else -> scheme.primary
                                         },
@@ -404,7 +411,13 @@ internal fun MintBottomSheet(
                             }
                         }
                     }
-                    Spacer(Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, bottom = 6.dp)
+                            .height(0.5.dp)
+                            .background(mintDividerColor(dark).copy(alpha = 0.7f)),
+                    )
                     content()
                 }
             }
@@ -924,7 +937,7 @@ internal fun MintChip(
     val scheme = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
     val scale = rememberMintPressScale(interactionSource, 0.97f)
-    val shape = RoundedCornerShape(50)
+    val shape = RoundedCornerShape(10.dp)
 
     val containerColor = when (style) {
         MintChipStyle.ActiveFilter, MintChipStyle.Selected ->
@@ -1205,20 +1218,20 @@ internal fun MintPillButton(
     val scheme = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
     val scale = if (enabled) rememberMintPressScale(interactionSource, 0.97f) else 1f
-    val shape = RoundedCornerShape(50)
+    val shape = RoundedCornerShape(12.dp)
 
     val containerBrush = when {
-        !enabled && primary -> SolidColor(if (dark) Color(0xFF22352B) else Color(0xFFDDE8E1))
+        !enabled && primary -> SolidColor(if (dark) Color(0xFF21362B) else Color(0xFFE0EBE4))
         !enabled -> SolidColor(if (dark) Color(0xFF192821) else Color(0xFFEBF2EE))
         primary -> Brush.horizontalGradient(
             if (dark) listOf(Color(0xFF2B6B52), Color(0xFF375633))
             else listOf(Color(0xFF126543), Color(0xFF1F7A53)),
         )
         destructive -> SolidColor(scheme.error.copy(alpha = if (dark) 0.24f else 0.12f))
-        else -> SolidColor(if (dark) Color(0xFF1D3027) else Color(0xFFF1F7F3))
+        else -> SolidColor(if (dark) Color(0xFF1D3027) else Color(0xFFEEF3F0))
     }
     val labelColor = when {
-        !enabled -> if (dark) Color(0xFF7E9487) else Color(0xFF6E8377)
+        !enabled -> if (dark) Color(0xFF8FA899) else Color(0xFF5D7166)
         primary -> Color.White
         destructive -> scheme.error
         else -> scheme.onSurface

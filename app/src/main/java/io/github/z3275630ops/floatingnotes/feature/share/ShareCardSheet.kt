@@ -91,19 +91,24 @@ internal fun ShareCardSheet(
         backdrop = backdrop,
         modifier = Modifier.testTag("share-card-sheet"),
         title = "分享卡片预览",
-        subtitle = "本地生成图片后才调用系统分享 · 不上传云端",
-        leadingLabel = "返回原文",
+        subtitle = "本地生成卡片 · 确认后调用系统分享",
+        leadingLabel = "关闭",
         onLeadingClick = onDismiss,
         maxHeightFraction = 0.86f,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 540.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .heightIn(max = 540.dp),
         ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
             // Template chips
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -271,10 +276,12 @@ internal fun ShareCardSheet(
                         .testTag("share-status-text"),
                 )
             }
-
+            }
+            Spacer(modifier = Modifier.height(10.dp))
             MintPillButton(
                 label = if (renderedPages.size > 1) "打开系统分享（共 ${renderedPages.size} 张图）" else "打开系统分享",
                 icon = MintIcons.Share,
+                primary = true,
                 enabled = !rendering && renderedPages.isNotEmpty(),
                 dark = dark,
                 modifier = Modifier
@@ -299,7 +306,6 @@ internal fun ShareCardSheet(
                     shareLauncher.launch(chooser)
                 },
             )
-            Spacer(modifier = Modifier.height(8.dp))
         }
     }
 }

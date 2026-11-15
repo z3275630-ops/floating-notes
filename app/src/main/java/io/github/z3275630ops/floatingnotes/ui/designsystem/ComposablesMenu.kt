@@ -96,8 +96,8 @@ internal fun NoteMenuTrigger(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = tint ?: scheme.onSurfaceVariant,
-            modifier = Modifier.size(19.dp),
+            tint = tint ?: scheme.onSurfaceVariant.copy(alpha = 0.65f),
+            modifier = Modifier.size(17.dp),
         )
     }
 }

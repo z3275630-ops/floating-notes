@@ -4,6 +4,7 @@
 
 ## 当前开发轮次
 
+- UI/UX 专项打磨（Opus 5.5 实机录屏评审 P1–P7 与无模糊 Apple 纸感微调）在 `feat/T26-T29-stats-widgets`（`versionCode 22`，`versionName "0.2.3-ui-polish.1"`，调试包 `0.2.3-ui-polish.1-debug`）完成实现与荣耀 X10 真机全量验证：消除顶级标签页切换重影、修正根页菜单图标语义与列表底部遮罩、去噪卡片标题网址为安静域名徽标、修复“从这里漫步”折行与裁切、收紧底部弹窗/圆角规范并固定分享主按钮吸底、修复 `LocalRecordingTest` 背景联想节点误匹配。全量构建（`app-debug.apk` SHA-256 `FB75BE5AFD647E96F7FBFB0FF7DC7086B186147B8102578F89B5C7FD21BA0C49`、`app-release-unsigned.apk` `55E90C6FD066FC130128D96D4A950C77030B15EDC620E980ADDB6A4BA02DC2BB`、`app-benchmark.apk` `01BC31AE41C0EF33BADDB5FFB40EE9AC40F60670D2B2B333F43EF998A93A1BA5`）、32/32 项 JVM 单测、0 错误 Lint 及荣耀 X10 覆盖安装保留笔记且 **20/20 类（70/70 项）`androidTest` 100% 通过（73.26s）**，已附实机改后截图核验。见 [UI 打磨交接](docs/handoffs/2026-11-15-ui-polish-opus.md) 与 [v0.2.3-ui-polish.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.2.3-ui-polish.1)。
 - T01 工程启动已 verified（仅工程/安装范围），分支 `feat/T01-native-bootstrap`，源码 `8550e76`，[PR #40](https://github.com/z3275630-ops/floating-notes/pull/40)。
 - 原生 debug/release/benchmark、lint、测试 APK 编译通过；API35 模拟器安装启动与 1 项 Compose 测试通过。JVM 测试为 NO-SOURCE。
 - 产物、命令、失败修复与未测项见 [T01 报告](docs/quality/T01-validation.md)，交接见 [本轮记录](docs/handoffs/2026-11-08-T01.md)。

@@ -1247,7 +1247,7 @@ private fun TaskCircleCheckbox(
     ) {
         Canvas(modifier = Modifier.size(22.dp)) {
             if (checked) {
-                drawCircle(color = primary)
+                drawCircle(color = primary.copy(alpha = 0.58f))
                 drawLine(
                     color = checkColor,
                     start = Offset(size.width * 0.26f, size.height * 0.52f),
