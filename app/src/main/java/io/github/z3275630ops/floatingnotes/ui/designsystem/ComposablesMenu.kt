@@ -68,6 +68,7 @@ internal fun NoteMenuTrigger(
     modifier: Modifier = Modifier,
     icon: ImageVector = MintIcons.More,
     containerColor: Color = Color.Transparent,
+    tint: Color? = null,
     onClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -78,9 +79,7 @@ internal fun NoteMenuTrigger(
             .clip(CircleShape)
             .then(
                 if (containerColor != Color.Transparent) {
-                    Modifier
-                        .background(containerColor, CircleShape)
-                        .border(0.9.dp, scheme.outline.copy(alpha = 0.25f), CircleShape)
+                    Modifier.background(containerColor, CircleShape)
                 } else Modifier
             )
             .testTag(tag)
@@ -97,7 +96,7 @@ internal fun NoteMenuTrigger(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = scheme.onSurfaceVariant,
+            tint = tint ?: scheme.onSurfaceVariant,
             modifier = Modifier.size(19.dp),
         )
     }
@@ -115,13 +114,13 @@ internal fun ComposablesMenu(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        modifier = modifier.widthIn(min = 172.dp, max = 320.dp).padding(horizontal = 4.dp).testTag(tag),
+        modifier = modifier.widthIn(min = 180.dp, max = 320.dp).padding(horizontal = 4.dp).testTag(tag),
         offset = DpOffset(0.dp, 6.dp),
         shape = RoundedCornerShape(18.dp),
         containerColor = scheme.surface,
         tonalElevation = 0.dp,
         shadowElevation = 10.dp,
-        border = BorderStroke(1.dp, scheme.outline.copy(alpha = 0.24f)),
+        border = BorderStroke(0.5.dp, scheme.outline.copy(alpha = 0.16f)),
         content = content,
     )
 }

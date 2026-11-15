@@ -3,21 +3,18 @@ package io.github.z3275630ops.floatingnotes.feature.home
 import android.database.sqlite.SQLiteConstraintException
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,8 +22,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,12 +29,18 @@ import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.data.local.*
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenuItem
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGlassDialog
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintAlertDialog
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSelectionRow
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
 import io.github.z3275630ops.floatingnotes.ui.designsystem.NoteMenuTrigger
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintHighlight
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -74,10 +75,14 @@ internal fun OrganizationPanel(
     val paths = remember(tags) { tags.associate { it.id to tagPath(tags, it) } }
     val sortedTags = remember(paths, tags) { tags.sortedBy { paths.getValue(it.id) } }
     var manageMenu by remember { mutableStateOf(false) }
+    var notebooksExpandedOverride by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var tagsExpandedOverride by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    val notebooksExpanded = notebooksExpandedOverride ?: (notebooks.size <= 4)
+    val tagsExpanded = tagsExpandedOverride ?: (sortedTags.size <= 6)
 
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -91,7 +96,7 @@ internal fun OrganizationPanel(
                 NoteMenuTrigger(
                     label = "管理笔记本与标签",
                     tag = "library-organization-actions",
-                    containerColor = if (dark) Color(0xFF1A2B22) else Color(0xFFF3F8F4),
+                    containerColor = mintSecondaryFill(dark),
                     onClick = { manageMenu = true },
                 )
                 ComposablesMenu(expanded = manageMenu, onDismiss = { manageMenu = false }) {
@@ -117,47 +122,58 @@ internal fun OrganizationPanel(
         }
 
         if (notebooks.isEmpty() && sortedTags.isEmpty()) {
-            Text(
-                text = "还没有笔记本或标签，点右上角可快速新建。",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-            )
+            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                Text(
+                    text = "还没有笔记本或标签，点击右上角可快速新建。",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
         }
 
         if (notebooks.isNotEmpty()) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(vertical = 2.dp),
-            ) {
-                items(notebooks, key = { "nb:${it.id}" }) { notebook ->
-                    var menu by remember(notebook.id) { mutableStateOf(false) }
-                    val selected = filter.notebook == notebook.id
-                    Box {
-                        OrganizationStripPill(
-                            label = notebook.name,
-                            count = notebookCounts[notebook.id],
-                            selected = selected,
-                            icon = MintIcons.Folder,
-                            dark = dark,
-                            menuTag = "notebook-actions",
-                            menuDescription = "管理笔记本 ${notebook.name}",
-                            onClick = {
-                                onFilter(filter.copy(notebook = notebook.id.takeUnless { it == filter.notebook }))
-                            },
-                            onMenuClick = { menu = true },
-                        )
-                        ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
-                            ComposablesMenuItem("重命名", icon = MintIcons.Folder) {
-                                menu = false
-                                action = OrganizationAction("重命名笔记本", notebook.name) {
-                                    repository.renameNotebook(notebook.id, it)
-                                }
-                            }
-                            ComposablesMenuItem("删除笔记本", icon = MintIcons.Close, destructive = true) {
-                                menu = false
-                                action = OrganizationAction("删除笔记本「${notebook.name}」？", destructive = true) {
-                                    repository.deleteNotebook(notebook.id)
-                                    if (filter.notebook == notebook.id) onFilter(filter.copy(notebook = null))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OrganizationSectionHeader(
+                    title = "笔记本",
+                    count = notebooks.size,
+                    expanded = notebooksExpanded,
+                    onToggle = { notebooksExpandedOverride = !notebooksExpanded },
+                )
+                AnimatedVisibility(visible = notebooksExpanded) {
+                    MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                        notebooks.forEachIndexed { index, notebook ->
+                            if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                            var menu by remember(notebook.id) { mutableStateOf(false) }
+                            val selected = filter.notebook == notebook.id
+                            Box {
+                                OrganizationGroupRow(
+                                    label = notebook.name,
+                                    count = notebookCounts[notebook.id],
+                                    selected = selected,
+                                    icon = MintIcons.Folder,
+                                    dark = dark,
+                                    menuTag = "notebook-actions",
+                                    menuDescription = "管理笔记本 ${notebook.name}",
+                                    onClick = {
+                                        onFilter(filter.copy(notebook = notebook.id.takeUnless { it == filter.notebook }))
+                                    },
+                                    onMenuClick = { menu = true },
+                                )
+                                ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
+                                    ComposablesMenuItem("重命名", icon = MintIcons.Folder) {
+                                        menu = false
+                                        action = OrganizationAction("重命名笔记本", notebook.name) {
+                                            repository.renameNotebook(notebook.id, it)
+                                        }
+                                    }
+                                    ComposablesMenuItem("删除笔记本", icon = MintIcons.Trash, destructive = true) {
+                                        menu = false
+                                        action = OrganizationAction("删除笔记本「${notebook.name}」？", destructive = true) {
+                                            repository.deleteNotebook(notebook.id)
+                                            if (filter.notebook == notebook.id) onFilter(filter.copy(notebook = null))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -167,65 +183,73 @@ internal fun OrganizationPanel(
         }
 
         if (sortedTags.isNotEmpty()) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(vertical = 2.dp),
-            ) {
-                items(sortedTags, key = { "tag:${it.id}" }) { tag ->
-                    val name = paths.getValue(tag.id)
-                    var menu by remember(tag.id) { mutableStateOf(false) }
-                    val selected = filter.tag == tag.id
-                    Box {
-                        OrganizationStripPill(
-                            label = name,
-                            count = tagCounts[tag.id],
-                            selected = selected,
-                            icon = MintIcons.Tag,
-                            dark = dark,
-                            menuTag = "tag-actions",
-                            menuDescription = "管理标签 $name",
-                            onClick = {
-                                onFilter(filter.copy(tag = tag.id.takeUnless { it == filter.tag }))
-                            },
-                            onMenuClick = { menu = true },
-                        )
-                        ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
-                            fun select(option: OrganizationAction) {
-                                menu = false
-                                action = option
-                            }
-                            val available = tags.filterNot { it.id in tagSubtree(tags, tag.id) }
-                                .map { it.id to paths.getValue(it.id) }
-                            ComposablesMenuItem("添加下级", icon = MintIcons.Plus) {
-                                select(OrganizationAction("新建下级标签", "") { repository.createTag(it, tag.id) })
-                            }
-                            ComposablesMenuItem("重命名", icon = MintIcons.Tag) {
-                                select(OrganizationAction("重命名标签", tag.name) { repository.renameTag(tag.id, it) })
-                            }
-                            ComposablesMenuItem("移动", icon = MintIcons.Folder) {
-                                select(
-                                    OrganizationAction("移动到", choices = listOf("" to "顶级") + available) {
-                                        repository.moveTag(tag.id, it)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OrganizationSectionHeader(
+                    title = "标签",
+                    count = sortedTags.size,
+                    expanded = tagsExpanded,
+                    onToggle = { tagsExpandedOverride = !tagsExpanded },
+                )
+                AnimatedVisibility(visible = tagsExpanded) {
+                    MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                        sortedTags.forEachIndexed { index, tag ->
+                            if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                            val name = paths.getValue(tag.id)
+                            var menu by remember(tag.id) { mutableStateOf(false) }
+                            val selected = filter.tag == tag.id
+                            Box {
+                                OrganizationGroupRow(
+                                    label = name,
+                                    count = tagCounts[tag.id],
+                                    selected = selected,
+                                    icon = MintIcons.Tag,
+                                    dark = dark,
+                                    menuTag = "tag-actions",
+                                    menuDescription = "管理标签 $name",
+                                    onClick = {
+                                        onFilter(filter.copy(tag = tag.id.takeUnless { it == filter.tag }))
                                     },
+                                    onMenuClick = { menu = true },
                                 )
-                            }
-                            if (available.isNotEmpty()) {
-                                ComposablesMenuItem("合并", icon = MintIcons.Link) {
-                                    select(
-                                        OrganizationAction("合并到", choices = available) {
-                                            repository.mergeTags(tag.id, it)
-                                            if (filter.tag == tag.id) onFilter(filter.copy(tag = it))
-                                        },
-                                    )
+                                ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
+                                    fun select(option: OrganizationAction) {
+                                        menu = false
+                                        action = option
+                                    }
+                                    val available = tags.filterNot { it.id in tagSubtree(tags, tag.id) }
+                                        .map { it.id to paths.getValue(it.id) }
+                                    ComposablesMenuItem("添加下级", icon = MintIcons.Plus) {
+                                        select(OrganizationAction("新建下级标签", "") { repository.createTag(it, tag.id) })
+                                    }
+                                    ComposablesMenuItem("重命名", icon = MintIcons.Tag) {
+                                        select(OrganizationAction("重命名标签", tag.name) { repository.renameTag(tag.id, it) })
+                                    }
+                                    ComposablesMenuItem("移动", icon = MintIcons.Folder) {
+                                        select(
+                                            OrganizationAction("移动到", choices = listOf("" to "顶级") + available) {
+                                                repository.moveTag(tag.id, it)
+                                            },
+                                        )
+                                    }
+                                    if (available.isNotEmpty()) {
+                                        ComposablesMenuItem("合并", icon = MintIcons.Link) {
+                                            select(
+                                                OrganizationAction("合并到", choices = available) {
+                                                    repository.mergeTags(tag.id, it)
+                                                    if (filter.tag == tag.id) onFilter(filter.copy(tag = it))
+                                                },
+                                            )
+                                        }
+                                    }
+                                    ComposablesMenuItem("删除标签", icon = MintIcons.Trash, destructive = true) {
+                                        select(
+                                            OrganizationAction("删除标签「${tag.name}」？", destructive = true) {
+                                                repository.deleteTag(tag.id)
+                                                if (filter.tag == tag.id) onFilter(filter.copy(tag = null))
+                                            },
+                                        )
+                                    }
                                 }
-                            }
-                            ComposablesMenuItem("删除标签", icon = MintIcons.Close, destructive = true) {
-                                select(
-                                    OrganizationAction("删除标签「${tag.name}」？", destructive = true) {
-                                        repository.deleteTag(tag.id)
-                                        if (filter.tag == tag.id) onFilter(filter.copy(tag = null))
-                                    },
-                                )
                             }
                         }
                     }
@@ -241,7 +265,45 @@ internal fun OrganizationPanel(
 }
 
 @Composable
-private fun OrganizationStripPill(
+private fun OrganizationSectionHeader(
+    title: String,
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClick = onToggle,
+            )
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = "$title ($count)",
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (expanded) MintIcons.ChevronDown else MintIcons.ChevronRight,
+            contentDescription = if (expanded) "收起$title" else "展开$title",
+            tint = scheme.onSurfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier.size(14.dp),
+        )
+    }
+}
+
+@Composable
+private fun OrganizationGroupRow(
     label: String,
     count: Int?,
     selected: Boolean,
@@ -253,98 +315,78 @@ private fun OrganizationStripPill(
     onMenuClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(50)
-    val fill = when {
-        selected && dark -> Color(0xFF23523E)
-        selected -> Color(0xFFD7F2E4)
-        dark -> Color(0xFF1A2B22)
-        else -> Color(0xFFFAFDF9)
-    }
-    val textColor = when {
-        selected && dark -> Color(0xFFAAF0CB)
-        selected -> Color(0xFF0E5A3A)
-        else -> scheme.onSurface
-    }
-    val border = if (selected) {
-        scheme.primary.copy(alpha = if (dark) 0.72f else 0.50f)
+    val highlight = if (selected) {
+        Modifier
+            .padding(horizontal = 4.dp, vertical = 3.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(mintHighlight(dark))
     } else {
-        scheme.outline.copy(alpha = if (dark) 0.42f else 0.30f)
+        Modifier
     }
 
     Row(
         modifier = Modifier
+            .fillMaxWidth()
+            .then(highlight)
             .defaultMinSize(minHeight = 48.dp)
-            .padding(vertical = 4.dp)
-            .clip(shape)
-            .background(fill, shape)
-            .border(if (selected) 1.2.dp else 0.9.dp, border, shape),
+            .padding(start = if (selected) 10.dp else 14.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(
             modifier = Modifier
-                .defaultMinSize(minHeight = 40.dp)
+                .weight(1f)
+                .defaultMinSize(minHeight = 48.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     role = Role.Button,
                     onClick = onClick,
                 )
-                .padding(start = 12.dp, end = 6.dp),
+                .padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = if (selected) textColor else scheme.primary,
-                modifier = Modifier.size(15.dp),
+                tint = scheme.primary,
+                modifier = Modifier.size(18.dp),
             )
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                 ),
-                color = textColor,
+                color = scheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (selected) {
+                Icon(
+                    imageVector = MintIcons.Check,
+                    contentDescription = "已选中",
+                    tint = scheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
             if (count != null) {
-                Box(
-                    modifier = Modifier
-                        .clip(shape)
-                        .background(textColor.copy(alpha = 0.11f))
-                        .padding(horizontal = 6.dp, vertical = 1.dp),
-                ) {
-                    Text(
-                        text = count.toString(),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = textColor,
-                    )
-                }
+                Text(
+                    text = count.toString(),
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                    color = if (selected) scheme.primary else scheme.onSurfaceVariant,
+                )
             }
         }
-        Box(
-            modifier = Modifier
-                .size(width = 34.dp, height = 40.dp)
-                .clip(CircleShape)
-                .testTag(menuTag)
-                .semantics { contentDescription = menuDescription }
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    role = Role.Button,
-                    onClickLabel = menuDescription,
-                    onClick = onMenuClick,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = MintIcons.More,
-                contentDescription = null,
-                tint = textColor.copy(alpha = 0.78f),
-                modifier = Modifier.size(15.dp),
-            )
-        }
+        NoteMenuTrigger(
+            label = menuDescription,
+            tag = menuTag,
+            icon = MintIcons.More,
+            containerColor = Color.Transparent,
+            tint = scheme.onSurfaceVariant.copy(alpha = 0.6f),
+            onClick = onMenuClick,
+        )
     }
 }
 
@@ -381,34 +423,59 @@ private fun OrganizationDialog(
         }
     }
 
-    MintGlassDialog(
-        onDismissRequest = { if (!busy) close() },
-        dark = dark,
-        dismissOnClickOutside = !busy,
-        title = action.title,
-        actions = {
-            MintPillButton(
-                label = "取消",
-                dark = dark,
-                enabled = !busy,
-                onClick = close,
-            )
-            MintPillButton(
-                label = "确认",
-                primary = !action.destructive,
-                destructive = action.destructive,
-                dark = dark,
-                enabled = !busy && (action.choices.isEmpty() || choice != null),
-                onClick = ::submit,
-            )
-        },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 320.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+    if (action.choices.isNotEmpty()) {
+        MintBottomSheet(
+            onDismissRequest = { if (!busy) close() },
+            dark = dark,
+            title = action.title,
+            leadingLabel = "取消",
+            onLeadingClick = { if (!busy) close() },
+            trailingLabel = "确认",
+            onTrailingClick = ::submit,
+            trailingEnabled = !busy && choice != null,
+            dismissOnClickOutside = !busy,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                    action.choices.forEachIndexed { index, (id, name) ->
+                        if (index > 0) MintGroupedDivider(dark = dark)
+                        MintSelectionRow(
+                            label = name,
+                            selected = choice == id,
+                            dark = dark,
+                            multiSelect = false,
+                            onClick = { if (!busy) choice = id },
+                        )
+                    }
+                }
+                error?.let {
+                    Text(text = it, style = MaterialTheme.typography.bodySmall, color = scheme.error)
+                }
+            }
+        }
+    } else {
+        MintAlertDialog(
+            onDismissRequest = { if (!busy) close() },
+            dark = dark,
+            title = action.title,
+            subtitle = if (action.destructive && action.initial == null) {
+                "删除后不会删除笔记正文，仅移除归属关系。"
+            } else {
+                null
+            },
+            dismissLabel = "取消",
+            onDismissAction = { if (!busy) close() },
+            confirmLabel = "确认",
+            onConfirmAction = ::submit,
+            confirmEnabled = !busy && (action.initial == null || input.isNotBlank()),
+            destructive = action.destructive,
+            dismissOnClickOutside = !busy,
         ) {
             if (action.initial != null) {
                 MintTextField(
@@ -420,31 +487,11 @@ private fun OrganizationDialog(
                     placeholder = "输入名称",
                     dark = dark,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { if (!busy) submit() }),
-                )
-            }
-            action.choices.forEach { (id, name) ->
-                MintSelectionRow(
-                    label = name,
-                    selected = choice == id,
-                    dark = dark,
-                    multiSelect = false,
-                    onClick = { if (!busy) choice = id },
-                )
-            }
-            if (action.destructive && action.initial == null && action.choices.isEmpty()) {
-                Text(
-                    text = "删除后不会删除笔记正文，仅移除归属关系。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant,
+                    keyboardActions = KeyboardActions(onDone = { if (!busy && input.isNotBlank()) submit() }),
                 )
             }
             error?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.error,
-                )
+                Text(text = it, style = MaterialTheme.typography.bodySmall, color = scheme.error)
             }
         }
     }
@@ -504,32 +551,26 @@ internal fun NoteOrganizationDialog(
         }
     }
 
-    MintGlassDialog(
+    MintBottomSheet(
         onDismissRequest = { if (!busy) close() },
         dark = dark,
-        dismissOnClickOutside = !busy,
         title = "整理笔记",
         subtitle = "选择所属笔记本与标签，修改立即保存",
-        actions = {
-            MintPillButton(
-                label = "完成",
-                primary = true,
-                icon = MintIcons.Check,
-                dark = dark,
-                enabled = !busy,
-                onClick = close,
-            )
-        },
+        leadingLabel = null,
+        trailingLabel = "完成",
+        onTrailingClick = close,
+        trailingEnabled = !busy,
+        dismissOnClickOutside = !busy,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 420.dp)
+                .heightIn(max = 460.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -547,7 +588,7 @@ internal fun NoteOrganizationDialog(
             }
             AnimatedVisibility(visible = creatingTag) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -574,44 +615,55 @@ internal fun NoteOrganizationDialog(
                 }
             }
             if (sortedTags.isEmpty()) {
-                Text(
-                    text = "暂无标签，可在上方直接输入创建并自动打标。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant,
-                )
-            } else {
-                sortedTags.forEach { tag ->
-                    val attached = tag.id in tagIds
-                    MintSelectionRow(
-                        label = paths.getValue(tag.id),
-                        selected = attached,
-                        dark = dark,
-                        leadingIcon = MintIcons.Tag,
-                        multiSelect = true,
-                        onClick = {
-                            if (!busy) change { repository.tagNote(note, tag.id, !attached) }
-                        },
+                MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                    Text(
+                        text = "暂无标签，可在上方直接输入创建并自动打标。",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
                     )
+                }
+            } else {
+                MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                    sortedTags.forEachIndexed { index, tag ->
+                        if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                        val attached = tag.id in tagIds
+                        MintSelectionRow(
+                            label = paths.getValue(tag.id),
+                            selected = attached,
+                            dark = dark,
+                            leadingIcon = MintIcons.Tag,
+                            multiSelect = true,
+                            onClick = {
+                                if (!busy) change { repository.tagNote(note, tag.id, !attached) }
+                            },
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = "笔记本",
+                modifier = Modifier.padding(horizontal = 2.dp),
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = scheme.onSurface,
             )
-            (listOf(null to "未归入笔记本") + notebooks.map { it.id to it.name }).forEach { (id, name) ->
-                MintSelectionRow(
-                    label = name,
-                    selected = id == notebookId,
-                    dark = dark,
-                    leadingIcon = MintIcons.Folder,
-                    multiSelect = false,
-                    onClick = {
-                        if (!busy) change { repository.fileNote(note, id) }
-                    },
-                )
+            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                val allNotebooks = listOf(null to "未归入笔记本") + notebooks.map { it.id to it.name }
+                allNotebooks.forEachIndexed { index, (id, name) ->
+                    if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                    MintSelectionRow(
+                        label = name,
+                        selected = id == notebookId,
+                        dark = dark,
+                        leadingIcon = MintIcons.Folder,
+                        multiSelect = false,
+                        onClick = {
+                            if (!busy) change { repository.fileNote(note, id) }
+                        },
+                    )
+                }
             }
             error?.let {
                 Text(

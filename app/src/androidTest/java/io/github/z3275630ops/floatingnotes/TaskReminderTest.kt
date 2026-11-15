@@ -443,6 +443,7 @@ class TaskReminderTest {
                 }
                 compose.onNodeWithTag("task_row_${note.id}_${checkbox.id}").assertIsDisplayed()
 
+                compose.onNodeWithTag("tasks_more_menu").performClick()
                 compose.onNodeWithTag("tasks_startup_toggle").performClick()
                 compose.waitUntil(5_000) { prefs.todoStartupEnabled }
                 assertTrue(prefs.todoStartupEnabled)

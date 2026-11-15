@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.FloatingNotesTheme
 import io.github.z3275630ops.floatingnotes.core.model.newId
@@ -129,14 +130,41 @@ private fun SharePreview(
             Box(Modifier.matchParentSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                 .navigationBarsPadding().imePadding()) {
-                CaptureSheet(motion, open, backdrop, dark, { end(false) }, { end(false, it) }, { open = true },
-                    title = "收集到浮记", dismissLabel = "取消") {
-                    model.editor?.let { session ->
-                        session.draft.sourceUrl?.let {
+                val session = model.editor
+                val canSave = session != null &&
+                    !session.writing &&
+                    !session.importing &&
+                    !session.voiceBusy &&
+                    !session.voicePending &&
+                    session.document().hasContent
+                CaptureSheet(
+                    motion = motion,
+                    open = open,
+                    backdrop = backdrop,
+                    dark = dark,
+                    onDismiss = { end(false) },
+                    onDragClose = { end(false, it) },
+                    onDragStart = { open = true },
+                    title = "收集到浮记",
+                    dismissLabel = "取消",
+                    headerActions = {
+                        TextButton(
+                            onClick = { end(true) },
+                            enabled = canSave,
+                        ) {
+                            Text(
+                                text = "保存",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            )
+                        }
+                    },
+                ) {
+                    session?.let { activeSession ->
+                        activeSession.draft.sourceUrl?.let {
                             Text("来源链接 · $it", maxLines = 2, modifier = Modifier.padding(bottom = 8.dp),
                                 style = MaterialTheme.typography.labelMedium)
                         }
-                        NoteEditor(session, model, onSave = { end(true) }, onDiscard = { end(false) })
+                        NoteEditor(activeSession, model, onSave = { end(true) }, onDiscard = { end(false) })
                     }
                 }
             }

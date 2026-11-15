@@ -271,7 +271,7 @@
       "id": "F15",
       "name": "历史版本",
       "milestone": "M1",
-      "status": "planned",
+      "status": "implemented",
       "spec": "docs/features/map-library-integrations.md",
       "screens": [
         "S18"
@@ -281,7 +281,9 @@
         "Q045",
         "Q046"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-T14-apple-ui.md"
+      ]
     },
     {
       "id": "F16",
@@ -303,7 +305,7 @@
       "id": "F17",
       "name": "同步与导入导出",
       "milestone": "M4",
-      "status": "planned",
+      "status": "in_progress",
       "spec": "docs/features/map-library-integrations.md",
       "screens": [
         "S20",
@@ -315,7 +317,9 @@
         "Q052",
         "Q053"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/handoffs/2026-11-15-T14-apple-ui.md"
+      ]
     },
     {
       "id": "F18",

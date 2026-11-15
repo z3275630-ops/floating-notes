@@ -1,6 +1,6 @@
 # 项目实际状态
 
-更新时间：2026-11-14。规格版本 3.1。
+更新时间：2026-11-15。规格版本 3.1。
 
 ## 当前开发轮次
 
@@ -34,6 +34,8 @@
 
 - UI 重构、T09 剩余范围与 T13 待办提醒在 `feat/T13-ui-todos`（`versionCode 17`，`0.1.13-todos.1`）完成实现与荣耀 X10 复验：完成薄荷玻璃界面改版、Room v3→v4 迁移、待办列表（S23）与本地重复/时区提醒、行内 `#`/`@` 建议与 UTF-16 引文选区范围。全量构建、9 项 JVM 单测、0 错误 Lint 与荣耀 X10 覆盖安装及 11 类 35 项 `androidTest` 全通过；API 31+/33+ 实时模糊与系统通知授权弹窗、物理关机重启及 `release`/`benchmark` 真机运行仍待验证。见 [T13 交接](docs/handoffs/2026-11-14-T13-ui-todos.md) 与 [v0.1.13-todos.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.13-todos.1)。
 
+- T14 历史版本（S18）、最近删除（回收站）、本地备份/恢复与 Markdown 导出（S20/S21）及深度 Apple Notes / iOS HIG 视觉与交互改造（不开启实时模糊）在 `feat/T14-history-backup-ui`（`versionCode 18`，`versionName "0.1.14-backup.1"`，调试包 `0.1.14-backup.1-debug`）完成实现与荣耀 X10 真机全量验收：完成 Room v4→v5 迁移（`5.json`）、单篇 50 版本上限与行内 Diff 追加恢复、30 天回收站保留与删除影响预检、全量 ZIP 备份/SHA-256 校验/双模式恢复（完整覆盖与按更新时间合并）与 `restore-journal.json` 崩溃恢复、零反射 `MiniJson` 编解码，以及 iOS 分组表面/分段控件/底部胶囊工具栏与 `CaptureSheet` 1:1 根坐标下滑关闭手势。全量构建（`app-debug.apk` SHA-256 `C410BAD40987226912A25CC48687C6333C9556A48A2E0CD739565E5D3C539958`、`app-release-unsigned.apk` `9A3EA796CEE558DCAE491EB2D520E03D15857F5141684F4C9A9399235151BDDC`、`app-benchmark.apk` `88B77D198BBAC9885A61035638157C5C4A9A68248FB56E9349FAEB3C368E7C16`）、18/18 项 JVM 单测、0 错误 Lint 与荣耀 X10 覆盖安装及 15/15 类（56/56 项）`androidTest` 100% 通过；未开启 Android 12+ 实时模糊，`release`/`benchmark` 真机跑分与 T15+ 云同步仍待后续轮次验证。见 [T14 交接](docs/handoffs/2026-11-15-T14-apple-ui.md) 与 [v0.1.14-backup.1](https://github.com/z3275630-ops/floating-notes/releases/tag/v0.1.14-backup.1)。
+
 ## 已完成
 
 - 设计与工程交接文档，包括 F01–F20、24 个页面、视觉/动效、数据、AI、同步/备份与 API。
@@ -44,7 +46,7 @@
 
 - Android 首个本地记录切片与跨应用收集已提交。服务端、真实模型、完整标签检索与后续业务待实现。Room v1 已归档，后续 schema 变更需要迁移测试。
 - 已产出 T01 工程 APK 与 T08/T35 开发 APK。真机视觉、帧/热/电性能、模型质量、真实强杀与磁盘满演练未执行。
-- F01、F03、F12、F18、F20 为 in_progress，已有部分自动化证据。F01–F20 的完整验收尚未结束。
+- F01、F03、F12、F17、F18、F20 为 in_progress，F15（历史版本）为 implemented，已有真机与自动化证据。F01–F20 的完整验收尚未结束。
 
 ## 仓库与任务状态
 
@@ -62,7 +64,7 @@
 
 ## 下一步
 
-[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 `#`/`@` 即时识别、引用选区范围与 T13 待办及本地提醒已实现并通过荣耀 X10 35 项测试；后续按依赖推进 T14 历史/回收站/本地备份及更高 Android API 真机玻璃与通知权限验收。T11 真实来电、断网和取消重试验收仍待执行。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐，高版本真机视觉与动效保留验收。
+[T08 / PR #45](https://github.com/z3275630-ops/floating-notes/pull/45) 与 [T35 / PR #46](https://github.com/z3275630-ops/floating-notes/pull/46) 的安装和自动化已通过。T09 正文 `#`/`@` 即时识别、引用选区范围、T13 待办及本地提醒与 T14 历史版本/回收站/本地备份及 Apple 备忘录风 UI 改造已实现并通过荣耀 X10 15 类 56 项 `androidTest` 全量测试；后续按依赖推进 T15 每日回顾、T16 共享检索索引与 T27/T28 增量同步。T11 真实来电、断网和取消重试验收仍待执行。T36 依赖 T17 相关笔记，T37 依赖 T18 漫步与 T20 洞察。T04 的 A04–A12 按业务交互补齐。
 
 ## 验证记录
 

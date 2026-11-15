@@ -79,6 +79,8 @@ fun GlassSurface(
     shapeRadius: Dp = 28.dp,
     elevatedModal: Boolean = false,
     shape: RoundedCornerShape = RoundedCornerShape(shapeRadius),
+    showBorder: Boolean = true,
+    showShadow: Boolean = true,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val effective = tier.supportedOn(Build.VERSION.SDK_INT)
@@ -108,15 +110,18 @@ fun GlassSurface(
         if (elevatedModal) Color(0xFFFAFDF9) else Color(0xFFF6FAF5)
     }
     val alpha = when (effective) {
-        GlassTier.Reduced -> if (elevatedModal) .98f else .96f
+        GlassTier.Reduced -> if (elevatedModal) 1f else .96f
         GlassTier.Standard -> if (elevatedModal) (if (dark) .92f else .90f) else (if (dark) .84f else .78f)
         GlassTier.Enhanced -> if (elevatedModal) (if (dark) .90f else .84f) else (if (dark) .80f else .58f)
     }
-    val elevation = if (elevatedModal) 14.dp else 8.dp
-    val shadowTint = if (dark) Color(0x55040A07) else Color(0x1E126543)
+    val elevation = if (!showShadow) 0.dp else if (elevatedModal) 12.dp else 6.dp
+    val shadowTint = if (dark) Color(0x55040A07) else Color(0x18126543)
     Box(
         modifier
-            .shadow(elevation, shape, ambientColor = shadowTint, spotColor = shadowTint)
+            .then(
+                if (elevation > 0.dp) Modifier.shadow(elevation, shape, ambientColor = shadowTint, spotColor = shadowTint)
+                else Modifier
+            )
             .onGloballyPositioned { position = it.positionInRoot() }
             .clip(shape)
     ) {
@@ -134,21 +139,25 @@ fun GlassSurface(
         }
         val surface = if (sampleTopHeight == null) Modifier.background(tint.copy(alpha = alpha))
         else Modifier.background(Brush.verticalGradient(
-            colors = listOf(tint.copy(alpha = if (effective == GlassTier.Reduced) .98f else alpha), tint),
+            colors = listOf(tint.copy(alpha = if (effective == GlassTier.Reduced) 1f else alpha), tint),
             endY = with(density) { sampleTopHeight.toPx() },
         ))
         Box(
             Modifier.matchParentSize().then(surface)
                 .background(Brush.verticalGradient(listOf(
-                    Color.White.copy(alpha = if (dark) .06f else .22f),
+                    Color.White.copy(alpha = if (dark) .05f else .18f),
                     Color.Transparent,
-                    Color(0xFF92DFC2).copy(alpha = if (dark) .08f else .14f),
+                    Color(0xFF92DFC2).copy(alpha = if (dark) .06f else .10f),
                 )))
-                .border(1.dp, Brush.verticalGradient(listOf(
-                    Color.White.copy(alpha = if (dark) .28f else .94f),
-                    Color(0xFFD5EDE0).copy(alpha = if (dark) .08f else .35f),
-                    Color(0xFF3A8567).copy(alpha = if (dark) .28f else .22f),
-                )), shape)
+                .then(
+                    if (showBorder) {
+                        Modifier.border(0.8.dp, Brush.verticalGradient(listOf(
+                            Color.White.copy(alpha = if (dark) .22f else .86f),
+                            Color(0xFFD5EDE0).copy(alpha = if (dark) .06f else .28f),
+                            Color(0xFF3A8567).copy(alpha = if (dark) .22f else .16f),
+                        )), shape)
+                    } else Modifier
+                )
         )
         content()
     }

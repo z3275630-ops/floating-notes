@@ -2,16 +2,13 @@ package io.github.z3275630ops.floatingnotes.feature.home
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,8 +35,12 @@ import io.github.z3275630ops.floatingnotes.data.local.tagPath
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintHighlight
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -58,7 +59,11 @@ internal fun NotesDrawer(
     notebookCounts: Map<String, Int> = emptyMap(),
     tagCounts: Map<String, Int> = emptyMap(),
     pendingTasksCount: Int = 0,
+    trashedCount: Int = 0,
+    trashSelected: Boolean = false,
     onOpenTasks: (() -> Unit)? = null,
+    onOpenTrash: (() -> Unit)? = null,
+    onOpenBackup: (() -> Unit)? = null,
     labs: (@Composable RowScope.() -> Unit)? = null,
     debugSampleSlot: (@Composable () -> Unit)? = null,
 ) {
@@ -73,11 +78,10 @@ internal fun NotesDrawer(
             tier = GlassTier.Enhanced,
             dark = dark,
             elevatedModal = true,
-            shapeRadius = 28.dp,
+            shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
+            showBorder = false,
             modifier = Modifier
-                .safeDrawingPadding()
-                .padding(start = 8.dp, top = 8.dp, bottom = 8.dp)
-                .widthIn(max = (maxWidth - 48.dp).coerceIn(0.dp, 324.dp))
+                .widthIn(max = (maxWidth - 52.dp).coerceIn(0.dp, 320.dp))
                 .fillMaxWidth()
                 .fillMaxHeight()
                 .testTag("notes-drawer")
@@ -89,154 +93,196 @@ internal fun NotesDrawer(
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("notes-drawer-list"),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                contentPadding = WindowInsets.safeDrawing
+                    .only(WindowInsetsSides.Vertical + WindowInsetsSides.Start)
+                    .add(WindowInsets(left = 16.dp, top = 14.dp, right = 16.dp, bottom = 14.dp))
+                    .asPaddingValues(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 item {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)) {
                         Text(
-                            text = "笔记导航",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            text = "文件夹",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                             color = scheme.onSurface,
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "$total 条未归档笔记",
+                            text = "$total 条笔记",
                             color = scheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
                 item {
-                    DrawerRow(
-                        title = "全部笔记",
-                        selected = allSelected,
-                        dark = dark,
-                        tag = "drawer-all",
-                        icon = MintIcons.Records,
-                        count = total,
-                    ) { onRecord(false) }
-                }
-                if (onOpenTasks != null) {
-                    item {
+                    MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                         DrawerRow(
-                            title = "待办与提醒",
+                            title = "全部笔记",
+                            selected = allSelected,
+                            dark = dark,
+                            tag = "drawer-all",
+                            icon = MintIcons.Records,
+                            count = total,
+                        ) { onRecord(false) }
+                        if (onOpenTasks != null) {
+                            MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                            DrawerRow(
+                                title = "待办与提醒",
+                                selected = false,
+                                dark = dark,
+                                tag = "drawer-tasks",
+                                icon = MintIcons.Checklist,
+                                count = pendingTasksCount.takeIf { it > 0 },
+                                showChevron = true,
+                                onClick = onOpenTasks,
+                            )
+                        }
+                        MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                        DrawerRow(
+                            title = "归档",
+                            selected = archiveSelected,
+                            dark = dark,
+                            tag = "drawer-archive",
+                            icon = MintIcons.Archive,
+                            count = archived,
+                        ) { onRecord(true) }
+                        if (onOpenTrash != null) {
+                            MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                            DrawerRow(
+                                title = "最近删除",
+                                selected = trashSelected,
+                                dark = dark,
+                                tag = "drawer-trash",
+                                icon = MintIcons.Trash,
+                                count = trashedCount.takeIf { it > 0 },
+                                showChevron = true,
+                                onClick = onOpenTrash,
+                            )
+                        }
+                        MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                        DrawerRow(
+                            title = "管理笔记本与标签",
                             selected = false,
                             dark = dark,
-                            tag = "drawer-tasks",
-                            icon = MintIcons.Checklist,
-                            count = pendingTasksCount.takeIf { it > 0 },
-                            onClick = onOpenTasks,
-                        )
+                            tag = "drawer-library",
+                            icon = MintIcons.Library,
+                            showChevron = true,
+                        ) { onLibrary(LibraryFilter()) }
                     }
                 }
-                item {
-                    DrawerRow(
-                        title = "归档 · $archived",
-                        selected = archiveSelected,
-                        dark = dark,
-                        tag = "drawer-archive",
-                        icon = MintIcons.Archive,
-                    ) { onRecord(true) }
-                }
-                item {
-                    DrawerRow(
-                        title = "管理笔记本与标签",
-                        selected = false,
-                        dark = dark,
-                        tag = "drawer-library",
-                        icon = MintIcons.Library,
-                    ) { onLibrary(LibraryFilter()) }
-                }
-                if (notebooks.isNotEmpty()) item { DrawerHeading("笔记本") }
-                items(notebooks, key = { "notebook:${it.id}" }) { notebook ->
-                    DrawerRow(
-                        title = notebook.name,
-                        selected = filter.notebook == notebook.id,
-                        dark = dark,
-                        tag = "drawer-notebook",
-                        icon = MintIcons.Folder,
-                        count = notebookCounts[notebook.id],
-                    ) {
-                        onLibrary(LibraryFilter(notebook = notebook.id))
+                if (notebooks.isNotEmpty()) {
+                    item(key = "drawer-notebooks-group") {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            DrawerHeading("笔记本")
+                            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                                notebooks.forEachIndexed { index, notebook ->
+                                    if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                                    DrawerRow(
+                                        title = notebook.name,
+                                        selected = filter.notebook == notebook.id,
+                                        dark = dark,
+                                        tag = "drawer-notebook",
+                                        icon = MintIcons.Folder,
+                                        count = notebookCounts[notebook.id],
+                                    ) {
+                                        onLibrary(LibraryFilter(notebook = notebook.id))
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                if (tags.isNotEmpty()) item { DrawerHeading("标签") }
-                items(sortedTags, key = { "tag:${it.id}" }) { tag ->
-                    DrawerRow(
-                        title = paths.getValue(tag.id),
-                        selected = filter.tag == tag.id,
-                        dark = dark,
-                        tag = "drawer-tag",
-                        icon = MintIcons.Tag,
-                        count = tagCounts[tag.id],
-                    ) {
-                        onLibrary(LibraryFilter(tag = tag.id))
+                if (sortedTags.isNotEmpty()) {
+                    item(key = "drawer-tags-group") {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            DrawerHeading("标签")
+                            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                                sortedTags.forEachIndexed { index, tag ->
+                                    if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
+                                    DrawerRow(
+                                        title = paths.getValue(tag.id),
+                                        selected = filter.tag == tag.id,
+                                        dark = dark,
+                                        tag = "drawer-tag",
+                                        icon = MintIcons.Tag,
+                                        count = tagCounts[tag.id],
+                                    ) {
+                                        onLibrary(LibraryFilter(tag = tag.id))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (onOpenBackup != null) {
+                    item(key = "drawer-backup-group") {
+                        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                            DrawerRow(
+                                title = "设置与数据管理",
+                                selected = false,
+                                dark = dark,
+                                tag = "drawer-backup",
+                                icon = MintIcons.Settings,
+                                showChevron = true,
+                                onClick = onOpenBackup,
+                            )
+                        }
                     }
                 }
                 if (labs != null || debugSampleSlot != null) {
-                    item {
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider(color = scheme.outline.copy(alpha = 0.16f))
-                        Spacer(Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .defaultMinSize(minHeight = 48.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .testTag("drawer-dev-section")
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    role = Role.Button,
-                                ) { devExpanded = !devExpanded }
-                                .padding(horizontal = 10.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Icon(
-                                imageVector = MintIcons.DevTools,
-                                contentDescription = null,
-                                tint = scheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                text = "开发与实验",
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                                color = scheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Icon(
-                                imageVector = if (devExpanded) MintIcons.ChevronDown else MintIcons.ChevronRight,
-                                contentDescription = if (devExpanded) "收起" else "展开",
-                                tint = scheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                        AnimatedVisibility(visible = devExpanded) {
-                            Column(
+                    item(key = "drawer-dev-group") {
+                        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 4.dp, bottom = 8.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(if (dark) Color(0xFF192921) else Color(0xFFF1F7F3))
-                                    .border(
-                                        0.8.dp,
-                                        scheme.outline.copy(alpha = 0.2f),
-                                        RoundedCornerShape(16.dp),
-                                    )
-                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .testTag("drawer-dev-section")
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                    ) { devExpanded = !devExpanded }
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                if (labs != null) {
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                                        content = labs,
-                                    )
+                                Icon(
+                                    imageVector = MintIcons.DevTools,
+                                    contentDescription = null,
+                                    tint = scheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = "开发与实验",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                    color = scheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Icon(
+                                    imageVector = if (devExpanded) MintIcons.ChevronDown else MintIcons.ChevronRight,
+                                    contentDescription = if (devExpanded) "收起" else "展开",
+                                    tint = scheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                            AnimatedVisibility(visible = devExpanded) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(mintSecondaryFill(dark))
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    if (labs != null) {
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                            content = labs,
+                                        )
+                                    }
+                                    debugSampleSlot?.invoke()
                                 }
-                                debugSampleSlot?.invoke()
                             }
                         }
                     }
@@ -250,7 +296,7 @@ internal fun NotesDrawer(
 private fun DrawerHeading(title: String) {
     Text(
         text = title,
-        modifier = Modifier.padding(start = 10.dp, top = 16.dp, bottom = 4.dp),
+        modifier = Modifier.padding(start = 6.dp, top = 4.dp),
         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -264,23 +310,23 @@ private fun DrawerRow(
     tag: String,
     icon: ImageVector,
     count: Int? = null,
+    showChevron: Boolean = false,
     onClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(16.dp)
     val highlight = if (selected) {
         Modifier
-            .background(mintHighlight(dark), shape)
-            .border(1.dp, scheme.primary.copy(alpha = if (dark) 0.45f else 0.25f), shape)
+            .padding(horizontal = 4.dp, vertical = 3.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(mintHighlight(dark))
     } else {
         Modifier
     }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 48.dp)
-            .clip(shape)
             .then(highlight)
+            .defaultMinSize(minHeight = 48.dp)
             .testTag(tag)
             .selectable(
                 selected = selected,
@@ -289,42 +335,40 @@ private fun DrawerRow(
                 role = Role.Tab,
                 onClick = onClick,
             )
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = if (selected) 10.dp else 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = if (selected) scheme.primary else scheme.onSurfaceVariant,
+            tint = scheme.primary,
             modifier = Modifier.size(18.dp),
         )
         Text(
             text = title,
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium.copy(
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             ),
-            color = if (selected) scheme.onSurface else scheme.onSurface.copy(alpha = 0.88f),
+            color = scheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         if (count != null) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(
-                        if (selected) scheme.surface.copy(alpha = 0.65f)
-                        else scheme.onSurfaceVariant.copy(alpha = 0.10f),
-                    )
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-            ) {
-                Text(
-                    text = count.toString(),
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = if (selected) scheme.primary else scheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                text = count.toString(),
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                color = if (selected) scheme.primary else scheme.onSurfaceVariant,
+            )
+        }
+        if (showChevron) {
+            Icon(
+                imageVector = MintIcons.ChevronRight,
+                contentDescription = null,
+                tint = scheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.size(14.dp),
+            )
         }
     }
 }

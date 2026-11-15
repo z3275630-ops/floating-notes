@@ -2,7 +2,6 @@ package io.github.z3275630ops.floatingnotes.feature.home
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -35,14 +34,18 @@ import io.github.z3275630ops.floatingnotes.data.local.*
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenuItem
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesSearchField
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintAlertDialog
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChip
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChipStyle
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGlassDialog
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIconButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSegmentedBar
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -104,7 +107,12 @@ internal fun LibrarySearchControls(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.weight(1f)) {
-                ComposablesSearchField(keyword, "搜索笔记", tag = "library-search")
+                ComposablesSearchField(
+                    state = keyword,
+                    label = "搜索笔记",
+                    tag = "library-search",
+                    containerColor = mintSecondaryFill(dark),
+                )
             }
             MintIconButton(
                 onClick = { dialog = "筛选" },
@@ -115,12 +123,7 @@ internal fun LibrarySearchControls(
                 containerColor = if (active) {
                     if (dark) Color(0xFF23523E) else Color(0xFFD7F2E4)
                 } else {
-                    if (dark) Color(0xFF1A2B22) else Color(0xFFFAFDF9)
-                },
-                borderColor = if (active) {
-                    scheme.primary.copy(alpha = 0.55f)
-                } else {
-                    scheme.outline.copy(alpha = 0.30f)
+                    mintSecondaryFill(dark)
                 },
             )
             if (canSave || saved.isNotEmpty()) {
@@ -130,8 +133,7 @@ internal fun LibrarySearchControls(
                         contentDescription = "更多搜索操作",
                         dark = dark,
                         icon = MintIcons.More,
-                        containerColor = if (dark) Color(0xFF1A2B22) else Color(0xFFFAFDF9),
-                        borderColor = scheme.outline.copy(alpha = 0.30f),
+                        containerColor = mintSecondaryFill(dark),
                     )
                     ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
                         if (canSave) {
@@ -345,28 +347,17 @@ internal fun LibrarySearchControls(
                     }
                 }
             }
-            MintGlassDialog(
+            MintAlertDialog(
                 onDismissRequest = { if (!busy) dialog = null },
                 dark = dark,
                 dismissOnClickOutside = !busy,
                 title = "保存搜索条件",
                 subtitle = "保存后将作为智能文件夹显示在搜索栏下方",
-                actions = {
-                    MintPillButton(
-                        label = "取消",
-                        dark = dark,
-                        enabled = !busy,
-                        onClick = { dialog = null },
-                    )
-                    MintPillButton(
-                        label = "保存搜索",
-                        primary = true,
-                        icon = MintIcons.Check,
-                        dark = dark,
-                        enabled = name.isNotBlank() && !busy,
-                        onClick = ::saveCurrent,
-                    )
-                },
+                dismissLabel = "取消",
+                onDismissAction = { dialog = null },
+                confirmLabel = "保存搜索",
+                onConfirmAction = ::saveCurrent,
+                confirmEnabled = name.isNotBlank() && !busy,
             ) {
                 MintTextField(
                     value = name,
@@ -381,7 +372,7 @@ internal fun LibrarySearchControls(
                     keyboardActions = KeyboardActions(onDone = { saveCurrent() }),
                 )
                 error?.let {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(4.dp))
                     Text(it, color = scheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -389,67 +380,73 @@ internal fun LibrarySearchControls(
 
         "已保存搜索" -> {
             var deleting by remember { mutableStateOf<SavedSearch?>(null) }
-            MintGlassDialog(
+            MintBottomSheet(
                 onDismissRequest = { dialog = null },
                 dark = dark,
                 title = "已保存搜索",
-                actions = {
-                    MintPillButton(
-                        label = "关闭",
-                        primary = true,
-                        dark = dark,
-                        onClick = { dialog = null },
-                    )
-                },
+                leadingLabel = null,
+                trailingLabel = "完成",
+                onTrailingClick = { dialog = null },
             ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 320.dp)
+                        .heightIn(max = 360.dp)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (saved.isEmpty()) {
-                        Text("还没有保存的搜索", color = scheme.onSurfaceVariant)
-                    }
-                    saved.forEach { item ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (dark) Color(0xFF1A2B22) else Color(0xFFF3F8F4))
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(
-                                imageVector = MintIcons.SmartFolder,
-                                contentDescription = null,
-                                tint = scheme.primary,
-                                modifier = Modifier.size(16.dp),
-                            )
+                        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                             Text(
-                                text = item.name,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                color = scheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                        role = Role.Button,
-                                        onClick = { restore(item) },
+                                text = "还没有保存的搜索",
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                color = scheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    } else {
+                        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                            saved.forEachIndexed { index, item ->
+                                if (index > 0) MintGroupedDivider(dark = dark, startIndent = 44.dp)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .defaultMinSize(minHeight = 48.dp)
+                                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = MintIcons.SmartFolder,
+                                        contentDescription = null,
+                                        tint = scheme.primary,
+                                        modifier = Modifier.size(18.dp),
                                     )
-                                    .padding(vertical = 8.dp),
-                            )
-                            MintPillButton(
-                                label = "删除",
-                                destructive = true,
-                                dark = dark,
-                                onClick = { deleting = item },
-                            )
+                                    Text(
+                                        text = item.name,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                        color = scheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                role = Role.Button,
+                                                onClick = { restore(item) },
+                                            )
+                                            .padding(vertical = 8.dp),
+                                    )
+                                    TextButton(onClick = { deleting = item }) {
+                                        Text(
+                                            text = "删除",
+                                            color = scheme.error,
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                     error?.let {
@@ -458,36 +455,28 @@ internal fun LibrarySearchControls(
                 }
             }
             deleting?.let { item ->
-                MintGlassDialog(
+                MintAlertDialog(
                     onDismissRequest = { deleting = null },
                     dark = dark,
                     title = "删除「${item.name}」？",
                     subtitle = "仅移除这条智能文件夹快捷方式，不会删除笔记。",
-                    actions = {
-                        MintPillButton(
-                            label = "取消",
-                            dark = dark,
-                            onClick = { deleting = null },
-                        )
-                        MintPillButton(
-                            label = "删除搜索",
-                            destructive = true,
-                            dark = dark,
-                            onClick = {
-                                deleting = null
-                                coroutine.launch {
-                                    try {
-                                        repository.delete(item.id)
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (_: Exception) {
-                                        error = "无法删除搜索条件，请重试"
-                                    }
-                                }
-                            },
-                        )
+                    dismissLabel = "取消",
+                    onDismissAction = { deleting = null },
+                    confirmLabel = "删除搜索",
+                    destructive = true,
+                    onConfirmAction = {
+                        deleting = null
+                        coroutine.launch {
+                            try {
+                                repository.delete(item.id)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                error = "无法删除搜索条件，请重试"
+                            }
+                        }
                     },
-                ) {}
+                )
             }
         }
     }
@@ -514,26 +503,16 @@ internal fun LibrarySearchControls(
                 }
             }
         }
-        MintGlassDialog(
+        MintAlertDialog(
             onDismissRequest = { if (!busy) renamingItem = null },
             dark = dark,
             dismissOnClickOutside = !busy,
             title = "重命名智能文件夹",
-            actions = {
-                MintPillButton(
-                    label = "取消",
-                    dark = dark,
-                    enabled = !busy,
-                    onClick = { renamingItem = null },
-                )
-                MintPillButton(
-                    label = "保存",
-                    primary = true,
-                    dark = dark,
-                    enabled = newName.isNotBlank() && !busy,
-                    onClick = ::submitRename,
-                )
-            },
+            dismissLabel = "取消",
+            onDismissAction = { if (!busy) renamingItem = null },
+            confirmLabel = "保存",
+            confirmEnabled = newName.isNotBlank() && !busy,
+            onConfirmAction = ::submitRename,
         ) {
             MintTextField(
                 value = newName,
@@ -548,7 +527,7 @@ internal fun LibrarySearchControls(
                 keyboardActions = KeyboardActions(onDone = { submitRename() }),
             )
             error?.let {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
                 Text(it, color = scheme.error, style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -568,7 +547,7 @@ private fun SmartFolderPill(
     val fill = if (active) {
         if (dark) Color(0xFF23523E) else Color(0xFFD7F2E4)
     } else {
-        if (dark) Color(0xFF1D3027) else Color(0xFFFAFDF9)
+        mintCardSurface(dark)
     }
     val contentColor = if (active) {
         if (dark) Color(0xFFAAF0CB) else Color(0xFF0E5A3A)
@@ -576,18 +555,12 @@ private fun SmartFolderPill(
         scheme.onSurface
     }
     val iconTint = if (active) contentColor else scheme.primary
-    val border = if (active) {
-        scheme.primary.copy(alpha = if (dark) 0.72f else 0.50f)
-    } else {
-        scheme.outline.copy(alpha = if (dark) 0.48f else 0.34f)
-    }
     Row(
         modifier = Modifier
             .defaultMinSize(minHeight = 48.dp)
             .widthIn(max = 260.dp)
             .clip(shape)
             .background(fill, shape)
-            .border(if (active) 1.2.dp else 0.9.dp, border, shape)
             .semantics { selected = active },
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -686,35 +659,29 @@ private fun ScopeDialog(
         else -> "none"
     }
 
-    MintGlassDialog(
+    MintBottomSheet(
         onDismissRequest = close,
         dark = dark,
         title = "筛选笔记",
-        actions = {
-            MintPillButton(
-                label = "取消",
-                dark = dark,
-                onClick = close,
-            )
-            MintPillButton(
-                label = "应用筛选",
-                primary = true,
-                icon = MintIcons.Check,
-                dark = dark,
-                onClick = {
-                    try {
-                        val from = start.trim().takeIf(String::isNotEmpty)
-                            ?.let { LocalDate.parse(it).atStartOfDay(zone).toInstant() }
-                        val until = end.trim().takeIf(String::isNotEmpty)
-                            ?.let { LocalDate.parse(it).plusDays(1).atStartOfDay(zone).toInstant() }
-                        apply(scope.copy(from = from, until = until))
-                    } catch (_: IllegalArgumentException) {
-                        error = true
-                    } catch (_: java.time.DateTimeException) {
-                        error = true
-                    }
-                },
-            )
+        leadingLabel = "取消",
+        onLeadingClick = close,
+        trailingLabel = "应用筛选",
+        onTrailingClick = {
+            try {
+                val from = start.trim().takeIf(String::isNotEmpty)
+                    ?.let { LocalDate.parse(it).atStartOfDay(zone).toInstant() }
+                val until = end.trim().takeIf(String::isNotEmpty)
+                    ?.let { LocalDate.parse(it).plusDays(1).atStartOfDay(zone).toInstant() }
+                if (from != null && until != null && !until.isAfter(from)) {
+                    error = true
+                } else {
+                    apply(scope.copy(from = from, until = until))
+                }
+            } catch (_: IllegalArgumentException) {
+                error = true
+            } catch (_: java.time.DateTimeException) {
+                error = true
+            }
         },
     ) {
         Column(

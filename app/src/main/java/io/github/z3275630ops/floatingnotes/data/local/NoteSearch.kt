@@ -90,13 +90,22 @@ internal interface SearchDao {
     @Query("SELECT * FROM saved_searches ORDER BY rowid DESC")
     fun saved(): Flow<List<SavedSearch>>
 
+    @Query("SELECT * FROM saved_searches ORDER BY rowid ASC")
+    suspend fun allSavedSearches(): List<SavedSearch>
+
     @Insert suspend fun save(search: SavedSearch)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(searches: List<SavedSearch>)
 
     @Query("UPDATE saved_searches SET name = :name WHERE id = :id")
     suspend fun rename(id: String, name: String)
 
     @Query("DELETE FROM saved_searches WHERE id = :id")
     suspend fun delete(id: String)
+
+    @Query("DELETE FROM saved_searches")
+    suspend fun clearAll()
 }
 
 internal class SearchRepository(private val database: NotesDatabase) {

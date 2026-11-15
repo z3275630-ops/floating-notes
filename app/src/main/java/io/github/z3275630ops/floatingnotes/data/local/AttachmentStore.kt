@@ -7,12 +7,15 @@ import android.graphics.ImageDecoder
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
+import android.os.StatFs
 import android.provider.OpenableColumns
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
+import io.github.z3275630ops.floatingnotes.data.backup.BackupCodec
+import io.github.z3275630ops.floatingnotes.data.backup.MiniJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -47,7 +50,7 @@ internal class AttachmentImportException(val reason: String) : IOException(reaso
 internal class AttachmentStore(
     private val context: Context,
     private val root: File = File(context.filesDir, "attachments"),
-    private val availableBytes: () -> Long = { root.usableSpace },
+    private val availableBytes: () -> Long = { queryAvailableBytes(root, context.filesDir) },
 ) {
     private val resolver = context.contentResolver
 
@@ -76,7 +79,7 @@ internal class AttachmentStore(
         if ((size ?: 0) > MAX_BYTES) throw AttachmentImportException("单个附件最多 100 MB")
         if (!root.isDirectory && !root.mkdirs()) throw IOException("Attachment directory unavailable")
         requireSpace(size ?: 0L)
-        require(ID.matches(id))
+        require(BackupCodec.isSafeAttachmentId(id)) { "非法附件 ID: $id" }
         find(id)?.let { return@withContext it }
         val stage = File(root, "$id.part")
         if (!stage.mkdir()) throw IOException("Cannot create staging directory")
@@ -129,7 +132,7 @@ internal class AttachmentStore(
     }
 
     suspend fun find(id: String): LocalAttachment? = withContext(Dispatchers.IO) {
-        if (!ID.matches(id)) return@withContext null
+        if (!BackupCodec.isSafeAttachmentId(id)) return@withContext null
         try {
             val metadata = JSONObject(File(root, "$id/metadata.json").readText())
             val bytes = metadata.getLong("bytes")
@@ -145,26 +148,199 @@ internal class AttachmentStore(
 
     fun original(attachment: LocalAttachment): File = File(root, "${attachment.id}/original")
 
+    fun rootDirectory(): File = root
+
+    suspend fun listReady(): List<LocalAttachment> = withContext(Dispatchers.IO) {
+        val folders = root.listFiles() ?: return@withContext emptyList()
+        folders
+            .filter { it.isDirectory && BackupCodec.isSafeAttachmentId(it.name) }
+            .mapNotNull { folder -> find(folder.name) }
+            .sortedBy { it.id }
+    }
+
+    suspend fun verifySha256(id: String): Boolean = withContext(Dispatchers.IO) {
+        val item = find(id) ?: return@withContext false
+        val file = original(item)
+        if (!file.isFile || file.length() != item.bytes) return@withContext false
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        try {
+            file.inputStream().use { input ->
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            val hex = digest.digest().joinToString("") { "%02x".format(it) }
+            hex.equals(item.sha256, ignoreCase = true)
+        } catch (_: IOException) {
+            false
+        }
+    }
+
+    suspend fun stageFromBackupFile(
+        id: String,
+        name: String,
+        mime: String,
+        expectedBytes: Long,
+        expectedSha256: String,
+        sourceOriginalFile: File,
+        stagingFolder: File,
+    ): LocalAttachment = withContext(Dispatchers.IO) {
+        require(BackupCodec.isSafeAttachmentId(id)) { "非法附件 ID: $id" }
+        require(sourceOriginalFile.isFile) { "缺失还原附件文件: $id" }
+        val actualLen = sourceOriginalFile.length()
+        if (actualLen != expectedBytes) {
+            throw AttachmentImportException("附件大小校验不一致: $name")
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        val destFolder = File(stagingFolder, id).apply {
+            deleteRecursively()
+            if (!mkdirs()) throw IOException("无法创建附件暂存目录")
+        }
+        val destOriginal = File(destFolder, "original")
+        val buffer = ByteArray(64 * 1024)
+        sourceOriginalFile.inputStream().use { input ->
+            FileOutputStream(destOriginal).use { output ->
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    digest.update(buffer, 0, read)
+                }
+                output.fd.sync()
+            }
+        }
+        val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
+        if (!actualHash.equals(expectedSha256, ignoreCase = true)) {
+            destFolder.deleteRecursively()
+            throw AttachmentImportException("附件哈希校验失败: $name")
+        }
+        // Thumbnails are rebuildable; try generating preview best-effort without failing hash-verified restore.
+        val kind = AttachmentKind.fromMime(mime)
+        if (kind != null) {
+            runCatching { validateMedia(destOriginal, kind, mime, File(destFolder, "preview.jpg")) }
+        }
+        writeSynced(File(destFolder, "metadata.json")) {
+            it.write(
+                JSONObject().put("name", name).put("mime", mime)
+                    .put("bytes", actualLen).put("sha256", actualHash)
+                    .toString().toByteArray(Charsets.UTF_8),
+            )
+        }
+        syncDirectory(destFolder)
+        LocalAttachment(id, name, mime, actualLen, actualHash)
+    }
+
+    suspend fun promoteStagedAttachments(
+        stagingFolder: File,
+        allowOverwrite: Boolean = true,
+    ) = withContext(Dispatchers.IO) {
+        val stagedDirs = stagingFolder.listFiles()
+            ?.filter { it.isDirectory && BackupCodec.isSafeAttachmentId(it.name) }
+            .orEmpty()
+        if (stagedDirs.isEmpty()) return@withContext
+        if (!root.isDirectory && !root.mkdirs()) throw IOException("Attachment directory unavailable")
+        for (staged in stagedDirs) {
+            val id = staged.name
+            val dest = File(root, id)
+            if (!allowOverwrite && find(id) != null) {
+                staged.deleteRecursively()
+                continue
+            }
+            val part = File(root, "$id.part")
+            part.deleteRecursively()
+            // Copy/move into .part inside root filesystem so Os.rename is atomic on same mount.
+            copyDirSynced(staged, part)
+            if (dest.exists()) {
+                if (!allowOverwrite && find(id) != null) {
+                    part.deleteRecursively()
+                    staged.deleteRecursively()
+                    continue
+                }
+                val oldBackup = File(root, "$id.old")
+                oldBackup.deleteRecursively()
+                Os.rename(dest.path, oldBackup.path)
+                try {
+                    Os.rename(part.path, dest.path)
+                    oldBackup.deleteRecursively()
+                } catch (err: Exception) {
+                    if (!dest.exists() && oldBackup.exists()) {
+                        runCatching { Os.rename(oldBackup.path, dest.path) }
+                    }
+                    throw err
+                }
+            } else {
+                Os.rename(part.path, dest.path)
+            }
+            staged.deleteRecursively()
+        }
+        syncDirectory(root)
+        root.parentFile?.let { syncDirectory(it) }
+    }
+
+    private fun copyDirSynced(src: File, dst: File) {
+        if (!dst.mkdirs()) throw IOException("无法创建目标附件目录: ${dst.path}")
+        for (child in src.listFiles().orEmpty()) {
+            if (child.isFile) {
+                writeSynced(File(dst, child.name)) { out ->
+                    child.inputStream().use { it.copyTo(out) }
+                }
+            }
+        }
+        syncDirectory(dst)
+    }
+
+    private fun readBackupLeaseIds(): Set<String> {
+        val journalDir = File(root.parentFile ?: context.filesDir, "backup_journal")
+        if (!journalDir.isDirectory) return emptySet()
+        val retained = HashSet<String>()
+        for (name in listOf("leases.json", "pending_restore.json")) {
+            val file = File(journalDir, name)
+            if (!file.isFile) continue
+            runCatching {
+                val obj = MiniJson.parseObject(file.readText(Charsets.UTF_8))
+                (obj["leased_attachment_ids"] as? List<*>)?.mapNotNull { it as? String }?.let(retained::addAll)
+                (obj["staged_attachment_ids"] as? List<*>)?.mapNotNull { it as? String }?.let(retained::addAll)
+            }
+        }
+        return retained
+    }
+
     suspend fun thumbnail(id: String): Bitmap? = withContext(Dispatchers.IO) {
-        if (!ID.matches(id)) return@withContext null
+        if (!BackupCodec.isSafeAttachmentId(id)) return@withContext null
         BitmapFactory.decodeFile(File(root, "$id/preview.jpg").path)
     }
 
-    suspend fun availableSpace(): Long = withContext(Dispatchers.IO) { context.filesDir.usableSpace }
+    suspend fun availableSpace(): Long = withContext(Dispatchers.IO) { availableBytes() }
 
     // Run before the first import in this process. Existing editors cannot create a new reference
-    // to an unreferenced file. Drafts, all revisions, and soft-deleted notes keep their media.
-    suspend fun recover(database: NotesDatabase) = recoveryLock.withLock {
+    // to an unreferenced file. Drafts, all revisions, soft-deleted notes, and active backup leases keep their media.
+    suspend fun recover(database: NotesDatabase, extraRetainedIds: Set<String> = emptySet()) = recoveryLock.withLock {
         if (recovered) return@withLock
-        collectUnreferenced(database)
+        collectUnreferenced(database, extraRetainedIds)
         recovered = true
     }
 
-    internal suspend fun collectUnreferenced(database: NotesDatabase) = withContext(Dispatchers.IO) {
+    internal suspend fun collectUnreferenced(
+        database: NotesDatabase,
+        extraRetainedIds: Set<String> = emptySet(),
+    ) = withContext(Dispatchers.IO) {
         val folders = root.listFiles() ?: return@withContext
-        folders.filter { it.name.endsWith(".part") && ID.matches(it.name.removeSuffix(".part")) }
-            .forEach { it.deleteRecursively() }
-        val ready = folders.filter { ID.matches(it.name) }.associateBy { it.name }.toMutableMap()
+        folders.filter {
+            it.isDirectory && (
+                (it.name.endsWith(".part") && BackupCodec.isSafeAttachmentId(it.name.removeSuffix(".part"))) ||
+                    (it.name.endsWith(".old") && BackupCodec.isSafeAttachmentId(it.name.removeSuffix(".old")))
+                )
+        }.forEach { it.deleteRecursively() }
+        val ready = folders
+            .filter { it.isDirectory && BackupCodec.isSafeAttachmentId(it.name) }
+            .associateBy { it.name }
+            .toMutableMap()
+        if (ready.isEmpty()) return@withContext
+        extraRetainedIds.forEach(ready::remove)
+        readBackupLeaseIds().forEach(ready::remove)
         if (ready.isEmpty()) return@withContext
         val sql = "SELECT document_json FROM notes UNION ALL SELECT document_json FROM drafts " +
             "UNION ALL SELECT document_json FROM note_versions"
@@ -264,9 +440,17 @@ internal class AttachmentStore(
         const val MAX_BYTES = 100_000_000L
         private const val MIN_FREE_BYTES = 1024 * 1024L
         private const val PREVIEW_SIZE = 256
-        private val ID = Regex("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
         private val recoveryLock = Mutex()
         private var recovered = false
+
+        private fun queryAvailableBytes(target: File, fallback: File): Long {
+            var probe: File? = target
+            while (probe != null && !probe.exists()) {
+                probe = probe.parentFile
+            }
+            val resolved = probe ?: fallback
+            return StatFs(resolved.path).availableBytes
+        }
 
         fun failureMessage(error: Exception): String = when {
             error is AttachmentImportException -> error.reason

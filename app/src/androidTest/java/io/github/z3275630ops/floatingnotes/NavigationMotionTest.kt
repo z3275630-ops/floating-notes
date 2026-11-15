@@ -25,8 +25,8 @@ class NavigationMotionTest {
         compose.onNodeWithTag("new-note").assertIsDisplayed().performClick()
         waitForEditor()
         compose.onNodeWithTag("capture-editor").assertTextEquals("留下这段草稿")
+        compose.onNodeWithText("取消").performClick()
         compose.onNodeWithText("丢弃草稿").performClick()
-        compose.onNodeWithText("丢弃").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("tab-Record").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("tab-Record").assertIsSelected()
     }

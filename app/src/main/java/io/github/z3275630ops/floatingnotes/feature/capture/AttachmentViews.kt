@@ -4,7 +4,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -15,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -28,20 +26,21 @@ import io.github.z3275630ops.floatingnotes.data.local.AttachmentKind
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
 import io.github.z3275630ops.floatingnotes.data.local.LocalAttachment
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 
 class AttachmentFileProvider : FileProvider()
 
 @Composable
 internal fun AttachmentThumbnail(store: AttachmentStore, id: String, type: String, modifier: Modifier) {
     val scheme = MaterialTheme.colorScheme
+    val dark = isSystemInDarkTheme()
     val preview by produceState<Bitmap?>(null, id) { value = store.thumbnail(id) }
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(10.dp)
     Box(
         modifier
             .clip(shape)
-            .background(scheme.secondaryContainer.copy(alpha = 0.7f))
-            .border(0.8.dp, scheme.outline.copy(alpha = 0.22f), shape),
+            .background(mintSecondaryFill(dark)),
         contentAlignment = Alignment.Center,
     ) {
         val bitmap = preview
@@ -94,7 +93,7 @@ internal fun AttachmentRow(
     val item = attachment
     var showTranscription by remember(id) { mutableStateOf(false) }
     val shape = RoundedCornerShape(16.dp)
-    val cardColor = if (dark) Color(0xFF1A2A22) else Color(0xFFF3F8F4)
+    val cardColor = mintCardSurface(dark)
 
     Column(
         modifier = Modifier
@@ -102,7 +101,6 @@ internal fun AttachmentRow(
             .padding(vertical = 4.dp)
             .clip(shape)
             .background(cardColor, shape)
-            .border(0.9.dp, scheme.outline.copy(alpha = 0.24f), shape)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -162,21 +160,28 @@ internal fun AttachmentRow(
                 }
             }
             if (AttachmentKind.fromMime(item?.mime) == AttachmentKind.Audio) {
-                MintPillButton(
-                    label = "转写",
-                    icon = MintIcons.Audio,
-                    dark = dark,
-                    enabled = enabled,
+                TextButton(
                     onClick = { showTranscription = true },
+                    enabled = enabled,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = "转写",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                    )
+                }
+            }
+            TextButton(
+                onClick = remove,
+                enabled = enabled,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = "移除",
+                    color = scheme.error,
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
                 )
             }
-            MintPillButton(
-                label = "移除",
-                dark = dark,
-                destructive = true,
-                enabled = enabled,
-                onClick = remove,
-            )
         }
         if (openFailed) {
             Text(

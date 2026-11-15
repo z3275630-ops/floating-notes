@@ -8,7 +8,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import kotlinx.coroutines.flow.Flow
 
-@Entity(tableName = "notes", indices = [Index("updated_at"), Index("archived_at")])
+@Entity(
+    tableName = "notes",
+    indices = [Index("updated_at"), Index("archived_at"), Index("deleted_at")],
+)
 internal data class NoteEntity(
     @PrimaryKey val id: String,
     val title: String?,
@@ -51,6 +54,8 @@ internal data class NoteVersionEntity(
     @ColumnInfo(name = "document_json") val documentJson: String,
     val origin: String,
     @ColumnInfo(name = "created_at") val createdAt: String,
+    val title: String? = null,
+    @ColumnInfo(name = "attachment_refs", defaultValue = "'[]'") val attachmentRefs: String = "[]",
 )
 
 @Entity(
@@ -108,6 +113,78 @@ internal interface NotesDao {
 
     @Query("SELECT COUNT(*) FROM outbox WHERE note_id = :noteId")
     suspend fun eventCount(noteId: String): Int
+
+    @Query("SELECT * FROM notes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, updated_at DESC, id")
+    fun observeTrashedNotes(): Flow<List<NoteEntity>>
+
+    @Query("SELECT id FROM notes WHERE deleted_at IS NOT NULL")
+    fun observeTrashedNoteIds(): Flow<List<String>>
+
+    @Query("SELECT * FROM notes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, updated_at DESC, id")
+    suspend fun trashedNotes(): List<NoteEntity>
+
+    @Query("SELECT * FROM notes")
+    suspend fun allNotes(): List<NoteEntity>
+
+    @Query("SELECT * FROM drafts")
+    suspend fun allDrafts(): List<DraftEntity>
+
+    @Query("SELECT * FROM note_versions ORDER BY note_id, revision")
+    suspend fun allVersions(): List<NoteVersionEntity>
+
+    @Query("SELECT * FROM note_versions WHERE note_id = :noteId ORDER BY revision DESC")
+    suspend fun versionsForNote(noteId: String): List<NoteVersionEntity>
+
+    @Query("SELECT * FROM note_versions WHERE note_id = :noteId AND revision = :revision")
+    suspend fun version(noteId: String, revision: Long): NoteVersionEntity?
+
+    @Query(
+        """
+        DELETE FROM note_versions
+        WHERE note_id = :noteId
+          AND revision != :keepRevision
+          AND revision NOT IN (
+            SELECT revision FROM note_versions
+            WHERE note_id = :noteId
+            ORDER BY revision DESC
+            LIMIT :keepCount
+          )
+        """,
+    )
+    suspend fun pruneOldVersions(noteId: String, keepCount: Int, keepRevision: Long)
+
+    @Query("DELETE FROM note_versions WHERE note_id = :noteId")
+    suspend fun deleteVersionsForNote(noteId: String)
+
+    @Query("DELETE FROM drafts WHERE note_id = :noteId")
+    suspend fun deleteDraftsForNote(noteId: String)
+
+    @Query("DELETE FROM outbox WHERE note_id = :noteId AND base_server_revision IS NULL")
+    suspend fun deleteUnsyncedOutboxForNote(noteId: String)
+
+    @Query("DELETE FROM notes WHERE id = :noteId")
+    suspend fun deleteNoteById(noteId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotes(notes: List<NoteEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDrafts(drafts: List<DraftEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertVersions(versions: List<NoteVersionEntity>)
+
+    @Query("DELETE FROM drafts")
+    suspend fun clearAllDrafts()
+
+    @Query("DELETE FROM note_versions")
+    suspend fun clearAllVersions()
+
+    @Query("DELETE FROM outbox")
+    suspend fun clearAllOutbox()
+
+    @Query("DELETE FROM notes")
+    suspend fun clearAllNotes()
 }
 
 @Database(
@@ -115,7 +192,7 @@ internal interface NotesDao {
         TaskIndexEntity::class, OutboxEntity::class, TagEntity::class, NotebookEntity::class,
         NoteTagEntity::class, NotebookNoteEntity::class, NoteLinkEntity::class, SavedSearch::class,
         ReminderEntity::class, TaskOccurrenceEntity::class],
-    version = 4,
+    version = 5,
     autoMigrations = [AutoMigration(from = 1, to = 2, spec = LinkBackfill::class)],
     exportSchema = true,
 )
@@ -126,13 +203,39 @@ internal abstract class NotesDatabase : RoomDatabase() {
     abstract fun taskReminders(): TaskReminderDao
 
     companion object {
+        const val SCHEMA_VERSION = 5
         private var shared: NotesDatabase? = null
-        internal val migrations: Array<Migration> = arrayOf(SearchMigration, MIGRATION_3_4)
+        internal val migrations: Array<Migration> = arrayOf(SearchMigration, MIGRATION_3_4, MIGRATION_4_5)
 
         @Synchronized
         fun open(context: Context): NotesDatabase = shared ?: Room.databaseBuilder(
             context.applicationContext, NotesDatabase::class.java, "floating-notes.db",
         ).addMigrations(*migrations).build().also { shared = it }
+    }
+}
+
+
+internal val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_deleted_at` ON `notes` (`deleted_at`)")
+        db.execSQL("ALTER TABLE `note_versions` ADD COLUMN `title` TEXT")
+        db.execSQL("ALTER TABLE `note_versions` ADD COLUMN `attachment_refs` TEXT NOT NULL DEFAULT '[]'")
+        db.query("SELECT note_id, revision, document_json FROM note_versions").use { rows ->
+            while (rows.moveToNext()) {
+                val noteId = rows.getString(0)
+                val rev = rows.getLong(1)
+                val refs = runCatching {
+                    val doc = NoteDocument.decode(rows.getString(2))
+                    org.json.JSONArray(doc.blocks.mapNotNull { it.attachmentId }.distinct()).toString()
+                }.getOrDefault("[]")
+                if (refs != "[]") {
+                    db.execSQL(
+                        "UPDATE `note_versions` SET `attachment_refs` = ? WHERE `note_id` = ? AND `revision` = ?",
+                        arrayOf<Any>(refs, noteId, rev),
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -83,3 +83,18 @@ internal fun mintHighlight(dark: Boolean) = Brush.horizontalGradient(
     if (dark) listOf(Color(0xFF2B6B52), Color(0xFF375633))
     else listOf(Color(0xFFA4E7CD), Color(0xFFD8F4B9)),
 )
+
+internal fun mintCardSurface(dark: Boolean): Color =
+    if (dark) Color(0xFF182720) else Color(0xFFFAFDF9)
+
+internal fun mintElevatedSurface(dark: Boolean): Color =
+    if (dark) Color(0xFF1F3229) else Color(0xFFFFFFFF)
+
+internal fun mintSecondaryFill(dark: Boolean): Color =
+    if (dark) Color(0xFF1A2B22) else Color(0xFFEAF2EC)
+
+internal fun mintDividerColor(dark: Boolean): Color =
+    if (dark) Color(0xFF283D32) else Color(0xFFDCE8DF)
+
+internal fun mintDestructiveColor(dark: Boolean): Color =
+    if (dark) Color(0xFFFF7B72) else Color(0xFFC93B32)

@@ -188,8 +188,13 @@
         "T10"
       ],
       "title": "历史、回收站与本地备份",
-      "status": "planned",
-      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/14"
+      "status": "implemented",
+      "issue_url": "https://github.com/z3275630-ops/floating-notes/issues/14",
+      "branch": "feat/T14-history-backup-ui",
+      "owner": "Codex",
+      "evidence": [
+        "docs/handoffs/2026-11-15-T14-apple-ui.md"
+      ]
     },
     {
       "id": "T15",

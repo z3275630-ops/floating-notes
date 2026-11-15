@@ -12,6 +12,12 @@ import androidx.lifecycle.viewModelScope
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
+import io.github.z3275630ops.floatingnotes.data.backup.BackupManager
+import io.github.z3275630ops.floatingnotes.data.backup.BackupUiState
+import io.github.z3275630ops.floatingnotes.data.backup.HistoryUiState
+import io.github.z3275630ops.floatingnotes.data.backup.RestoreMode
+import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
+import io.github.z3275630ops.floatingnotes.data.backup.TrashPurgeImpact
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentImportException
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentKind
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
@@ -24,6 +30,7 @@ import io.github.z3275630ops.floatingnotes.data.local.RecurrenceRule
 import io.github.z3275630ops.floatingnotes.data.local.ReminderEntity
 import io.github.z3275630ops.floatingnotes.data.local.ReminderPolicy
 import io.github.z3275630ops.floatingnotes.data.local.ReminderStatus
+import io.github.z3275630ops.floatingnotes.data.local.RestoreVersionResult
 import io.github.z3275630ops.floatingnotes.data.local.SearchRepository
 import io.github.z3275630ops.floatingnotes.data.local.TaskItemProjection
 import io.github.z3275630ops.floatingnotes.data.local.TaskPreferences
@@ -35,13 +42,16 @@ import io.github.z3275630ops.floatingnotes.feature.tasks.TaskBucket
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskRecurrence
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
@@ -123,6 +133,28 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         committedSeq = sequence
     }
 
+    fun replaceDocument(note: NoteEntity) {
+        val restoredDoc = NoteDocument.decode(note.documentJson)
+        draft = draft.copy(
+            id = newId(),
+            noteId = note.id,
+            baseRevision = note.revision,
+            documentJson = note.documentJson,
+            editSeq = 0L,
+            updatedAt = note.updatedAt,
+            sourceType = note.sourceType,
+            sourceUrl = note.sourceUrl,
+        )
+        blocks.clear()
+        blocks.addAll(restoredDoc.blocks.map(::EditorBlock))
+        trackedDocument = restoredDoc
+        sequence = 0L
+        checkpointSeq = 0L
+        committedSeq = 0L
+        focusBlockId = null
+        status = "已恢复为新版本 v${note.revision}"
+    }
+
     fun addPendingTag(tagId: String) {
         if (tagId !in pendingTagIds) pendingTagIds.add(tagId)
     }
@@ -186,6 +218,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     internal val repository = NotesRepository(database)
     val taskPreferences = TaskPreferences(application)
     val attachments = AttachmentStore(application)
+    internal val backupManager = BackupManager(application, database, attachments)
     val organization = OrganizationRepository(database)
     val search = SearchRepository(database)
     var editor by mutableStateOf<EditorSession?>(null)
@@ -198,6 +231,29 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         error = "无法读取本机笔记"
         emit(emptyList())
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val trashedNotes: StateFlow<List<NoteEntity>> = repository.trashedNotes.catch {
+        error = "无法读取回收站"
+        emit(emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val trashedCount: StateFlow<Int> = trashedNotes
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val trashedNoteIds: StateFlow<Set<String>> = repository.trashedNoteIds
+        .map { it.toSet() }
+        .catch { emit(emptySet()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    private val _historyState = MutableStateFlow(HistoryUiState())
+    val historyState: StateFlow<HistoryUiState> = _historyState.asStateFlow()
+
+    private val _trashPurgeImpact = MutableStateFlow<TrashPurgeImpact?>(null)
+    val trashPurgeImpact: StateFlow<TrashPurgeImpact?> = _trashPurgeImpact.asStateFlow()
+
+    private val _backupState = MutableStateFlow(BackupUiState())
+    val backupState: StateFlow<BackupUiState> = _backupState.asStateFlow()
 
     val captureDrafts = repository.captureDrafts.catch {
         error = "无法读取跨应用草稿"
@@ -212,11 +268,11 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val pendingTasksCount: StateFlow<Int> = taskItems
-        .map { items -> items.count { !it.checked } }
+        .map { items -> items.count { !it.checked && !it.noteArchived } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     val todoFilterNoteIds: StateFlow<Set<String>> = taskItems
-        .map { items -> items.mapTo(hashSetOf()) { it.noteId } }
+        .map { items -> items.filter { !it.noteArchived }.mapTo(hashSetOf()) { it.noteId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     val noteDueBadges: StateFlow<Map<String, String>> = taskItems
@@ -376,12 +432,18 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     init {
         viewModelScope.launch {
-            try {
-                attachments.recover(database)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                // Retry recovery on import. Existing notes remain available.
+            persistenceMutex.withLock {
+                try {
+                    val recoveredRestore = backupManager.recoverInterruptedRestoreIfNeeded()
+                    attachments.recover(database, backupManager.activeLeaseIds())
+                    if (recoveredRestore) {
+                        runCatching { reconcileTimeChange() }
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Retry recovery on import. Existing notes remain available.
+                }
             }
         }
     }
@@ -401,7 +463,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             var imported = 0
             var failure: String? = null
             try {
-                attachments.recover(database)
+                attachments.recover(database, backupManager.activeLeaseIds())
                 for ((index, uri) in uris.withIndex()) {
                     val label = "导入 ${index + 1}/${uris.size}"
                     session.importStatus = "$label · 正在读取"
@@ -472,7 +534,11 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     ): Boolean {
         val resolvedFocusBlockId = focusBlockId ?: pendingFocusBlockId.also { pendingFocusBlockId = null }
         val current = editor
-        if (current != null) {
+        val requestedDifferentTarget = current != null && (
+            (noteId != null && current.draft.noteId != noteId) ||
+                (captureSlot != null && current.draft.slot != captureSlot)
+            )
+        if (current != null && !requestedDifferentTarget) {
             if (noteId != null && current.draft.noteId == noteId && resolvedFocusBlockId != null) {
                 current.focusBlockId = resolvedFocusBlockId
             }
@@ -480,7 +546,13 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
         if (opening) return false
         opening = true
+        var previousStopped = false
         return try {
+            if (current != null) {
+                // Persist active session cleanly before loading the next note without flashing editor = null.
+                if (!persistAndStopSession(current)) return false
+                previousStopped = true
+            }
             val slot = captureSlot ?: noteId?.let { "note:$it" } ?: "manual"
             val note = noteId?.let {
                 repository.loadNote(it)?.takeIf { item -> item.deletedAt == null }
@@ -497,8 +569,14 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             error = null
             true
         } catch (cancelled: CancellationException) {
+            if (previousStopped && editor === current) {
+                editor = null
+            }
             throw cancelled
         } catch (_: Exception) {
+            if (previousStopped && editor === current) {
+                editor = null
+            }
             error = "无法打开笔记，原有内容仍在本机"
             false
         } finally {
@@ -554,8 +632,21 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             this.focusBlockId = focusBlockId
         }
         val sourceItems = if (preloadedTasks.isNotEmpty()) preloadedTasks else taskItems.value
+        applyTaskMetadataToSession(session, sourceItems)
+        val pending = pendingRecording(session)
+        if (pending != null && session.blocks.any { it.attachmentId == pending.nameWithoutExtension }) pending.delete()
+        session.voicePending = pendingRecording(session) != null
+        if (session.voicePending) session.voiceStatus = "有一段本机录音待保存"
+        editor = session
+        watch(session)
+    }
+
+    private fun applyTaskMetadataToSession(
+        session: EditorSession,
+        sourceItems: List<TaskItemProjection>,
+    ) {
         val itemsByBlock = sourceItems
-            .filter { it.noteId == draft.noteId }
+            .filter { it.noteId == session.draft.noteId }
             .associateBy(TaskItemProjection::blockId)
         session.blocks.forEach { block ->
             if (block.type == "checkbox") {
@@ -570,12 +661,6 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 }
             }
         }
-        val pending = pendingRecording(session)
-        if (pending != null && session.blocks.any { it.attachmentId == pending.nameWithoutExtension }) pending.delete()
-        session.voicePending = pendingRecording(session) != null
-        if (session.voicePending) session.voiceStatus = "有一段本机录音待保存"
-        editor = session
-        watch(session)
     }
 
     private fun watch(session: EditorSession) {
@@ -625,6 +710,18 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     suspend fun finishEditor(save: Boolean = false, discard: Boolean = false): Boolean {
         val session = editor ?: return true
+        if (!persistAndStopSession(session, save = save, discard = discard)) return false
+        if (editor === session) {
+            editor = null
+        }
+        return true
+    }
+
+    private suspend fun persistAndStopSession(
+        session: EditorSession,
+        save: Boolean = false,
+        discard: Boolean = false,
+    ): Boolean {
         if (session.closing || session.voiceSaving || session.writing) return false
         if (session.recording) {
             stopRecording(session)
@@ -668,17 +765,17 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             val editedDuringCommit = !discard &&
                 session.blocks.map { it.id to it.text.text.toString() } != preCommitEditableSnapshot
             if (editedDuringCommit) {
-                watch(session)
-                return false
+                if (editor === session) watch(session)
+                false
+            } else {
+                true
             }
-            editor = null
-            true
         } catch (cancelled: CancellationException) {
             if (editor == session) watch(session)
             throw cancelled
         } catch (_: Exception) {
             session.status = "保存失败，正文仍保留。可重试。"
-            watch(session)
+            if (editor == session) watch(session)
             false
         } finally {
             session.closing = false
@@ -1063,6 +1160,540 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     fun pin(note: NoteEntity) = changeMetadata { repository.setPinned(note.id, !note.pinned) }
     fun archive(note: NoteEntity) = changeMetadata { repository.setArchived(note.id, note.archivedAt == null) }
+
+    fun moveToTrash(note: NoteEntity) {
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        closeEditorIfMatchingLocked(setOf(note.id))
+                        val reminderIds = repository.moveToTrash(note.id)
+                        val app = getApplication<Application>()
+                        reminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
+                        if (_historyState.value.noteId == note.id) {
+                            _historyState.value = HistoryUiState()
+                        }
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "移入回收站失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
+    fun restoreFromTrash(note: NoteEntity) {
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        val sync = repository.restoreFromTrash(note.id)
+                        sync?.let { ReminderScheduler.syncReconcile(getApplication(), it) }
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "从回收站恢复失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
+    fun preparePurgeNote(note: NoteEntity) {
+        viewModelScope.launch {
+            persistenceMutex.withLock {
+                try {
+                    val readyIds = attachments.listReady().mapTo(HashSet()) { it.id }
+                    _trashPurgeImpact.value = repository.previewPurge(listOf(note.id), readyIds)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _trashPurgeImpact.value = TrashPurgeImpact(noteCount = 1, versionCount = 0, orphanedAttachmentCount = 0)
+                }
+            }
+        }
+    }
+
+    fun prepareEmptyTrash() {
+        viewModelScope.launch {
+            persistenceMutex.withLock {
+                try {
+                    val trashedIds = repository.listTrashedNotes().map { it.id }
+                    val readyIds = attachments.listReady().mapTo(HashSet()) { it.id }
+                    _trashPurgeImpact.value = repository.previewPurge(trashedIds, readyIds)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    val count = trashedNotes.value.size
+                    _trashPurgeImpact.value = TrashPurgeImpact(noteCount = count, versionCount = 0, orphanedAttachmentCount = 0)
+                }
+            }
+        }
+    }
+
+    fun clearPurgeImpact() {
+        _trashPurgeImpact.value = null
+    }
+
+    fun permanentlyDeleteNote(note: NoteEntity) {
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        closeEditorIfMatchingLocked(setOf(note.id))
+                        val result = repository.permanentlyDeleteNotes(listOf(note.id))
+                        val app = getApplication<Application>()
+                        result.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
+                        attachments.collectUnreferenced(database, backupManager.activeLeaseIds())
+                        _trashPurgeImpact.value = null
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "彻底删除失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
+    fun emptyTrash() {
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        val trashedIds = repository.listTrashedNotes().mapTo(HashSet()) { it.id }
+                        if (trashedIds.isNotEmpty()) {
+                            closeEditorIfMatchingLocked(trashedIds)
+                        }
+                        val result = repository.emptyTrash()
+                        val app = getApplication<Application>()
+                        result.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
+                        attachments.collectUnreferenced(database, backupManager.activeLeaseIds())
+                        _trashPurgeImpact.value = null
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "清空回收站失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
+    fun openVersionHistory(noteId: String) {
+        _historyState.value = HistoryUiState(noteId = noteId, loading = true)
+        viewModelScope.launch {
+            persistenceMutex.withLock {
+                try {
+                    if (editor?.draft?.noteId == noteId) {
+                        flushOpenEditorLocked()
+                    }
+                    val loaded = repository.listVersions(noteId)
+                    if (loaded == null) {
+                        _historyState.value = HistoryUiState(
+                            noteId = noteId,
+                            loading = false,
+                            errorMessage = "未找到该笔记的历史版本记录",
+                        )
+                        return@withLock
+                    }
+                    val (note, revisions) = loaded
+                    val defaultSelected = revisions.firstOrNull { !it.isCurrent }?.revision
+                        ?: revisions.firstOrNull()?.revision
+                    val readyMap = attachments.listReady().associate { it.id to it.name }
+                    val diff = defaultSelected?.let { rev ->
+                        repository.loadVersionDiff(noteId, rev) { readyMap[it] }
+                    }
+                    _historyState.value = HistoryUiState(
+                        noteId = noteId,
+                        currentRevision = note.revision,
+                        revisions = revisions,
+                        selectedRevision = defaultSelected,
+                        diffPreview = diff,
+                        loading = false,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _historyState.update {
+                        it.copy(
+                            loading = false,
+                            errorMessage = "无法加载版本历史，请稍后重试",
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun closeVersionHistory() {
+        _historyState.value = HistoryUiState()
+    }
+
+    fun selectHistoryRevision(revision: Long) {
+        val noteId = _historyState.value.noteId ?: return
+        _historyState.update {
+            it.copy(
+                selectedRevision = revision,
+                loading = true,
+                statusMessage = null,
+                errorMessage = null,
+            )
+        }
+        viewModelScope.launch {
+            persistenceMutex.withLock {
+                try {
+                    val readyMap = attachments.listReady().associate { it.id to it.name }
+                    val diff = repository.loadVersionDiff(noteId, revision) { readyMap[it] }
+                    _historyState.update { state ->
+                        if (state.noteId != noteId) state
+                        else state.copy(
+                            selectedRevision = revision,
+                            diffPreview = diff,
+                            loading = false,
+                            errorMessage = if (diff == null) "该版本记录不存在" else null,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _historyState.update {
+                        it.copy(loading = false, errorMessage = "无法读取该版本的差异对比")
+                    }
+                }
+            }
+        }
+    }
+
+    fun restoreVersionAsNewRevision(noteId: String, targetRevision: Long) {
+        _historyState.update { it.copy(restoring = true, statusMessage = null, errorMessage = null) }
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        val expectedRevision = _historyState.value
+                            .takeIf { it.noteId == noteId && it.currentRevision > 0L }
+                            ?.currentRevision
+                            ?: repository.loadNote(noteId)?.revision
+                            ?: 0L
+
+                        when (val result = repository.restoreVersion(noteId, targetRevision, expectedRevision)) {
+                            RestoreVersionResult.NotFound -> {
+                                _historyState.update {
+                                    it.copy(restoring = false, errorMessage = "找不到目标版本或笔记")
+                                }
+                            }
+                            RestoreVersionResult.Trashed -> {
+                                _historyState.update {
+                                    it.copy(restoring = false, errorMessage = "回收站中的笔记无法直接恢复版本，请先从回收站还原")
+                                }
+                            }
+                            is RestoreVersionResult.Conflict -> {
+                                val refreshed = repository.listVersions(noteId)
+                                val readyMap = attachments.listReady().associate { it.id to it.name }
+                                val selectedRev = _historyState.value.selectedRevision ?: targetRevision
+                                val diff = repository.loadVersionDiff(noteId, selectedRev) { readyMap[it] }
+                                _historyState.update { state ->
+                                    state.copy(
+                                        currentRevision = result.actualRevision,
+                                        revisions = refreshed?.second ?: state.revisions,
+                                        diffPreview = diff,
+                                        restoring = false,
+                                        errorMessage = "恢复期间笔记已在其他位置更新为 v${result.actualRevision}，已刷新列表，请确认差异后重试",
+                                    )
+                                }
+                            }
+                            is RestoreVersionResult.Restored -> {
+                                ReminderScheduler.syncReconcile(getApplication(), result.reminderSync)
+                                val activeSession = editor
+                                if (activeSession != null && activeSession.draft.noteId == noteId) {
+                                    watcher?.cancelAndJoin()
+                                    stopCheckpoint?.cancelAndJoin()
+                                    activeSession.replaceDocument(result.note)
+                                    val freshTasks = runCatching { repository.observeTaskItems().first() }
+                                        .getOrDefault(taskItems.value)
+                                    applyTaskMetadataToSession(activeSession, freshTasks)
+                                    watch(activeSession)
+                                }
+                                val readyMap = attachments.listReady().associate { it.id to it.name }
+                                val missingCount = result.referencedAttachmentIds
+                                    .distinct()
+                                    .count { it !in readyMap }
+                                val refreshed = repository.listVersions(noteId)
+                                val newCurrentRev = result.note.revision
+                                val refreshedDiff = repository.loadVersionDiff(noteId, targetRevision) { readyMap[it] }
+                                val statusMsg = if (missingCount > 0) {
+                                    "已创建新版本 v$newCurrentRev（有 $missingCount 个原附件在本机缺失，已保留缺失提示）"
+                                } else {
+                                    "已基于 v$targetRevision 创建新版本 v$newCurrentRev"
+                                }
+                                _historyState.update { state ->
+                                    state.copy(
+                                        currentRevision = newCurrentRev,
+                                        revisions = refreshed?.second ?: state.revisions,
+                                        selectedRevision = targetRevision,
+                                        diffPreview = refreshedDiff,
+                                        restoring = false,
+                                        statusMessage = statusMsg,
+                                        errorMessage = null,
+                                    )
+                                }
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        _historyState.update {
+                            it.copy(restoring = false, errorMessage = "恢复版本失败，当前笔记保持不变")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun exportFullBackup(destinationUri: Uri) {
+        _backupState.update {
+            it.copy(busy = true, busyLabel = "正在打包完整备份…", lastExportOutcome = null, errorMessage = null)
+        }
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        flushOpenEditorLocked()
+                        val outcome = backupManager.exportFullBackupToUri(destinationUri)
+                        _backupState.update {
+                            it.copy(
+                                busy = false,
+                                busyLabel = null,
+                                lastExportOutcome = outcome,
+                                errorMessage = if (outcome.ok) null else outcome.message,
+                            )
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (err: Exception) {
+                        _backupState.update {
+                            it.copy(
+                                busy = false,
+                                busyLabel = null,
+                                errorMessage = err.message ?: "导出完整备份失败",
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun exportMarkdownBundle(destinationUri: Uri) {
+        _backupState.update {
+            it.copy(busy = true, busyLabel = "正在导出 Markdown 压缩包…", lastExportOutcome = null, errorMessage = null)
+        }
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        flushOpenEditorLocked()
+                        val outcome = backupManager.exportMarkdownToUri(destinationUri)
+                        _backupState.update {
+                            it.copy(
+                                busy = false,
+                                busyLabel = null,
+                                lastExportOutcome = outcome,
+                                errorMessage = if (outcome.ok) null else outcome.message,
+                            )
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (err: Exception) {
+                        _backupState.update {
+                            it.copy(
+                                busy = false,
+                                busyLabel = null,
+                                errorMessage = err.message ?: "导出 Markdown 压缩包失败",
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun preflightBackup(sourceUri: Uri) {
+        _backupState.update {
+            it.copy(
+                busy = true,
+                busyLabel = "正在校验备份完整性…",
+                preflight = null,
+                lastRestoreOutcome = null,
+                errorMessage = null,
+            )
+        }
+        viewModelScope.launch {
+            persistenceMutex.withLock {
+                try {
+                    val preflight = backupManager.preflightBackupUri(sourceUri)
+                    _backupState.update {
+                        it.copy(
+                            busy = false,
+                            busyLabel = null,
+                            preflight = preflight,
+                            errorMessage = null,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (err: Exception) {
+                    _backupState.update {
+                        it.copy(
+                            busy = false,
+                            busyLabel = null,
+                            preflight = null,
+                            errorMessage = err.message ?: "备份校验未通过，原有数据保持完好",
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun setRestoreMode(mode: RestoreMode) {
+        _backupState.update { it.copy(preflightMode = mode) }
+    }
+
+    fun setAutoBackupBeforeRestore(enabled: Boolean) {
+        _backupState.update { it.copy(autoBackupBeforeRestore = enabled) }
+    }
+
+    fun confirmRestoreFromPreflight() {
+        val currentState = _backupState.value
+        if (currentState.preflight == null || currentState.busy) return
+        _backupState.update {
+            it.copy(busy = true, busyLabel = "正在安全还原数据…", lastRestoreOutcome = null, errorMessage = null)
+        }
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        flushOpenEditorLocked()
+                        val mode = _backupState.value.preflightMode
+                        val autoBackup = _backupState.value.autoBackupBeforeRestore
+                        val exec = backupManager.executeRestore(
+                            mode = mode,
+                            autoBackupBeforeRestore = autoBackup,
+                            zoneId = ZoneId.systemDefault(),
+                        )
+                        val app = getApplication<Application>()
+                        exec.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
+                        exec.activeRemindersToSchedule.forEach { ReminderScheduler.scheduleReminder(app, it) }
+
+                        if (exec.outcome is RestoreOutcome.Success) {
+                            val openSession = editor
+                            if (openSession != null && (mode == RestoreMode.REPLACE_ALL || repository.loadNote(openSession.draft.noteId) == null)) {
+                                closeEditorIfMatchingLocked(setOf(openSession.draft.noteId))
+                            }
+                            _historyState.value = HistoryUiState()
+                            _trashPurgeImpact.value = null
+                        }
+
+                        _backupState.update {
+                            when (val outcome = exec.outcome) {
+                                is RestoreOutcome.Success -> it.copy(
+                                    busy = false,
+                                    busyLabel = null,
+                                    preflight = null,
+                                    lastRestoreOutcome = outcome,
+                                    errorMessage = null,
+                                )
+                                is RestoreOutcome.Failure -> it.copy(
+                                    busy = false,
+                                    busyLabel = null,
+                                    lastRestoreOutcome = outcome,
+                                    errorMessage = null,
+                                )
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (err: Exception) {
+                        _backupState.update {
+                            it.copy(
+                                busy = false,
+                                busyLabel = null,
+                                lastRestoreOutcome = RestoreOutcome.Failure(
+                                    err.message ?: "还原过程中出现异常，原有笔记保持不变",
+                                    existingLibraryIntact = true,
+                                ),
+                                errorMessage = null,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun dismissRestorePreflight() {
+        _backupState.update { it.copy(preflight = null, errorMessage = null) }
+        viewModelScope.launch {
+            persistenceMutex.withLock {
+                runCatching { backupManager.dismissPreflight() }
+            }
+        }
+    }
+
+    fun clearBackupOutcome() {
+        _backupState.update {
+            it.copy(lastExportOutcome = null, lastRestoreOutcome = null, errorMessage = null)
+        }
+    }
+
+    private suspend fun flushOpenEditorLocked() {
+        val session = editor ?: return
+        if (session.closing || session.writing) return
+        session.writing = true
+        try {
+            watcher?.cancelAndJoin()
+            stopCheckpoint?.cancelAndJoin()
+            val document = session.document()
+            val sequence = session.sequenceFor(document)
+            if (session.existingNote && document.hasContent && sequence > session.committedSeq) {
+                val committed = repository.commit(encode(session, document, sequence))
+                commitSessionExtras(session)
+                session.syncAfterExternalCommit(committed.revision)
+            } else if (sequence > session.checkpointSeq && document.hasContent) {
+                repository.checkpoint(encode(session, document, sequence))
+                session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
+            }
+        } catch (_: Exception) {
+            // Keep existing persisted DB state intact when flushing dirty draft fails.
+        } finally {
+            session.writing = session.closing
+            if (!session.closing && editor === session) watch(session)
+        }
+    }
+
+    private suspend fun closeEditorIfMatchingLocked(noteIds: Set<String>) {
+        val session = editor ?: return
+        if (session.draft.noteId !in noteIds) return
+        session.closing = true
+        session.writing = true
+        try {
+            importJob?.cancelAndJoin()
+            watcher?.cancelAndJoin()
+            stopCheckpoint?.cancelAndJoin()
+            editor = null
+        } finally {
+            session.closing = false
+            session.writing = false
+        }
+    }
 
     private fun changeMetadata(change: suspend () -> Unit) = viewModelScope.launch {
         try {

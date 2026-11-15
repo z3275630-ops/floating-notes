@@ -41,20 +41,50 @@ class NotesDrawerTest {
         screenshot("mint-home")
         compose.onNodeWithTag("open-notes-drawer").performClick()
         val notebook = hasTestTag("drawer-notebook") and hasText(notebookName)
+        await(hasTestTag("notes-drawer-list"))
+        compose.waitUntil(10_000) {
+            runCatching {
+                compose.onNodeWithTag("notes-drawer-list").performScrollToNode(notebook)
+                true
+            }.getOrDefault(false)
+        }
         await(notebook)
+        compose.onNode(notebook).performScrollTo()
         compose.onNode(notebook).assertIsDisplayed()
         screenshot("mint-drawer")
         compose.onNode(notebook).performClick()
         await(hasTestTag("tab-Library"))
         compose.onNodeWithTag("tab-Library").assertIsSelected()
+        await(hasTestTag("library-list"))
+        compose.waitUntil(10_000) {
+            runCatching {
+                compose.onNodeWithTag("library-list").performScrollToNode(includedCard)
+                true
+            }.getOrDefault(false)
+        }
         await(includedCard)
+        compose.onNode(includedCard).assertIsDisplayed()
         compose.onNode(excludedCard).assertDoesNotExist()
         compose.onNodeWithTag("open-notes-drawer").performClick()
+        await(hasTestTag("notes-drawer-list"))
+        compose.waitUntil(10_000) {
+            runCatching {
+                compose.onNodeWithTag("notes-drawer-list").performScrollToNode(hasTestTag("drawer-archive"))
+                true
+            }.getOrDefault(false)
+        }
         await(hasTestTag("drawer-archive"))
-        compose.onNodeWithTag("drawer-archive").performClick()
+        compose.onNodeWithTag("drawer-archive").performScrollTo().performClick()
         await(hasText("归档"))
         compose.onNodeWithTag("tab-Record").assertIsSelected()
         compose.onNodeWithTag("open-notes-drawer").performClick()
+        await(hasTestTag("notes-drawer-list"))
+        compose.waitUntil(10_000) {
+            runCatching {
+                compose.onNodeWithTag("notes-drawer-list").performScrollToNode(hasTestTag("drawer-all"))
+                true
+            }.getOrDefault(false)
+        }
         await(hasTestTag("drawer-all"))
         compose.onNodeWithTag("notes-drawer").performTouchInput { swipeLeft() }
         await(hasTestTag("tab-Record"))
@@ -62,7 +92,7 @@ class NotesDrawerTest {
         compose.onNodeWithTag("new-note").performClick()
         await(hasTestTag("capture-editor"))
         screenshot("mint-capture")
-        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithText("取消").performClick()
         await(hasTestTag("tab-Record"))
     }
 

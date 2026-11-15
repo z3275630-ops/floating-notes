@@ -18,13 +18,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -43,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,17 +56,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -92,8 +100,451 @@ internal fun rememberMintPressScale(
 }
 
 /**
- * Unified frosted Mint Glass modal dialog used in place of raw Material AlertDialog.
- * Always renders with high-opacity fog glass so underlying lists never bleed through on API 29.
+ * Apple HIG Inset Grouped container: crisp borderless paper surface with zero outer border or shadow.
+ */
+@Composable
+internal fun MintGroupedSection(
+    dark: Boolean,
+    modifier: Modifier = Modifier,
+    shapeRadius: Dp = 16.dp,
+    containerColor: Color = mintCardSurface(dark),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(shapeRadius))
+            .background(containerColor),
+        content = content,
+    )
+}
+
+@Composable
+internal fun MintGroupedDivider(
+    dark: Boolean,
+    startIndent: Dp = 16.dp,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = startIndent)
+            .height(0.5.dp)
+            .background(mintDividerColor(dark)),
+    )
+}
+
+@Composable
+internal fun MintGroupedRow(
+    label: String,
+    dark: Boolean,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    leadingIcon: ImageVector? = null,
+    iconTint: Color? = null,
+    trailingText: String? = null,
+    showChevron: Boolean = false,
+    selected: Boolean = false,
+    destructive: Boolean = false,
+    enabled: Boolean = true,
+    onClick: (() -> Unit)? = null,
+    trailingContent: (@Composable RowScope.() -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val interactionSource = remember { MutableInteractionSource() }
+    val titleColor = when {
+        !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.45f)
+        destructive -> mintDestructiveColor(dark)
+        else -> scheme.onSurface
+    }
+    val rowBg = if (selected) scheme.primary.copy(alpha = if (dark) 0.14f else 0.08f) else Color.Transparent
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 50.dp)
+            .background(rowBg)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        enabled = enabled,
+                        interactionSource = interactionSource,
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onClick,
+                    )
+                } else Modifier
+            )
+            .padding(horizontal = 16.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (leadingIcon != null) {
+            Icon(
+                imageVector = leadingIcon,
+                contentDescription = null,
+                tint = iconTint ?: when {
+                    destructive -> mintDestructiveColor(dark)
+                    selected -> scheme.primary
+                    else -> scheme.primary
+                },
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                ),
+                color = titleColor,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (!trailingText.isNullOrBlank()) {
+            Text(
+                text = trailingText,
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        trailingContent?.invoke(this)
+        if (selected) {
+            Icon(
+                imageVector = MintIcons.Check,
+                contentDescription = null,
+                tint = scheme.primary,
+                modifier = Modifier.size(17.dp),
+            )
+        } else if (showChevron) {
+            Icon(
+                imageVector = MintIcons.ChevronRight,
+                contentDescription = null,
+                tint = scheme.onSurfaceVariant.copy(alpha = 0.55f),
+                modifier = Modifier.size(15.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Apple HIG Bottom Sheet hosted inside a Compose Dialog so [isDialog] semantics remain intact.
+ * Uses top grabber + 3-zone iOS navigation header (Cancel | Title | Primary Done/Save).
+ */
+@Composable
+internal fun MintBottomSheet(
+    onDismissRequest: () -> Unit,
+    dark: Boolean,
+    backdrop: GlassBackdrop = rememberGlassBackdrop(),
+    modifier: Modifier = Modifier,
+    title: String,
+    subtitle: String? = null,
+    leadingLabel: String? = "取消",
+    onLeadingClick: () -> Unit = onDismissRequest,
+    trailingLabel: String? = null,
+    onTrailingClick: (() -> Unit)? = null,
+    trailingEnabled: Boolean = true,
+    trailingTag: String? = null,
+    trailingDestructive: Boolean = false,
+    maxWidth: Dp = 600.dp,
+    maxHeightFraction: Float = 0.88f,
+    dismissOnClickOutside: Boolean = true,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * maxHeightFraction).dp
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnClickOutside = dismissOnClickOutside,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .imePadding(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = if (dark) 0.44f else 0.24f))
+                    .then(
+                        if (dismissOnClickOutside) {
+                            Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onDismissRequest,
+                            )
+                        } else Modifier
+                    )
+                    .clearAndSetSemantics { },
+            )
+            GlassSurface(
+                backdrop = backdrop,
+                tier = GlassTier.Reduced,
+                dark = dark,
+                shapeRadius = 28.dp,
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                elevatedModal = true,
+                modifier = modifier
+                    .align(Alignment.BottomCenter)
+                    .widthIn(max = maxWidth)
+                    .fillMaxWidth()
+                    .heightIn(max = maxSheetHeight),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp)
+                        .padding(top = 8.dp, bottom = 18.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(bottom = 6.dp)
+                            .size(width = 36.dp, height = 5.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(scheme.onSurfaceVariant.copy(alpha = 0.28f)),
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (!leadingLabel.isNullOrBlank()) {
+                                TextButton(
+                                    onClick = onLeadingClick,
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+                                ) {
+                                    Text(
+                                        text = leadingLabel,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = scheme.primary,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
+                        Column(
+                            modifier = Modifier.weight(1.8f),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = (-0.2).sp,
+                                ),
+                                color = scheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                            )
+                            if (!subtitle.isNullOrBlank()) {
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = scheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterEnd,
+                        ) {
+                            if (!trailingLabel.isNullOrBlank() && onTrailingClick != null) {
+                                TextButton(
+                                    onClick = onTrailingClick,
+                                    enabled = trailingEnabled,
+                                    modifier = Modifier.then(
+                                        if (trailingTag != null) Modifier.testTag(trailingTag) else Modifier
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+                                ) {
+                                    Text(
+                                        text = trailingLabel,
+                                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                                        color = when {
+                                            !trailingEnabled -> scheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                            trailingDestructive -> mintDestructiveColor(dark)
+                                            else -> scheme.primary
+                                        },
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    content()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compact Apple-style centered Alert dialog for destructive confirmations & quick prompts.
+ */
+@Composable
+internal fun MintAlertDialog(
+    onDismissRequest: () -> Unit,
+    dark: Boolean,
+    title: String,
+    confirmLabel: String,
+    onConfirmAction: () -> Unit,
+    modifier: Modifier = Modifier,
+    backdrop: GlassBackdrop = rememberGlassBackdrop(),
+    subtitle: String? = null,
+    dismissLabel: String? = "取消",
+    onDismissAction: () -> Unit = onDismissRequest,
+    confirmEnabled: Boolean = true,
+    destructive: Boolean = false,
+    dismissOnClickOutside: Boolean = true,
+    content: (@Composable ColumnScope.() -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnClickOutside = dismissOnClickOutside,
+        ),
+    ) {
+        GlassSurface(
+            backdrop = backdrop,
+            tier = GlassTier.Reduced,
+            dark = dark,
+            shapeRadius = 22.dp,
+            elevatedModal = true,
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp)
+                .widthIn(max = 318.dp)
+                .navigationBarsPadding()
+                .imePadding(),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = scheme.onSurface,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    if (content != null) {
+                        Spacer(Modifier.height(6.dp))
+                        content()
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(0.5.dp)
+                        .background(mintDividerColor(dark)),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (!dismissLabel.isNullOrBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 48.dp)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = onDismissAction,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = dismissLabel,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = scheme.primary,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .width(0.5.dp)
+                                .height(48.dp)
+                                .background(mintDividerColor(dark)),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 48.dp)
+                            .clickable(
+                                enabled = confirmEnabled,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                role = Role.Button,
+                                onClick = onConfirmAction,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = confirmLabel,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = when {
+                                !confirmEnabled -> scheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                destructive -> mintDestructiveColor(dark)
+                                else -> scheme.primary
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Unified frosted Mint Glass modal dialog kept for legacy/external callers.
  */
 @Composable
 internal fun MintGlassDialog(
@@ -192,12 +643,12 @@ internal fun MintTextField(
     val scheme = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
     val borderColor by animateColorAsState(
-        targetValue = if (focused) scheme.primary else scheme.outline.copy(alpha = if (dark) 0.45f else 0.35f),
+        targetValue = if (focused) scheme.primary.copy(alpha = 0.75f) else Color.Transparent,
         animationSpec = mintSpringSpec(),
         label = "mint-field-border",
     )
-    val container = if (dark) Color(0xFF1A2B22) else Color(0xFFF3F8F4)
-    val shape = RoundedCornerShape(14.dp)
+    val container = mintSecondaryFill(dark)
+    val shape = RoundedCornerShape(12.dp)
 
     Row(
         modifier = modifier
@@ -205,8 +656,8 @@ internal fun MintTextField(
             .defaultMinSize(minHeight = 48.dp)
             .clip(shape)
             .background(container, shape)
-            .border(if (focused) 1.8.dp else 1.dp, borderColor, shape)
-            .padding(start = 14.dp, end = 6.dp),
+            .then(if (focused) Modifier.border(1.2.dp, borderColor, shape) else Modifier)
+            .padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leadingIcon != null) {
@@ -357,38 +808,16 @@ internal fun MintSelectionRow(
 ) {
     val scheme = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
-    val scale = rememberMintPressScale(interactionSource, 0.985f)
-    val shape = RoundedCornerShape(16.dp)
     val fillColor by animateColorAsState(
-        targetValue = when {
-            selected && dark -> Color(0xFF234D3C)
-            selected -> Color(0xFFE0F4EA)
-            dark -> Color(0xFF1A2A22)
-            else -> Color(0xFFF3F8F4)
-        },
+        targetValue = if (selected) scheme.primary.copy(alpha = if (dark) 0.14f else 0.08f) else Color.Transparent,
         animationSpec = mintSpringSpec(),
         label = "mint-row-fill",
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (selected) {
-            scheme.primary.copy(alpha = if (dark) 0.72f else 0.55f)
-        } else {
-            scheme.outline.copy(alpha = if (dark) 0.3f else 0.2f)
-        },
-        animationSpec = mintSpringSpec(),
-        label = "mint-row-border",
     )
 
     val rowModifier = modifier
         .fillMaxWidth()
-        .defaultMinSize(minHeight = 50.dp)
-        .graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-        }
-        .clip(shape)
-        .background(fillColor, shape)
-        .border(if (selected) 1.3.dp else 0.8.dp, borderColor, shape)
+        .defaultMinSize(minHeight = 48.dp)
+        .background(fillColor)
         .then(
             if (semanticsRole == Role.Checkbox) {
                 Modifier.toggleable(
@@ -408,7 +837,7 @@ internal fun MintSelectionRow(
                 )
             }
         )
-        .padding(horizontal = 14.dp, vertical = 11.dp)
+        .padding(horizontal = 16.dp, vertical = 11.dp)
 
     Row(
         modifier = rowModifier,
@@ -427,9 +856,9 @@ internal fun MintSelectionRow(
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                 ),
-                color = if (selected) scheme.onSurface else scheme.onSurface.copy(alpha = 0.9f),
+                color = if (selected) scheme.onSurface else scheme.onSurface.copy(alpha = 0.92f),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -445,47 +874,21 @@ internal fun MintSelectionRow(
             }
         }
         if (!trailingBadge.isNullOrBlank()) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(scheme.surface.copy(alpha = if (dark) 0.55f else 0.85f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            ) {
-                Text(
-                    text = trailingBadge,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = scheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                text = trailingBadge,
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.onSurfaceVariant,
+            )
         }
-        if (multiSelect) {
-            MintCheckbox(
-                checked = selected,
-                onCheckedChange = null,
-                dark = dark,
+        if (selected) {
+            Icon(
+                imageVector = MintIcons.Check,
+                contentDescription = null,
+                tint = scheme.primary,
+                modifier = Modifier.size(18.dp),
             )
         } else {
-            Box(
-                modifier = Modifier
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(if (selected) scheme.primary else Color.Transparent)
-                    .border(
-                        width = 1.5.dp,
-                        color = if (selected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.42f),
-                        shape = CircleShape,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (selected) {
-                    Icon(
-                        imageVector = MintIcons.Check,
-                        contentDescription = null,
-                        tint = scheme.onPrimary,
-                        modifier = Modifier.size(13.dp),
-                    )
-                }
-            }
+            Spacer(Modifier.size(18.dp))
         }
     }
 }
@@ -568,15 +971,18 @@ internal fun MintChip(
     ) {
         Row(
             modifier = Modifier
-                .defaultMinSize(minHeight = 38.dp)
+                .defaultMinSize(minHeight = 36.dp)
                 .clip(shape)
                 .background(containerColor, shape)
-                .border(if (selected) 1.2.dp else 0.9.dp, borderColor, shape)
+                .then(
+                    if (selected) Modifier.border(0.6.dp, borderColor, shape)
+                    else Modifier
+                )
                 .padding(
-                    start = if (leadingIcon != null) 11.dp else 13.dp,
-                    end = if (removable || trailingCount != null) 10.dp else 13.dp,
-                    top = 7.dp,
-                    bottom = 7.dp,
+                    start = if (leadingIcon != null) 10.dp else 12.dp,
+                    end = if (removable || trailingCount != null) 9.dp else 12.dp,
+                    top = 6.dp,
+                    bottom = 6.dp,
                 ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -632,23 +1038,22 @@ internal fun MintSegmentedBar(
     dark: Boolean,
     modifier: Modifier = Modifier,
     badges: List<Int?> = emptyList(),
+    optionTags: List<String> = emptyList(),
 ) {
     if (options.isEmpty()) return
     val scheme = MaterialTheme.colorScheme
-    val trackColor = if (dark) Color(0xFF172720) else Color(0xFFE7F0EA)
+    val trackColor = if (dark) Color(0xFF172720) else Color(0xFFE5EFE8)
     val thumbColor = if (dark) Color(0xFF285845) else Color(0xFFFFFFFF)
-    val borderColor = if (dark) Color(0xFF2D4A3D) else Color(0xFFCDE2D6)
 
     Box(
         modifier = modifier
-            .defaultMinSize(minHeight = 48.dp)
+            .defaultMinSize(minHeight = 44.dp)
             .clip(RoundedCornerShape(50))
             .background(trackColor, RoundedCornerShape(50))
-            .border(1.dp, borderColor, RoundedCornerShape(50))
-            .padding(4.dp),
+            .padding(3.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(38.dp)) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(36.dp)) {
             val count = options.size
             val segmentWidth = maxWidth / count
             val safeIndex = selectedIndex.coerceIn(0, count - 1)
@@ -664,23 +1069,24 @@ internal fun MintSegmentedBar(
                     .offset(x = activeOffset)
                     .width(segmentWidth)
                     .fillMaxHeight()
+                    .then(
+                        if (!dark) Modifier.shadow(2.dp, RoundedCornerShape(50), ambientColor = Color(0x14000000), spotColor = Color(0x14000000))
+                        else Modifier
+                    )
                     .clip(RoundedCornerShape(50))
-                    .background(thumbColor, RoundedCornerShape(50))
-                    .border(
-                        width = 0.8.dp,
-                        color = if (dark) Color(0xFF53A884).copy(alpha = 0.45f) else Color(0xFF126543).copy(alpha = 0.16f),
-                        shape = RoundedCornerShape(50),
-                    ),
+                    .background(thumbColor, RoundedCornerShape(50)),
             )
             Row(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                 options.forEachIndexed { index, label ->
                     val selected = index == safeIndex
                     val interactionSource = remember { MutableInteractionSource() }
                     val badge = badges.getOrNull(index)
+                    val optionTag = optionTags.getOrNull(index)
                     Row(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .then(if (!optionTag.isNullOrBlank()) Modifier.testTag(optionTag) else Modifier)
                             .clip(RoundedCornerShape(50))
                             .selectable(
                                 selected = selected,
@@ -736,14 +1142,14 @@ internal fun MintIconButton(
     modifier: Modifier = Modifier,
     iconSize: Dp = 20.dp,
     tint: Color? = null,
-    containerColor: Color? = null,
+    containerColor: Color? = Color.Transparent,
     borderColor: Color? = null,
     enabled: Boolean = true,
 ) {
     val scheme = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
     val scale = rememberMintPressScale(interactionSource, 0.94f)
-    val fill = containerColor ?: if (dark) Color(0xFF1C2E25) else Color(0xFFF6FAF6)
+    val fill = containerColor ?: Color.Transparent
     val resolvedTint = (tint ?: scheme.onSurface).copy(alpha = if (enabled) 1f else 0.38f)
 
     Box(
@@ -756,14 +1162,8 @@ internal fun MintIconButton(
             .clip(CircleShape)
             .then(if (fill != Color.Transparent) Modifier.background(fill, CircleShape) else Modifier)
             .then(
-                if (borderColor != null) Modifier.border(1.dp, borderColor, CircleShape)
-                else if (fill != Color.Transparent) {
-                    Modifier.border(
-                        0.9.dp,
-                        if (dark) Color.White.copy(alpha = 0.14f) else scheme.primary.copy(alpha = 0.14f),
-                        CircleShape,
-                    )
-                } else Modifier
+                if (borderColor != null) Modifier.border(0.8.dp, borderColor, CircleShape)
+                else Modifier
             )
             .clickable(
                 enabled = enabled,
@@ -834,7 +1234,11 @@ internal fun MintPillButton(
             }
             .clip(shape)
             .background(containerBrush, shape)
-            .border(1.dp, border, shape)
+            .then(
+                if (!primary && !enabled) Modifier.border(0.6.dp, border, shape)
+                else if (destructive) Modifier.border(0.6.dp, border, shape)
+                else Modifier
+            )
             .clickable(
                 enabled = enabled,
                 interactionSource = interactionSource,
@@ -842,7 +1246,7 @@ internal fun MintPillButton(
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 15.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {

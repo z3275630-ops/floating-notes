@@ -7,20 +7,18 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,16 +27,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -50,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -57,10 +59,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -72,18 +77,25 @@ import io.github.z3275630ops.floatingnotes.data.local.TaskItemProjection
 import io.github.z3275630ops.floatingnotes.data.local.TaskOccurrenceEntity
 import io.github.z3275630ops.floatingnotes.data.local.TaskPreferences
 import io.github.z3275630ops.floatingnotes.data.local.TaskToggleResult
-import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassAction
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
-import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChip
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChipStyle
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGlassDialog
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedRow
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSegmentedBar
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
+import io.github.z3275630ops.floatingnotes.ui.designsystem.NoteMenuTrigger
 import io.github.z3275630ops.floatingnotes.ui.designsystem.glassSource
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAmbient
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAnimatorsEnabled
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDestructiveColor
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSpringSpec
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -355,31 +367,40 @@ internal fun TasksScreenContent(
         }
     }
 
+    val opaqueCanvas = if (dark) Color(0xFF0D1813) else Color(0xFFF3FAF5)
     Box(
         modifier = modifier
             .fillMaxSize()
+            .background(opaqueCanvas)
             .testTag("tasks_screen"),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .background(opaqueCanvas)
                 .mintAmbient(dark)
-                .glassSource(backdrop),
+                .glassSource(backdrop)
+                .clearAndSetSemantics { }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
         )
+
+        val openTasksCount = remember(items) { items.count { !it.checked } }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             TasksHeaderBar(
-                todayCount = overdueItems.size + todayItems.size + unscheduledItems.size,
+                openCount = openTasksCount,
                 todoStartupEnabled = todoStartupEnabled,
                 onToggleTodoStartup = onToggleTodoStartup,
                 onClose = onClose,
-                backdrop = backdrop,
-                tier = tier,
                 dark = dark,
             )
 
@@ -391,8 +412,6 @@ internal fun TasksScreenContent(
                     TasksFilter.UPCOMING to upcomingItems.size,
                     TasksFilter.COMPLETED to (completedItems.size + extraOccurrences.size),
                 ),
-                backdrop = backdrop,
-                tier = tier,
                 dark = dark,
             )
 
@@ -404,8 +423,6 @@ internal fun TasksScreenContent(
                     dismissLabel = null,
                     onAction = onOpenNotificationSettings,
                     onDismiss = null,
-                    backdrop = backdrop,
-                    tier = tier,
                     dark = dark,
                     testTag = "tasks_notification_banner",
                     actionTag = "tasks_open_notification_settings",
@@ -418,8 +435,6 @@ internal fun TasksScreenContent(
                     dismissLabel = "暂不提醒",
                     onAction = onOpenExactAlarmSettings,
                     onDismiss = onDismissExactAlarmGuidance,
-                    backdrop = backdrop,
-                    tier = tier,
                     dark = dark,
                     testTag = "tasks_exact_alarm_banner",
                     actionTag = "tasks_open_exact_alarm_settings",
@@ -428,16 +443,14 @@ internal fun TasksScreenContent(
 
             AnimatedVisibility(visible = statusFeedback != null) {
                 statusFeedback?.let { message ->
-                    GlassSurface(
-                        backdrop = backdrop,
-                        tier = tier,
+                    MintGroupedSection(
                         dark = dark,
-                        modifier = Modifier.fillMaxWidth(),
+                        containerColor = mintSecondaryFill(dark),
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
@@ -447,12 +460,16 @@ internal fun TasksScreenContent(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.weight(1f),
                             )
-                            MintChip(
-                                label = "知道了",
+                            TextButton(
                                 onClick = onDismissStatusFeedback,
-                                dark = dark,
-                                style = MintChipStyle.Standard,
-                            )
+                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                            ) {
+                                Text(
+                                    text = "知道了",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
                     }
                 }
@@ -462,8 +479,7 @@ internal fun TasksScreenContent(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(top = 2.dp, bottom = 24.dp),
             ) {
                 when (selectedFilter) {
                     TasksFilter.TODAY -> {
@@ -472,17 +488,20 @@ internal fun TasksScreenContent(
                                 TasksEmptyCard(
                                     title = "今天没有待办",
                                     subtitle = "在笔记正文添加复选框，或从「未来」调整日期后会自动出现在这里。",
-                                    backdrop = backdrop,
-                                    tier = tier,
                                     dark = dark,
                                 )
                             }
                         } else {
                             if (overdueItems.isNotEmpty()) {
                                 item("hdr_overdue") {
-                                    TaskSectionHeader("已逾期 · ${overdueItems.size}", overdue = true)
+                                    TaskSectionHeader("已逾期 · ${overdueItems.size}", overdue = true, topSpacing = 2.dp)
                                 }
-                                items(overdueItems, key = { "ov_${it.noteId}_${it.blockId}" }) { item ->
+                                groupedTaskItems(
+                                    items = overdueItems,
+                                    keyPrefix = "ov",
+                                    itemKey = { "${it.noteId}_${it.blockId}" },
+                                    dark = dark,
+                                ) { item, rowMod ->
                                     TaskRowCard(
                                         item = item,
                                         today = today,
@@ -492,17 +511,25 @@ internal fun TasksScreenContent(
                                         onToggle = { onToggleTask(item) },
                                         onOpenNote = { onOpenNote(item.noteId, item.blockId) },
                                         onEditSchedule = { onEditSchedule(item) },
-                                        backdrop = backdrop,
-                                        tier = tier,
                                         dark = dark,
+                                        modifier = rowMod,
                                     )
                                 }
                             }
                             if (todayItems.isNotEmpty()) {
                                 item("hdr_today") {
-                                    TaskSectionHeader("今天 · ${todayItems.size}", overdue = false)
+                                    TaskSectionHeader(
+                                        title = "今天 · ${todayItems.size}",
+                                        overdue = false,
+                                        topSpacing = if (overdueItems.isNotEmpty()) 16.dp else 2.dp,
+                                    )
                                 }
-                                items(todayItems, key = { "td_${it.noteId}_${it.blockId}" }) { item ->
+                                groupedTaskItems(
+                                    items = todayItems,
+                                    keyPrefix = "td",
+                                    itemKey = { "${it.noteId}_${it.blockId}" },
+                                    dark = dark,
+                                ) { item, rowMod ->
                                     TaskRowCard(
                                         item = item,
                                         today = today,
@@ -512,17 +539,25 @@ internal fun TasksScreenContent(
                                         onToggle = { onToggleTask(item) },
                                         onOpenNote = { onOpenNote(item.noteId, item.blockId) },
                                         onEditSchedule = { onEditSchedule(item) },
-                                        backdrop = backdrop,
-                                        tier = tier,
                                         dark = dark,
+                                        modifier = rowMod,
                                     )
                                 }
                             }
                             if (unscheduledItems.isNotEmpty()) {
                                 item("hdr_unscheduled") {
-                                    TaskSectionHeader("未设日期 · ${unscheduledItems.size}", overdue = false)
+                                    TaskSectionHeader(
+                                        title = "未设日期 · ${unscheduledItems.size}",
+                                        overdue = false,
+                                        topSpacing = if (overdueItems.isNotEmpty() || todayItems.isNotEmpty()) 16.dp else 2.dp,
+                                    )
                                 }
-                                items(unscheduledItems, key = { "un_${it.noteId}_${it.blockId}" }) { item ->
+                                groupedTaskItems(
+                                    items = unscheduledItems,
+                                    keyPrefix = "un",
+                                    itemKey = { "${it.noteId}_${it.blockId}" },
+                                    dark = dark,
+                                ) { item, rowMod ->
                                     TaskRowCard(
                                         item = item,
                                         today = today,
@@ -532,9 +567,8 @@ internal fun TasksScreenContent(
                                         onToggle = { onToggleTask(item) },
                                         onOpenNote = { onOpenNote(item.noteId, item.blockId) },
                                         onEditSchedule = { onEditSchedule(item) },
-                                        backdrop = backdrop,
-                                        tier = tier,
                                         dark = dark,
+                                        modifier = rowMod,
                                     )
                                 }
                             }
@@ -547,13 +581,19 @@ internal fun TasksScreenContent(
                                 TasksEmptyCard(
                                     title = "暂无未来排期待办",
                                     subtitle = "点击任意待办的「排期」，即可设置未来截止日期与定时提醒。",
-                                    backdrop = backdrop,
-                                    tier = tier,
                                     dark = dark,
                                 )
                             }
                         } else {
-                            items(upcomingItems, key = { "up_${it.noteId}_${it.blockId}" }) { item ->
+                            item("hdr_upcoming") {
+                                TaskSectionHeader("即将到来 · ${upcomingItems.size}", overdue = false, topSpacing = 2.dp)
+                            }
+                            groupedTaskItems(
+                                items = upcomingItems,
+                                keyPrefix = "up",
+                                itemKey = { "${it.noteId}_${it.blockId}" },
+                                dark = dark,
+                            ) { item, rowMod ->
                                 TaskRowCard(
                                     item = item,
                                     today = today,
@@ -563,9 +603,8 @@ internal fun TasksScreenContent(
                                     onToggle = { onToggleTask(item) },
                                     onOpenNote = { onOpenNote(item.noteId, item.blockId) },
                                     onEditSchedule = { onEditSchedule(item) },
-                                    backdrop = backdrop,
-                                    tier = tier,
                                     dark = dark,
+                                    modifier = rowMod,
                                 )
                             }
                         }
@@ -577,17 +616,20 @@ internal fun TasksScreenContent(
                                 TasksEmptyCard(
                                     title = "还没有已完成待办",
                                     subtitle = "勾选待办或在提醒通知点击「完成」后，会保留在这里以便核对。",
-                                    backdrop = backdrop,
-                                    tier = tier,
                                     dark = dark,
                                 )
                             }
                         } else {
                             if (completedItems.isNotEmpty()) {
                                 item("hdr_completed") {
-                                    TaskSectionHeader("已完成待办 · ${completedItems.size}", overdue = false)
+                                    TaskSectionHeader("已完成待办 · ${completedItems.size}", overdue = false, topSpacing = 2.dp)
                                 }
-                                items(completedItems, key = { "done_${it.noteId}_${it.blockId}" }) { item ->
+                                groupedTaskItems(
+                                    items = completedItems,
+                                    keyPrefix = "done",
+                                    itemKey = { "${it.noteId}_${it.blockId}" },
+                                    dark = dark,
+                                ) { item, rowMod ->
                                     TaskRowCard(
                                         item = item,
                                         today = today,
@@ -597,24 +639,31 @@ internal fun TasksScreenContent(
                                         onToggle = { onToggleTask(item) },
                                         onOpenNote = { onOpenNote(item.noteId, item.blockId) },
                                         onEditSchedule = { onEditSchedule(item) },
-                                        backdrop = backdrop,
-                                        tier = tier,
                                         dark = dark,
+                                        modifier = rowMod,
                                     )
                                 }
                             }
                             if (extraOccurrences.isNotEmpty()) {
                                 item("hdr_occ") {
-                                    TaskSectionHeader("循环任务完成记录 · ${extraOccurrences.size}", overdue = false)
+                                    TaskSectionHeader(
+                                        title = "循环任务完成记录 · ${extraOccurrences.size}",
+                                        overdue = false,
+                                        topSpacing = if (completedItems.isNotEmpty()) 16.dp else 2.dp,
+                                    )
                                 }
-                                items(extraOccurrences, key = { "occ_${it.id}" }) { occ ->
+                                groupedTaskItems(
+                                    items = extraOccurrences,
+                                    keyPrefix = "occ",
+                                    itemKey = { it.id },
+                                    dark = dark,
+                                    dividerIndent = 16.dp,
+                                ) { occ, rowMod ->
                                     CompletedOccurrenceCard(
                                         occurrence = occ,
                                         zoneId = zoneId,
                                         onOpenNote = { onOpenNote(occ.noteId, occ.blockId) },
-                                        backdrop = backdrop,
-                                        tier = tier,
-                                        dark = dark,
+                                        modifier = rowMod,
                                     )
                                 }
                             }
@@ -645,79 +694,122 @@ internal fun TasksScreenContent(
 
 @Composable
 private fun TasksHeaderBar(
-    todayCount: Int,
+    openCount: Int,
     todoStartupEnabled: Boolean,
     onToggleTodoStartup: (Boolean) -> Unit,
     onClose: (() -> Unit)?,
-    backdrop: GlassBackdrop,
-    tier: GlassTier,
     dark: Boolean,
 ) {
-    GlassSurface(
-        backdrop = backdrop,
-        tier = tier,
-        dark = dark,
+    val scheme = MaterialTheme.colorScheme
+    var showMoreMenu by remember { mutableStateOf(false) }
+    val backInteraction = remember { MutableInteractionSource() }
+
+    Column(
         modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .defaultMinSize(minHeight = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
+            if (onClose != null) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        text = "待办",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                    ) {
-                        Text(
-                            text = "$todayCount 项待处理",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = 48.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(
+                            interactionSource = backInteraction,
+                            indication = null,
+                            role = Role.Button,
+                            onClick = onClose,
                         )
-                    }
-                }
-                if (onClose != null) {
-                    GlassAction(
-                        label = "返回笔记",
-                        dark = dark,
-                        onClick = onClose,
+                        .padding(end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = MintIcons.Back,
+                        contentDescription = "返回笔记",
+                        tint = scheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = "笔记",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = scheme.primary,
                     )
                 }
+            } else {
+                Spacer(Modifier.width(1.dp))
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = "启动默认进入待办",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Box {
+                NoteMenuTrigger(
+                    label = "待办设置",
+                    tag = "tasks_more_menu",
+                    icon = MintIcons.More,
+                    containerColor = mintSecondaryFill(dark),
+                    tint = scheme.primary,
+                    onClick = { showMoreMenu = true },
                 )
-                MintCapsuleSwitch(
-                    checked = todoStartupEnabled,
-                    onCheckedChange = onToggleTodoStartup,
-                    dark = dark,
-                    modifier = Modifier.testTag("tasks_startup_toggle"),
-                )
+                ComposablesMenu(
+                    expanded = showMoreMenu,
+                    onDismiss = { showMoreMenu = false },
+                    tag = "tasks_more_dropdown",
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "启动默认进入待办",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = scheme.onSurface,
+                            )
+                        },
+                        trailingIcon = if (todoStartupEnabled) {
+                            {
+                                Icon(
+                                    imageVector = MintIcons.Check,
+                                    contentDescription = "已启用",
+                                    tint = scheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        } else null,
+                        onClick = {
+                            showMoreMenu = false
+                            onToggleTodoStartup(!todoStartupEnabled)
+                        },
+                        modifier = Modifier.testTag("tasks_startup_toggle"),
+                    )
+                }
             }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = "待办",
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.5).sp,
+                ),
+                color = scheme.onSurface,
+            )
+            Text(
+                text = "$openCount 项未完成",
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
         }
     }
 }
@@ -727,92 +819,18 @@ private fun TasksSegmentedFilter(
     selected: TasksFilter,
     onSelect: (TasksFilter) -> Unit,
     counts: Map<TasksFilter, Int>,
-    backdrop: GlassBackdrop,
-    tier: GlassTier,
     dark: Boolean,
 ) {
-    val trackColor = if (dark) Color(0xFF172720) else Color(0xFFE7F0EA)
-    val thumbColor = if (dark) Color(0xFF285845) else Color(0xFFFFFFFF)
-    val borderColor = if (dark) Color(0xFF2D4A3D) else Color(0xFFCDE2D6)
-    val scheme = MaterialTheme.colorScheme
-
-    GlassSurface(
-        backdrop = backdrop,
-        tier = tier,
+    val entries = TasksFilter.entries
+    MintSegmentedBar(
+        options = entries.map { it.label },
+        selectedIndex = entries.indexOf(selected).coerceAtLeast(0),
+        onSelect = { index -> entries.getOrNull(index)?.let(onSelect) },
         dark = dark,
-        shapeRadius = 26.dp,
         modifier = Modifier.fillMaxWidth(),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .defaultMinSize(minHeight = 48.dp)
-                .background(trackColor.copy(alpha = 0.72f), RoundedCornerShape(26.dp))
-                .border(1.dp, borderColor, RoundedCornerShape(26.dp))
-                .padding(5.dp),
-        ) {
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(38.dp)) {
-                val options = TasksFilter.entries
-                val segmentWidth = maxWidth / options.size
-                val safeIndex = options.indexOf(selected).coerceAtLeast(0)
-                val animatedOffset by animateDpAsState(
-                    targetValue = segmentWidth * safeIndex,
-                    animationSpec = mintSpringSpec(),
-                    label = "tasks-segment-offset",
-                )
-                val activeOffset = if (mintAnimatorsEnabled()) animatedOffset else segmentWidth * safeIndex
-
-                Box(
-                    modifier = Modifier
-                        .offset(x = activeOffset)
-                        .width(segmentWidth)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(50))
-                        .background(thumbColor, RoundedCornerShape(50))
-                        .border(
-                            width = 0.8.dp,
-                            color = if (dark) Color(0xFF53A884).copy(alpha = 0.45f)
-                            else scheme.primary.copy(alpha = 0.16f),
-                            shape = RoundedCornerShape(50),
-                        ),
-                )
-
-                Row(modifier = Modifier.fillMaxSize()) {
-                    options.forEach { filter ->
-                        val isSelected = filter == selected
-                        val count = counts[filter] ?: 0
-                        val interactionSource = remember { MutableInteractionSource() }
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .clip(RoundedCornerShape(50))
-                                .selectable(
-                                    selected = isSelected,
-                                    interactionSource = interactionSource,
-                                    indication = null,
-                                    role = Role.Tab,
-                                    onClick = { onSelect(filter) },
-                                )
-                                .padding(horizontal = 6.dp)
-                                .testTag("tasks_filter_${filter.name.lowercase()}"),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "${filter.label} ($count)",
-                                style = MaterialTheme.typography.labelLarge.copy(
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                ),
-                                color = if (isSelected) scheme.onSurface else scheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
+        badges = entries.map { counts[it] },
+        optionTags = entries.map { "tasks_filter_${it.name.lowercase()}" },
+    )
 }
 
 @Composable
@@ -823,57 +841,75 @@ private fun PermissionGuidanceBanner(
     dismissLabel: String?,
     onAction: () -> Unit,
     onDismiss: (() -> Unit)?,
-    backdrop: GlassBackdrop,
-    tier: GlassTier,
     dark: Boolean,
     testTag: String,
     actionTag: String,
 ) {
-    GlassSurface(
-        backdrop = backdrop,
-        tier = tier,
+    val container = if (dark) Color(0xFF282319) else Color(0xFFFFF8E8)
+    val contentTint = if (dark) Color(0xFFF3CF88) else Color(0xFF8C5A00)
+
+    MintGroupedSection(
         dark = dark,
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag(testTag),
+        containerColor = container,
+        modifier = Modifier.testTag(testTag),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = if (dark) 0.42f else 0.65f),
-                )
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onTertiaryContainer,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = MintIcons.Bell,
+                    contentDescription = null,
+                    tint = contentTint,
+                    modifier = Modifier.size(17.dp),
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MintPillButton(
-                    label = actionLabel,
+                TextButton(
                     onClick = onAction,
-                    dark = dark,
-                    primary = true,
-                    modifier = Modifier.testTag(actionTag),
-                )
-                if (dismissLabel != null && onDismiss != null) {
-                    MintPillButton(
-                        label = dismissLabel,
-                        onClick = onDismiss,
-                        dark = dark,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = 48.dp)
+                        .testTag(actionTag),
+                ) {
+                    Text(
+                        text = actionLabel,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.primary,
                     )
+                }
+                if (dismissLabel != null && onDismiss != null) {
+                    TextButton(
+                        onClick = onDismiss,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Text(
+                            text = dismissLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -881,14 +917,52 @@ private fun PermissionGuidanceBanner(
 }
 
 @Composable
-private fun TaskSectionHeader(title: String, overdue: Boolean) {
+private fun TaskSectionHeader(
+    title: String,
+    overdue: Boolean,
+    topSpacing: Dp = 12.dp,
+) {
     Text(
         text = title,
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.SemiBold,
         color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+        modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = topSpacing, bottom = 6.dp),
     )
+}
+
+private fun <T> LazyListScope.groupedTaskItems(
+    items: List<T>,
+    keyPrefix: String,
+    itemKey: (T) -> Any,
+    dark: Boolean,
+    dividerIndent: Dp = 56.dp,
+    rowContent: @Composable (item: T, modifier: Modifier) -> Unit,
+) {
+    itemsIndexed(
+        items = items,
+        key = { _, item -> "${keyPrefix}_${itemKey(item)}" },
+    ) { index, item ->
+        val isFirst = index == 0
+        val isLast = index == items.lastIndex
+        val shape = RoundedCornerShape(
+            topStart = if (isFirst) 16.dp else 0.dp,
+            topEnd = if (isFirst) 16.dp else 0.dp,
+            bottomStart = if (isLast) 16.dp else 0.dp,
+            bottomEnd = if (isLast) 16.dp else 0.dp,
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(mintCardSurface(dark)),
+        ) {
+            rowContent(item, Modifier.fillMaxWidth())
+            if (!isLast) {
+                MintGroupedDivider(dark = dark, startIndent = dividerIndent)
+            }
+        }
+    }
 }
 
 @Composable
@@ -901,9 +975,8 @@ private fun TaskRowCard(
     onToggle: () -> Unit,
     onOpenNote: () -> Unit,
     onEditSchedule: () -> Unit,
-    backdrop: GlassBackdrop,
-    tier: GlassTier,
     dark: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val parsedDue = TaskRecurrence.parseDueDate(item.dueDate)
     val hasActiveReminder = item.reminderId != null &&
@@ -911,144 +984,144 @@ private fun TaskRowCard(
         item.reminderStatus != ReminderStatus.COMPLETED &&
         item.reminderLocalTime != null
     val rowInteraction = remember { MutableInteractionSource() }
+    val scheme = MaterialTheme.colorScheme
 
-    GlassSurface(
-        backdrop = backdrop,
-        tier = tier,
-        dark = dark,
-        modifier = Modifier
+    Row(
+        modifier = modifier
             .fillMaxWidth()
-            .testTag("task_row_${item.noteId}_${item.blockId}"),
+            .testTag("task_row_${item.noteId}_${item.blockId}")
+            .clickable(
+                interactionSource = rowInteraction,
+                indication = null,
+                onClick = onOpenNote,
+            )
+            .padding(start = 6.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(
+        TaskCircleCheckbox(
+            checked = item.checked,
+            overdue = isOverdue && !item.checked,
+            onClick = onToggle,
+            modifier = Modifier.testTag("task_toggle_${item.noteId}_${item.blockId}"),
+        )
+
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .clickable(
-                    interactionSource = rowInteraction,
-                    indication = null,
-                    onClick = onOpenNote,
-                )
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .weight(1f)
+                .padding(top = 10.dp, bottom = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            TaskCircleCheckbox(
-                checked = item.checked,
-                onClick = onToggle,
-                modifier = Modifier.testTag("task_toggle_${item.noteId}_${item.blockId}"),
+            Text(
+                text = item.text.ifBlank { "未命名待办" },
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (item.checked) scheme.onSurfaceVariant else scheme.onSurface,
+                textDecoration = if (item.checked) TextDecoration.LineThrough else TextDecoration.None,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
             )
 
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    text = item.text.ifBlank { "未命名待办" },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (item.checked) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    textDecoration = if (item.checked) TextDecoration.LineThrough else TextDecoration.None,
-                    maxLines = 3,
+                    text = "来自：${item.notePreview}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = "来自：${item.notePreview}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                if (item.noteArchived) {
+                    MetaBadge(
+                        label = "已归档",
+                        container = mintSecondaryFill(dark),
+                        content = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("task_archived_badge_${item.noteId}"),
                     )
-                    if (item.noteArchived) {
-                        MetaBadge(
-                            label = "已归档",
-                            container = MaterialTheme.colorScheme.secondaryContainer,
-                            content = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.testTag("task_archived_badge_${item.noteId}"),
-                        )
-                    }
-                }
-
-                if (parsedDue != null || hasActiveReminder || item.recurrence != RecurrenceRule.NONE) {
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (parsedDue != null) {
-                            MetaBadge(
-                                label = "截止 ${formatFriendlyDate(parsedDue, today)}",
-                                container = if (isOverdue && !item.checked) {
-                                    MaterialTheme.colorScheme.errorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                },
-                                content = if (isOverdue && !item.checked) {
-                                    MaterialTheme.colorScheme.onErrorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                modifier = Modifier.testTag("task_due_badge_${item.noteId}_${item.blockId}"),
-                            )
-                        }
-                        if (hasActiveReminder) {
-                            val snoozedMs = item.snoozedUntilMs
-                            val timeLabel = if (snoozedMs != null) {
-                                val snoozedLocal = Instant.ofEpochMilli(snoozedMs).atZone(zoneId)
-                                "已延后至 ${TIME_FORMAT.format(snoozedLocal.toLocalTime())}"
-                            } else {
-                                val remDate = TaskRecurrence.parseDueDate(item.reminderLocalDate)
-                                val datePart = remDate?.let { "${formatFriendlyDate(it, today)} " }.orEmpty()
-                                "提醒 $datePart${item.reminderLocalTime}"
-                            }
-                            val suffix = if (!notificationsEnabled) "（提醒未开启）" else ""
-                            MetaBadge(
-                                label = timeLabel + suffix,
-                                container = if (notificationsEnabled) {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.tertiaryContainer
-                                },
-                                content = if (notificationsEnabled) {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onTertiaryContainer
-                                },
-                                modifier = Modifier.testTag("task_reminder_badge_${item.noteId}_${item.blockId}"),
-                            )
-                        }
-                        if (item.recurrence != RecurrenceRule.NONE) {
-                            MetaBadge(
-                                label = item.recurrence.label,
-                                container = MaterialTheme.colorScheme.secondaryContainer,
-                                content = MaterialTheme.colorScheme.onSecondaryContainer,
-                            )
-                        }
-                        if (hasActiveReminder && item.policy == ReminderPolicy.KEEP_ORIGIN_ZONE) {
-                            MetaBadge(
-                                label = item.policy.label,
-                                container = MaterialTheme.colorScheme.surfaceVariant,
-                                content = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
                 }
             }
 
-            if (!item.checked) {
-                GlassAction(
-                    label = if (parsedDue != null || hasActiveReminder) "改期" else "排期",
-                    dark = dark,
-                    modifier = Modifier.testTag("task_schedule_${item.noteId}_${item.blockId}"),
-                    onClick = onEditSchedule,
+            if (parsedDue != null || hasActiveReminder || item.recurrence != RecurrenceRule.NONE) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (parsedDue != null) {
+                        val overdueActive = isOverdue && !item.checked
+                        MetaBadge(
+                            label = "截止 ${formatFriendlyDate(parsedDue, today)}",
+                            container = if (overdueActive) {
+                                mintDestructiveColor(dark).copy(alpha = 0.14f)
+                            } else {
+                                mintSecondaryFill(dark)
+                            },
+                            content = if (overdueActive) {
+                                mintDestructiveColor(dark)
+                            } else {
+                                scheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.testTag("task_due_badge_${item.noteId}_${item.blockId}"),
+                        )
+                    }
+                    if (hasActiveReminder) {
+                        val snoozedMs = item.snoozedUntilMs
+                        val timeLabel = if (snoozedMs != null) {
+                            val snoozedLocal = Instant.ofEpochMilli(snoozedMs).atZone(zoneId)
+                            "已延后至 ${TIME_FORMAT.format(snoozedLocal.toLocalTime())}"
+                        } else {
+                            val remDate = TaskRecurrence.parseDueDate(item.reminderLocalDate)
+                            val datePart = remDate?.let { "${formatFriendlyDate(it, today)} " }.orEmpty()
+                            "提醒 $datePart${item.reminderLocalTime}"
+                        }
+                        val suffix = if (!notificationsEnabled) "（提醒未开启）" else ""
+                        MetaBadge(
+                            label = timeLabel + suffix,
+                            container = if (notificationsEnabled) {
+                                scheme.primary.copy(alpha = if (dark) 0.18f else 0.12f)
+                            } else {
+                                Color(0xFFB36B00).copy(alpha = if (dark) 0.22f else 0.12f)
+                            },
+                            content = if (notificationsEnabled) {
+                                scheme.primary
+                            } else {
+                                if (dark) Color(0xFFF3CF88) else Color(0xFF8C5A00)
+                            },
+                            modifier = Modifier.testTag("task_reminder_badge_${item.noteId}_${item.blockId}"),
+                        )
+                    }
+                    if (item.recurrence != RecurrenceRule.NONE) {
+                        MetaBadge(
+                            label = item.recurrence.label,
+                            container = mintSecondaryFill(dark),
+                            content = scheme.primary,
+                        )
+                    }
+                    if (hasActiveReminder && item.policy == ReminderPolicy.KEEP_ORIGIN_ZONE) {
+                        MetaBadge(
+                            label = item.policy.label,
+                            container = mintSecondaryFill(dark),
+                            content = scheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (!item.checked) {
+            TextButton(
+                onClick = onEditSchedule,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                    .testTag("task_schedule_${item.noteId}_${item.blockId}"),
+            ) {
+                Text(
+                    text = if (parsedDue != null || hasActiveReminder) "改期" else "排期",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                    color = scheme.primary,
                 )
             }
         }
@@ -1060,9 +1133,7 @@ private fun CompletedOccurrenceCard(
     occurrence: TaskOccurrenceEntity,
     zoneId: ZoneId,
     onOpenNote: () -> Unit,
-    backdrop: GlassBackdrop,
-    tier: GlassTier,
-    dark: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val completedLabel = remember(occurrence.completedAt, zoneId) {
         runCatching {
@@ -1071,51 +1142,44 @@ private fun CompletedOccurrenceCard(
         }.getOrDefault(occurrence.completedAt)
     }
     val interactionSource = remember { MutableInteractionSource() }
-    GlassSurface(
-        backdrop = backdrop,
-        tier = tier,
-        dark = dark,
-        modifier = Modifier
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
             .fillMaxWidth()
-            .testTag("task_occurrence_${occurrence.id}"),
+            .testTag("task_occurrence_${occurrence.id}")
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onOpenNote,
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(
-                    interactionSource = interactionSource,
-                    indication = null,
-                    onClick = onOpenNote,
-                )
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = occurrence.titleSnapshot.ifBlank { "已完成重复待办" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textDecoration = TextDecoration.LineThrough,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val rule = RecurrenceRule.fromStored(occurrence.recurrence)
-                    if (rule != RecurrenceRule.NONE) {
-                        MetaBadge(
-                            label = rule.label,
-                            container = MaterialTheme.colorScheme.secondaryContainer,
-                            content = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                    }
+            Text(
+                text = occurrence.titleSnapshot.ifBlank { "已完成重复待办" },
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant,
+                textDecoration = TextDecoration.LineThrough,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val rule = RecurrenceRule.fromStored(occurrence.recurrence)
+                if (rule != RecurrenceRule.NONE) {
                     MetaBadge(
-                        label = "完成于 $completedLabel",
-                        container = MaterialTheme.colorScheme.surfaceVariant,
-                        content = MaterialTheme.colorScheme.onSurfaceVariant,
+                        label = rule.label,
+                        container = scheme.primary.copy(alpha = 0.12f),
+                        content = scheme.primary,
                     )
                 }
+                MetaBadge(
+                    label = "完成于 $completedLabel",
+                    container = scheme.surfaceVariant.copy(alpha = 0.65f),
+                    content = scheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -1125,28 +1189,24 @@ private fun CompletedOccurrenceCard(
 private fun TasksEmptyCard(
     title: String,
     subtitle: String,
-    backdrop: GlassBackdrop,
-    tier: GlassTier,
     dark: Boolean,
 ) {
-    GlassSurface(
-        backdrop = backdrop,
-        tier = tier,
+    MintGroupedSection(
         dark = dark,
         modifier = Modifier
-            .fillMaxWidth()
+            .padding(top = 6.dp)
             .testTag("tasks_empty_state"),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(24.dp),
+                .padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -1161,11 +1221,16 @@ private fun TasksEmptyCard(
 @Composable
 private fun TaskCircleCheckbox(
     checked: Boolean,
+    overdue: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val primary = MaterialTheme.colorScheme.primary
-    val outline = MaterialTheme.colorScheme.outline
+    val ringColor = if (overdue) {
+        MaterialTheme.colorScheme.error.copy(alpha = 0.72f)
+    } else {
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.48f)
+    }
     val checkColor = MaterialTheme.colorScheme.onPrimary
     val interactionSource = remember { MutableInteractionSource() }
     Box(
@@ -1199,8 +1264,8 @@ private fun TaskCircleCheckbox(
                 )
             } else {
                 drawCircle(
-                    color = outline,
-                    style = Stroke(width = 2.dp.toPx()),
+                    color = ringColor,
+                    style = Stroke(width = 1.75.dp.toPx()),
                 )
             }
         }
@@ -1252,18 +1317,17 @@ private fun MintCapsuleSwitch(
                 .width(50.dp)
                 .height(30.dp)
                 .clip(RoundedCornerShape(50))
-                .background(activeTrack, RoundedCornerShape(50))
-                .border(
-                    width = 1.dp,
-                    color = if (checked) Color.White.copy(alpha = 0.25f) else scheme.outline.copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(50),
-                ),
+                .background(activeTrack, RoundedCornerShape(50)),
             contentAlignment = Alignment.CenterStart,
         ) {
             Box(
                 modifier = Modifier
                     .offset(x = activeOffset)
                     .size(24.dp)
+                    .then(
+                        if (!dark) Modifier.shadow(1.5.dp, CircleShape, ambientColor = Color(0x22000000), spotColor = Color(0x22000000))
+                        else Modifier
+                    )
                     .clip(CircleShape)
                     .background(Color.White, CircleShape),
             )
@@ -1279,7 +1343,7 @@ private fun MetaBadge(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        shape = RoundedCornerShape(999.dp),
+        shape = RoundedCornerShape(6.dp),
         color = container,
         modifier = modifier,
     ) {
@@ -1287,7 +1351,7 @@ private fun MetaBadge(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = content,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
         )
     }
 }
@@ -1323,205 +1387,233 @@ internal fun TaskScheduleModal(
         null
     }
 
-    MintGlassDialog(
+    MintBottomSheet(
         onDismissRequest = onDismiss,
         dark = dark,
         backdrop = backdrop,
         title = "待办排期与提醒",
         subtitle = initial.taskText,
-        modifier = Modifier.testTag("task_schedule_modal"),
-        actions = {
-            MintPillButton(
-                label = "取消",
-                onClick = onDismiss,
-                dark = dark,
-            )
-            MintPillButton(
-                label = "保存",
-                onClick = {
-                    onSave(
-                        initial.copy(
-                            dueDateText = dueDateText,
-                            reminderEnabled = reminderEnabled,
-                            reminderTimeText = reminderTimeText,
-                            recurrence = recurrence,
-                            policy = policy,
-                        ),
-                    )
-                },
-                dark = dark,
-                primary = true,
-                modifier = Modifier.testTag("schedule_save"),
+        leadingLabel = "取消",
+        onLeadingClick = onDismiss,
+        trailingLabel = "保存",
+        onTrailingClick = {
+            onSave(
+                initial.copy(
+                    dueDateText = dueDateText,
+                    reminderEnabled = reminderEnabled,
+                    reminderTimeText = reminderTimeText,
+                    recurrence = recurrence,
+                    policy = policy,
+                ),
             )
         },
+        trailingTag = "schedule_save",
+        modifier = Modifier.testTag("task_schedule_modal"),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f, fill = false)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = "截止日期（可独立于提醒设置）",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Medium,
-            )
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                ScheduleChoiceChip("今天", dueDateText == today.toString(), dark) {
-                    dueDateText = today.toString()
-                }
-                ScheduleChoiceChip("明天", dueDateText == today.plusDays(1).toString(), dark) {
-                    dueDateText = today.plusDays(1).toString()
-                }
-                ScheduleChoiceChip("下周", dueDateText == today.plusWeeks(1).toString(), dark) {
-                    dueDateText = today.plusWeeks(1).toString()
-                }
-                ScheduleChoiceChip("不设日期", dueDateText.isBlank(), dark) {
-                    dueDateText = ""
+            MintGroupedSection(dark = dark) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "截止日期",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        ScheduleChoiceChip("今天", dueDateText == today.toString(), dark) {
+                            dueDateText = today.toString()
+                        }
+                        ScheduleChoiceChip("明天", dueDateText == today.plusDays(1).toString(), dark) {
+                            dueDateText = today.plusDays(1).toString()
+                        }
+                        ScheduleChoiceChip("下周", dueDateText == today.plusWeeks(1).toString(), dark) {
+                            dueDateText = today.plusWeeks(1).toString()
+                        }
+                        ScheduleChoiceChip("不设日期", dueDateText.isBlank(), dark) {
+                            dueDateText = ""
+                        }
+                    }
+                    MintTextField(
+                        value = dueDateText,
+                        onValueChange = { dueDateText = it.trim() },
+                        placeholder = "YYYY-MM-DD（如 $today）",
+                        dark = dark,
+                        tag = "schedule_due_input",
+                    )
                 }
             }
-            MintTextField(
-                value = dueDateText,
-                onValueChange = { dueDateText = it.trim() },
-                placeholder = "截止日期 YYYY-MM-DD（如 $today）",
-                dark = dark,
-                tag = "schedule_due_input",
-            )
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "本地定时提醒",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    if (!notificationsEnabled) {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text(
-                                text = "提醒未开启，保存后暂不弹窗",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.align(Alignment.CenterVertically),
-                            )
-                            if (onRequestNotificationPermission != null) {
-                                MintChip(
-                                    label = "开启通知",
-                                    onClick = onRequestNotificationPermission,
-                                    dark = dark,
-                                    style = MintChipStyle.Selected,
+            MintGroupedSection(dark = dark) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = "本地定时提醒",
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (!notificationsEnabled) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    text = "提醒未开启，保存后暂不弹窗",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.align(Alignment.CenterVertically),
                                 )
+                                if (onRequestNotificationPermission != null) {
+                                    TextButton(
+                                        onClick = onRequestNotificationPermission,
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    ) {
+                                        Text(
+                                            text = "开启通知",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
+                    MintCapsuleSwitch(
+                        checked = reminderEnabled,
+                        onCheckedChange = { checked ->
+                            reminderEnabled = checked
+                            if (checked && !notificationsEnabled) {
+                                onRequestNotificationPermission?.invoke()
+                            }
+                        },
+                        dark = dark,
+                        modifier = Modifier.testTag("schedule_reminder_switch"),
+                    )
                 }
-                MintCapsuleSwitch(
-                    checked = reminderEnabled,
-                    onCheckedChange = { checked ->
-                        reminderEnabled = checked
-                        if (checked && !notificationsEnabled) {
-                            onRequestNotificationPermission?.invoke()
+
+                if (reminderEnabled) {
+                    MintGroupedDivider(dark = dark, startIndent = 14.dp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            listOf("09:00", "14:00", "18:00", "21:00").forEach { preset ->
+                                ScheduleChoiceChip(preset, reminderTimeText == preset, dark) {
+                                    reminderTimeText = preset
+                                }
+                            }
                         }
-                    },
-                    dark = dark,
-                    modifier = Modifier.testTag("schedule_reminder_switch"),
-                )
+                        MintTextField(
+                            value = reminderTimeText,
+                            onValueChange = { reminderTimeText = it.trim() },
+                            placeholder = "提醒时间 HH:mm（例如 09:00）",
+                            dark = dark,
+                            tag = "schedule_time_input",
+                        )
+                        if (resolvedPreview != null) {
+                            val zdt = resolvedPreview.zonedDateTime
+                            val previewText = buildString {
+                                append("下次提醒：${zdt.toLocalDate()} ${TIME_FORMAT.format(zdt.toLocalTime())}")
+                                if (resolvedPreview.wasGapAdjusted) {
+                                    append("（夏令时跳过时刻，已顺延至首个有效时刻）")
+                                }
+                            }
+                            Text(
+                                text = previewText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                }
             }
 
             if (reminderEnabled) {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    listOf("09:00", "14:00", "18:00", "21:00").forEach { preset ->
-                        ScheduleChoiceChip(preset, reminderTimeText == preset, dark) {
-                            reminderTimeText = preset
-                        }
-                    }
-                }
-                MintTextField(
-                    value = reminderTimeText,
-                    onValueChange = { reminderTimeText = it.trim() },
-                    placeholder = "提醒时间 HH:mm（例如 09:00）",
-                    dark = dark,
-                    tag = "schedule_time_input",
+                Text(
+                    text = "重复频率",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 6.dp),
                 )
-
-                Text("重复频率", style = MaterialTheme.typography.labelLarge)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    RecurrenceRule.entries.forEach { rule ->
-                        ScheduleChoiceChip(rule.label, recurrence == rule, dark) {
-                            recurrence = rule
+                MintGroupedSection(dark = dark) {
+                    RecurrenceRule.entries.forEachIndexed { index, rule ->
+                        MintGroupedRow(
+                            label = rule.label,
+                            dark = dark,
+                            selected = recurrence == rule,
+                            onClick = { recurrence = rule },
+                        )
+                        if (index < RecurrenceRule.entries.lastIndex) {
+                            MintGroupedDivider(dark = dark, startIndent = 16.dp)
                         }
                     }
                 }
 
-                Text("时区变更策略", style = MaterialTheme.typography.labelLarge)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    ReminderPolicy.entries.forEach { option ->
-                        ScheduleChoiceChip(option.label, policy == option, dark) {
-                            policy = option
+                Text(
+                    text = "时区变更策略",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
+                MintGroupedSection(dark = dark) {
+                    ReminderPolicy.entries.forEachIndexed { index, option ->
+                        MintGroupedRow(
+                            label = option.label,
+                            dark = dark,
+                            selected = policy == option,
+                            onClick = { policy = option },
+                        )
+                        if (index < ReminderPolicy.entries.lastIndex) {
+                            MintGroupedDivider(dark = dark, startIndent = 16.dp)
                         }
                     }
-                }
-
-                if (resolvedPreview != null) {
-                    val zdt = resolvedPreview.zonedDateTime
-                    val previewText = buildString {
-                        append("下次提醒：${zdt.toLocalDate()} ${TIME_FORMAT.format(zdt.toLocalTime())}")
-                        if (resolvedPreview.wasGapAdjusted) {
-                            append("（夏令时跳过时刻，已顺延至首个有效时刻）")
-                        }
-                    }
-                    Text(
-                        text = previewText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
                 }
             }
 
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (
-                    initial.reminderId != null &&
+            MintGroupedSection(dark = dark) {
+                val hasActiveSnooze = initial.reminderId != null &&
                     (initial.reminderStatus == ReminderStatus.ACTIVE || initial.reminderStatus == ReminderStatus.MISSED)
-                ) {
-                    MintPillButton(
+                if (hasActiveSnooze) {
+                    MintGroupedRow(
                         label = "延后 15 分钟",
-                        onClick = { onSnooze(initial.reminderId) },
                         dark = dark,
+                        leadingIcon = MintIcons.Bell,
+                        onClick = { onSnooze(initial.reminderId!!) },
                         modifier = Modifier.testTag("schedule_snooze_15"),
                     )
+                    MintGroupedDivider(dark = dark, startIndent = 16.dp)
                 }
-                MintPillButton(
+                MintGroupedRow(
                     label = "清除排期",
-                    onClick = onClear,
                     dark = dark,
                     destructive = true,
+                    onClick = onClear,
                     modifier = Modifier.testTag("schedule_clear"),
                 )
             }

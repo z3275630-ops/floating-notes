@@ -5,16 +5,13 @@ import android.content.ActivityNotFoundException
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
@@ -43,6 +40,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -66,14 +64,19 @@ import io.github.z3275630ops.floatingnotes.feature.tasks.TaskScheduleModal
 import io.github.z3275630ops.floatingnotes.feature.tasks.TasksScheduleDraft
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesSearchField
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
-import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintAlertDialog
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintCheckbox
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChip
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChipStyle
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGlassDialog
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedRow
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -124,6 +127,7 @@ internal fun detectInlineTrigger(
 }
 
 @OptIn(ExperimentalLayoutApi::class)
+@Suppress("UNUSED_PARAMETER")
 @Composable
 internal fun ColumnScope.NoteEditor(
     session: EditorSession,
@@ -143,6 +147,8 @@ internal fun ColumnScope.NoteEditor(
     onOpenOrganize: (() -> Unit)? = null,
     onRequestNotificationPermission: (() -> Unit)? = null,
     onOpenRelated: ((String) -> Unit)? = null,
+    trashedNoteIds: Set<String> = emptySet(),
+    trashedNotes: List<NoteEntity> = emptyList(),
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -196,7 +202,6 @@ internal fun ColumnScope.NoteEditor(
         if (allowed) model.startRecording(session)
         else session.voiceStatus = "麦克风权限未开启，可在系统设置授权后重试"
     }
-    var confirmDiscard by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf<String?>(null) }
     var tagPickerOpen by remember { mutableStateOf(false) }
     var scheduleBlockId by remember { mutableStateOf<String?>(null) }
@@ -296,12 +301,6 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
-    val canvasBg = if (session.existingNote) {
-        if (dark) Color(0xFF13221B) else Color(0xFFFCFDFB)
-    } else {
-        scheme.surface
-    }
-    val canvasBorder = if (dark) Color(0xFF284235) else Color(0xFFDDEADF)
     val focusBlockRequesters = remember(session.draft.id) { mutableMapOf<String, BringIntoViewRequester>() }
 
     LaunchedEffect(session.focusBlockId) {
@@ -315,15 +314,12 @@ internal fun ColumnScope.NoteEditor(
         modifier = Modifier
             .weight(1f)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
-            .background(canvasBg, RoundedCornerShape(22.dp))
-            .border(1.dp, canvasBorder, RoundedCornerShape(22.dp))
             .verticalScroll(rememberScrollState())
             .padding(
-                horizontal = if (session.existingNote) 16.dp else 14.dp,
-                vertical = if (session.existingNote) 16.dp else 12.dp,
+                horizontal = if (session.existingNote) 20.dp else 14.dp,
+                vertical = if (session.existingNote) 8.dp else 6.dp,
             ),
-        verticalArrangement = Arrangement.spacedBy(if (session.existingNote) 10.dp else 8.dp),
+        verticalArrangement = Arrangement.spacedBy(if (session.existingNote) 8.dp else 6.dp),
     ) {
         session.blocks.forEachIndexed { index, block ->
             key(block.id) {
@@ -351,18 +347,26 @@ internal fun ColumnScope.NoteEditor(
                             )
                         }
                         if (block.editable) {
-                            val isHeroTitle = session.existingNote && index == 0 && block.type == "paragraph"
-                            val blockTextStyle = if (isHeroTitle) {
-                                MaterialTheme.typography.titleMedium.copy(
-                                    fontSize = 18.sp,
-                                    lineHeight = 27.sp,
-                                    fontWeight = FontWeight.Medium,
+                            val isHeroTitle = index == 0 && block.type == "paragraph"
+                            val blockTextStyle = when {
+                                isHeroTitle && session.existingNote -> MaterialTheme.typography.headlineSmall.copy(
+                                    fontSize = 26.sp,
+                                    lineHeight = 34.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = (-0.3).sp,
                                     color = scheme.onSurface,
                                     textDecoration = if (block.checked) TextDecoration.LineThrough else null,
                                 )
-                            } else {
-                                MaterialTheme.typography.bodyLarge.copy(
-                                    lineHeight = 24.sp,
+                                isHeroTitle -> MaterialTheme.typography.titleLarge.copy(
+                                    fontSize = 21.sp,
+                                    lineHeight = 29.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = scheme.onSurface,
+                                    textDecoration = if (block.checked) TextDecoration.LineThrough else null,
+                                )
+                                else -> MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = 17.sp,
+                                    lineHeight = 25.sp,
                                     color = if (block.checked) scheme.onSurfaceVariant else scheme.onSurface,
                                     textDecoration = if (block.checked) TextDecoration.LineThrough else null,
                                 )
@@ -414,10 +418,15 @@ internal fun ColumnScope.NoteEditor(
                                 session.removeAttachment(block)
                             }
                         } else if (block.referenceTarget != null) {
-                            val target = notes.firstOrNull { it.id == block.referenceTarget }
+                            val rawTarget = notes.firstOrNull { it.id == block.referenceTarget }
+                            val trashedMatch = trashedNotes.firstOrNull { it.id == block.referenceTarget }
+                            val targetTrashed = block.referenceTarget in trashedNoteIds || trashedMatch != null
+                            val target = rawTarget?.takeUnless { targetTrashed }
                             ReferenceBlockCard(
                                 block = block,
                                 target = target,
+                                trashedTarget = targetTrashed,
+                                trashedTitle = (trashedMatch ?: rawTarget?.takeIf { targetTrashed })?.let(::referenceLabel),
                                 dark = dark,
                                 enabled = !session.writing,
                                 onOpen = if (target != null && onOpenRelated != null) {
@@ -577,12 +586,18 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
-    FlowRow(
+    HorizontalDivider(
+        thickness = 0.5.dp,
+        color = scheme.outlineVariant.copy(alpha = 0.35f),
+        modifier = Modifier.padding(top = 4.dp),
+    )
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .heightIn(min = 48.dp)
+            .padding(horizontal = if (session.existingNote) 8.dp else 0.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         EditorAccessoryPill(
             icon = MintIcons.Checklist,
@@ -593,7 +608,7 @@ internal fun ColumnScope.NoteEditor(
         )
         EditorAccessoryPill(
             icon = MintIcons.Image,
-            label = if (session.importFailed) "重新选择" else "附件",
+            label = if (session.importFailed) "重选" else "附件",
             enabled = !session.writing && !session.importing && !session.voiceBusy,
             dark = dark,
             onClick = { showImport = true },
@@ -607,7 +622,7 @@ internal fun ColumnScope.NoteEditor(
                 onClick = { microphone.launch(Manifest.permission.RECORD_AUDIO) },
             )
         }
-        if (onOpenRelated != null && (notes.any { it.id != session.draft.noteId } || backlinks.isNotEmpty())) {
+        if (onOpenRelated != null && notes.any { it.id != session.draft.noteId && it.id !in trashedNoteIds }) {
             EditorAccessoryPill(
                 icon = MintIcons.Link,
                 label = "@ 引用",
@@ -619,18 +634,6 @@ internal fun ColumnScope.NoteEditor(
                     picker = "引用笔记"
                 },
             )
-            if (!session.existingNote && backlinks.isNotEmpty()) {
-                EditorAccessoryPill(
-                    icon = MintIcons.Link,
-                    label = "反链 ${backlinks.size}",
-                    enabled = true,
-                    dark = dark,
-                    onClick = {
-                        excerptTarget = null
-                        picker = "引用此笔记的记录"
-                    },
-                )
-            }
         }
         EditorAccessoryPill(
             icon = MintIcons.Tag,
@@ -641,66 +644,34 @@ internal fun ColumnScope.NoteEditor(
         )
     }
 
-    if (!session.existingNote) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextButton(onClick = { confirmDiscard = true }, enabled = !session.writing) { Text("丢弃草稿") }
-            Spacer(Modifier.weight(1f))
-            MintPillButton(
-                label = "保存",
-                primary = true,
-                dark = dark,
-                enabled = !session.writing &&
-                    !session.importing &&
-                    !session.voiceBusy &&
-                    !session.voicePending &&
-                    session.document().hasContent,
-                onClick = onSave,
-            )
-        }
-    }
-
     if (showImport) {
-        MintGlassDialog(
+        MintAlertDialog(
             onDismissRequest = { showImport = false },
             dark = dark,
             backdrop = localBackdrop,
             title = "添加附件",
-            actions = {
-                TextButton(onClick = { showImport = false }) { Text("取消") }
-                MintPillButton(
-                    label = "选择文件",
-                    primary = true,
-                    dark = dark,
-                    onClick = {
-                        showImport = false
-                        try {
-                            attachmentPicker.launch(arrayOf("image/*", "audio/*", "video/*"))
-                        } catch (_: ActivityNotFoundException) {
-                            session.importStatus = "本机没有可用的文件选择器"
-                            session.importFailed = true
-                        }
-                    },
-                )
+            subtitle = "可选择图片、音频或视频，每个最多 100 MB。" +
+                (space?.let { "\n本机可用空间 ${it / 1_000_000} MB" } ?: ""),
+            dismissLabel = "取消",
+            onDismissAction = { showImport = false },
+            confirmLabel = "选择文件",
+            onConfirmAction = {
+                showImport = false
+                try {
+                    attachmentPicker.launch(arrayOf("image/*", "audio/*", "video/*"))
+                } catch (_: ActivityNotFoundException) {
+                    session.importStatus = "本机没有可用的文件选择器"
+                    session.importFailed = true
+                }
             },
-        ) {
-            Text(
-                text = "可选择图片、音频或视频，每个最多 100 MB。" +
-                    (space?.let { "\n本机可用空间 ${it / 1_000_000} MB" } ?: ""),
-                style = MaterialTheme.typography.bodyMedium,
-                color = scheme.onSurfaceVariant,
-            )
-        }
+        )
     }
 
     picker?.let { mode ->
         ReferencePickerDialog(
             mode = mode,
-            notes = notes,
-            backlinks = backlinks,
+            notes = notes.filter { it.id !in trashedNoteIds },
+            backlinks = backlinks.filter { it.id !in trashedNoteIds },
             currentNoteId = session.draft.noteId,
             excerptTarget = excerptTarget,
             onSelectExcerptTarget = { target -> excerptTarget = target },
@@ -857,30 +828,6 @@ internal fun ColumnScope.NoteEditor(
             onRequestNotificationPermission = requestNotifications,
         )
     }
-
-    if (confirmDiscard) {
-        MintGlassDialog(
-            onDismissRequest = { confirmDiscard = false },
-            dark = dark,
-            backdrop = localBackdrop,
-            title = "丢弃本次草稿？",
-            subtitle = "已保存到本机的笔记会保留。",
-            actions = {
-                TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") }
-                MintPillButton(
-                    label = "丢弃",
-                    destructive = true,
-                    dark = dark,
-                    onClick = {
-                        confirmDiscard = false
-                        onDiscard()
-                    },
-                )
-            },
-        ) {
-            Spacer(Modifier.height(2.dp))
-        }
-    }
 }
 
 private fun clearPendingInlineTrigger(session: EditorSession, pending: PendingTriggerReplace?) {
@@ -912,9 +859,13 @@ private fun EditorHeaderMetadata(
     onOpenBacklinks: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val allTagIds = (noteTagIds + pendingTagIds).toList()
+    val hasTokens = notebook != null || allTagIds.isNotEmpty() || backlinksCount > 0
     Column(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (activeNote != null) {
             val updated = remember(activeNote.updatedAt) { formatNoteTimestamp(activeNote.updatedAt) }
@@ -922,54 +873,49 @@ private fun EditorHeaderMetadata(
             Text(
                 text = "更新于 $updated · 创建于 $created",
                 style = MaterialTheme.typography.labelSmall,
-                color = scheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant.copy(alpha = 0.72f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            MintChip(
-                label = notebook?.name ?: "未归类笔记本",
-                selected = notebook != null,
-                style = if (notebook != null) MintChipStyle.SmartFolder else MintChipStyle.Standard,
-                leadingIcon = MintIcons.Folder,
-                dark = dark,
-                onClick = { onOpenOrganize?.invoke() },
-            )
-            val allTagIds = (noteTagIds + pendingTagIds).toList()
-            for (tagId in allTagIds) {
-                val tag = availableTags.firstOrNull { it.id == tagId } ?: continue
-                val isPending = tagId in pendingTagIds && tagId !in noteTagIds
-                MintChip(
-                    label = "#${tag.name}",
-                    selected = true,
-                    style = MintChipStyle.Selected,
-                    dark = dark,
-                    removable = isPending,
-                    onClick = {
-                        if (isPending) onRemovePendingTag(tagId)
-                        else onOpenOrganize?.invoke() ?: onOpenTagPicker()
-                    },
-                )
-            }
-            if (allTagIds.isEmpty()) {
-                MintChip(
-                    label = "+ 标签",
-                    selected = false,
-                    style = MintChipStyle.Standard,
-                    leadingIcon = MintIcons.Tag,
-                    dark = dark,
-                    onClick = onOpenTagPicker,
-                )
-            }
-            if (backlinksCount > 0) {
-                TextButton(
-                    onClick = onOpenBacklinks,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                ) {
-                    Text("反链 $backlinksCount")
+        if (hasTokens) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (notebook != null) {
+                    MintChip(
+                        label = notebook.name,
+                        selected = true,
+                        style = MintChipStyle.SmartFolder,
+                        leadingIcon = MintIcons.Folder,
+                        dark = dark,
+                        onClick = { onOpenOrganize?.invoke() },
+                    )
+                }
+                for (tagId in allTagIds) {
+                    val tag = availableTags.firstOrNull { it.id == tagId } ?: continue
+                    val isPending = tagId in pendingTagIds && tagId !in noteTagIds
+                    MintChip(
+                        label = "#${tag.name}",
+                        selected = true,
+                        style = MintChipStyle.Selected,
+                        dark = dark,
+                        removable = isPending,
+                        onClick = {
+                            if (isPending) onRemovePendingTag(tagId)
+                            else onOpenOrganize?.invoke() ?: onOpenTagPicker()
+                        },
+                    )
+                }
+                if (backlinksCount > 0) {
+                    TextButton(
+                        onClick = onOpenBacklinks,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text("反链 $backlinksCount")
+                    }
                 }
             }
         }
@@ -990,9 +936,8 @@ private fun InlineTriggerSuggestionBar(
 ) {
     val scheme = MaterialTheme.colorScheme
     val query = trigger.query.trim()
-    val shape = RoundedCornerShape(16.dp)
-    val bg = if (dark) Color(0xFF192B22) else Color(0xFFF0F7F2)
-    val borderColor = scheme.primary.copy(alpha = if (dark) 0.45f else 0.25f)
+    val shape = RoundedCornerShape(14.dp)
+    val bg = mintSecondaryFill(dark)
 
     when (trigger.kind) {
         InlineTriggerKind.TAG -> {
@@ -1014,7 +959,6 @@ private fun InlineTriggerSuggestionBar(
                         .focusProperties { canFocus = false }
                         .clip(shape)
                         .background(bg, shape)
-                        .border(1.dp, borderColor, shape)
                         .horizontalScroll(rememberScrollState())
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                         .testTag("inline-tag-suggestions"),
@@ -1060,7 +1004,6 @@ private fun InlineTriggerSuggestionBar(
                         .focusProperties { canFocus = false }
                         .clip(shape)
                         .background(bg, shape)
-                        .border(1.dp, borderColor, shape)
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                         .testTag("inline-reference-suggestions"),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -1079,8 +1022,7 @@ private fun InlineTriggerSuggestionBar(
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
-                                    .background(if (dark) Color(0xFF22392E) else Color.White)
-                                    .border(0.8.dp, borderColor, RoundedCornerShape(50))
+                                    .background(mintCardSurface(dark))
                                     .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1135,17 +1077,12 @@ private fun InlineSuggestionChip(
 ) {
     val scheme = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(50)
-    val bg = when {
-        highlight -> scheme.primary
-        dark -> Color(0xFF22392E)
-        else -> Color.White
-    }
+    val bg = if (highlight) scheme.primary else mintCardSurface(dark)
     val fg = if (highlight) scheme.onPrimary else scheme.onSurface
     Box(
         modifier = Modifier
             .clip(shape)
             .background(bg, shape)
-            .border(0.8.dp, scheme.primary.copy(alpha = 0.25f), shape)
             .focusProperties { canFocus = false }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -1169,6 +1106,8 @@ private fun InlineSuggestionChip(
 private fun ReferenceBlockCard(
     block: EditorBlock,
     target: NoteEntity?,
+    trashedTarget: Boolean = false,
+    trashedTitle: String? = null,
     dark: Boolean,
     enabled: Boolean,
     onOpen: (() -> Unit)?,
@@ -1176,8 +1115,8 @@ private fun ReferenceBlockCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(14.dp)
-    val bg = if (dark) Color(0xFF1A2D24) else Color(0xFFF1F8F3)
-    val border = scheme.primary.copy(alpha = if (dark) 0.38f else 0.22f)
+    val bg = mintSecondaryFill(dark)
+    val isHealthy = target != null && !trashedTarget
 
     val resolvedExcerpt = remember(target?.documentJson, block.referenceTargetBlockId, block.referenceStart, block.referenceEnd) {
         val blockId = block.referenceTargetBlockId
@@ -1201,7 +1140,6 @@ private fun ReferenceBlockCard(
             .fillMaxWidth()
             .clip(shape)
             .background(bg, shape)
-            .border(1.dp, border, shape)
             .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1209,14 +1147,14 @@ private fun ReferenceBlockCard(
         Icon(
             imageVector = MintIcons.Link,
             contentDescription = null,
-            tint = if (target != null) scheme.primary else scheme.error,
+            tint = if (isHealthy) scheme.primary else scheme.error,
             modifier = Modifier.size(18.dp),
         )
         Column(
             modifier = Modifier
                 .weight(1f)
                 .then(
-                    if (onOpen != null && enabled) {
+                    if (onOpen != null && enabled && isHealthy) {
                         Modifier.clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -1233,10 +1171,15 @@ private fun ReferenceBlockCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                val titleText = when {
+                    target != null -> referenceLabel(target)
+                    trashedTarget -> "${trashedTitle ?: "引用笔记"}（已移到废纸篓）"
+                    else -> "来源已删除或不可用"
+                }
                 Text(
-                    text = target?.let(::referenceLabel) ?: "来源已删除或不可用",
+                    text = titleText,
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = if (target != null) scheme.primary else scheme.error,
+                    color = if (isHealthy) scheme.primary else scheme.error,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
@@ -1312,7 +1255,7 @@ private fun EditorCheckboxScheduleRow(
     val bg = when {
         overdue && hasSchedule -> scheme.errorContainer.copy(alpha = if (dark) 0.35f else 0.75f)
         hasSchedule -> if (dark) Color(0xFF203A2E) else Color(0xFFE3F3EA)
-        else -> if (dark) Color(0xFF192921) else Color(0xFFF3F8F4)
+        else -> mintSecondaryFill(dark)
     }
     val fg = when {
         overdue && hasSchedule -> scheme.onErrorContainer
@@ -1325,7 +1268,6 @@ private fun EditorCheckboxScheduleRow(
             .padding(start = 48.dp, bottom = 2.dp)
             .clip(shape)
             .background(bg, shape)
-            .border(0.8.dp, fg.copy(alpha = 0.25f), shape)
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -1362,15 +1304,12 @@ private fun EditorAccessoryPill(
     onClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(50)
-    val bg = if (dark) Color(0xFF1A2C23) else Color(0xFFF2F7F3)
+    val shape = RoundedCornerShape(10.dp)
     val fg = if (enabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = 0.45f)
     Row(
         modifier = Modifier
-            .defaultMinSize(minHeight = 36.dp)
+            .heightIn(min = 48.dp)
             .clip(shape)
-            .background(bg, shape)
-            .border(0.9.dp, scheme.outline.copy(alpha = if (dark) 0.32f else 0.22f), shape)
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -1378,16 +1317,20 @@ private fun EditorAccessoryPill(
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 11.dp, vertical = 7.dp),
+            .padding(horizontal = 5.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Icon(icon, contentDescription = null, tint = if (enabled) scheme.primary else fg, modifier = Modifier.size(16.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+            ),
             color = fg,
             maxLines = 1,
+            softWrap = false,
         )
     }
 }
@@ -1411,55 +1354,82 @@ private fun ReferencePickerDialog(
     val query = filter.text.toString()
     val candidates = if (mode == "引用笔记") notes.filter { it.id != currentNoteId } else backlinks
 
-    MintGlassDialog(
+    MintBottomSheet(
         onDismissRequest = onDismiss,
         dark = dark,
         backdrop = backdrop,
         title = if (excerptTarget != null) "选择引用选区范围" else mode,
         subtitle = excerptTarget?.let { "来源：${referenceLabel(it)}" },
-        actions = {
-            if (excerptTarget != null) {
-                TextButton(onClick = { onSelectExcerptTarget(null) }) { Text("返回列表") }
-            }
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
+        leadingLabel = if (excerptTarget != null) "返回列表" else null,
+        onLeadingClick = { if (excerptTarget != null) onSelectExcerptTarget(null) else onDismiss() },
+        trailingLabel = "关闭",
+        onTrailingClick = onDismiss,
     ) {
         if (excerptTarget == null) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ComposablesSearchField(filter, "筛选笔记", tag = "note-reference-filter")
-                LazyColumn(Modifier.heightIn(max = 280.dp)) {
-                    items(
-                        candidates.filter { note ->
-                            query.isBlank() ||
-                                referenceLabel(note).contains(query, ignoreCase = true) ||
-                                note.searchText.contains(query, ignoreCase = true)
-                        },
-                        key = { it.id },
-                    ) { note ->
-                        val hasBlocks = remember(note.documentJson) {
-                            runCatching {
-                                NoteDocument.decode(note.documentJson).blocks.any { it.text.isNotEmpty() }
-                            }.getOrDefault(false)
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            TextButton(
-                                onClick = { onPickFull(note) },
-                                modifier = Modifier.weight(1f),
-                            ) {
+            val filtered = candidates.filter { note ->
+                query.isBlank() ||
+                    referenceLabel(note).contains(query, ignoreCase = true) ||
+                    note.searchText.contains(query, ignoreCase = true)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ComposablesSearchField(
+                    state = filter,
+                    label = "筛选笔记",
+                    tag = "note-reference-filter",
+                    containerColor = mintSecondaryFill(dark),
+                )
+                LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                    if (filtered.isEmpty()) {
+                        item {
+                            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                                 Text(
-                                    text = referenceLabel(note),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                    text = "没有匹配的笔记",
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurfaceVariant,
                                 )
                             }
-                            if (mode == "引用笔记" && hasBlocks) {
-                                TextButton(onClick = { onSelectExcerptTarget(note) }) {
-                                    Text("选段")
+                        }
+                    } else {
+                        item {
+                            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                                filtered.forEachIndexed { index, note ->
+                                    if (index > 0) MintGroupedDivider(dark = dark)
+                                    val hasBlocks = remember(note.documentJson) {
+                                        runCatching {
+                                            NoteDocument.decode(note.documentJson).blocks.any { it.text.isNotEmpty() }
+                                        }.getOrDefault(false)
+                                    }
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .padding(start = 14.dp, end = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Text(
+                                            text = referenceLabel(note),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = scheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                    role = Role.Button,
+                                                    onClick = { onPickFull(note) },
+                                                )
+                                                .padding(vertical = 12.dp),
+                                        )
+                                        if (mode == "引用笔记" && hasBlocks) {
+                                            TextButton(onClick = { onSelectExcerptTarget(note) }) {
+                                                Text("选段")
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1541,8 +1511,7 @@ private fun ReferencePickerDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
-                            .background(if (dark) Color(0xFF192921) else Color(0xFFF3F8F4))
-                            .border(BorderStroke(1.dp, scheme.outlineVariant), RoundedCornerShape(14.dp))
+                            .background(mintSecondaryFill(dark))
                             .padding(12.dp),
                     ) {
                         Text(text = preview, style = MaterialTheme.typography.bodyMedium)
@@ -1678,45 +1647,59 @@ private fun TagPickerDialog(
         query.none(Char::isISOControl) &&
         availableTags.none { it.parentId.isEmpty() && it.name.equals(query, ignoreCase = true) }
 
-    MintGlassDialog(
+    MintBottomSheet(
         onDismissRequest = onDismiss,
         dark = dark,
         backdrop = backdrop,
         title = "添加标签",
-        actions = {
-            if (onOpenFullOrganizer != null) {
-                TextButton(onClick = onOpenFullOrganizer) { Text("管理全部整理") }
-            }
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
+        leadingLabel = if (onOpenFullOrganizer != null) "全部整理" else null,
+        onLeadingClick = { onOpenFullOrganizer?.invoke() },
+        trailingLabel = "关闭",
+        onTrailingClick = onDismiss,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ComposablesSearchField(filter, "搜索或创建标签", tag = "note-tag-filter")
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            ComposablesSearchField(
+                state = filter,
+                label = "搜索或创建标签",
+                tag = "note-tag-filter",
+                containerColor = mintSecondaryFill(dark),
+            )
             if (canCreate) {
                 MintPillButton(
                     label = "创建并添加 #$query",
                     primary = true,
                     dark = dark,
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = { onCreateTag(query) },
                 )
             }
-            LazyColumn(Modifier.heightIn(max = 260.dp)) {
-                items(matches, key = { it.id }) { tag ->
-                    val alreadyAttached = tag.id in selectedTagIds
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TextButton(
-                            onClick = { if (!alreadyAttached) onSelectExisting(tag) },
-                            enabled = !alreadyAttached,
-                            modifier = Modifier.weight(1f),
-                        ) {
+            LazyColumn(Modifier.heightIn(max = 300.dp)) {
+                if (matches.isEmpty()) {
+                    item {
+                        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                             Text(
-                                text = if (alreadyAttached) "#${tag.name}（已添加）" else "#${tag.name}",
-                                color = if (alreadyAttached) scheme.onSurfaceVariant else scheme.onSurface,
-                                modifier = Modifier.fillMaxWidth(),
+                                text = "输入关键词可快速新建标签",
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurfaceVariant,
                             )
+                        }
+                    }
+                } else {
+                    item {
+                        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                            matches.forEachIndexed { index, tag ->
+                                if (index > 0) MintGroupedDivider(dark = dark)
+                                val alreadyAttached = tag.id in selectedTagIds
+                                MintGroupedRow(
+                                    label = "#${tag.name}",
+                                    dark = dark,
+                                    selected = alreadyAttached,
+                                    trailingText = if (alreadyAttached) "已添加" else null,
+                                    enabled = !alreadyAttached,
+                                    onClick = { if (!alreadyAttached) onSelectExisting(tag) },
+                                )
+                            }
                         }
                     }
                 }

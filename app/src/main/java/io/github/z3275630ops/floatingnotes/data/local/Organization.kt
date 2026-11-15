@@ -59,10 +59,25 @@ internal interface OrganizationDao {
     suspend fun detachTag(note: String, tag: String)
     @Query("INSERT OR IGNORE INTO note_tags (noteId, tagId) SELECT noteId, :target FROM note_tags WHERE tagId = :source")
     suspend fun copyTagNotes(source: String, target: String)
+    @Query("SELECT * FROM notebooks") suspend fun notebooks(): List<NotebookEntity>
+    @Query("SELECT * FROM note_tags") suspend fun noteTags(): List<NoteTagEntity>
+    @Query("SELECT * FROM notebook_notes") suspend fun notebookNotes(): List<NotebookNoteEntity>
+    @Query("SELECT * FROM note_links") suspend fun noteLinks(): List<NoteLinkEntity>
     @Upsert suspend fun setNotebook(row: NotebookNoteEntity)
     @Query("DELETE FROM notebook_notes WHERE noteId = :id") suspend fun clearNotebook(id: String)
     @Query("DELETE FROM note_links WHERE sourceId = :id") suspend fun clearLinks(id: String)
+    @Query("DELETE FROM note_links WHERE sourceId = :id OR targetId = :id") suspend fun clearLinksInvolving(id: String)
     @Insert suspend fun insertLinks(links: List<NoteLinkEntity>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertLinks(links: List<NoteLinkEntity>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertTags(tags: List<TagEntity>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertNotebooks(notebooks: List<NotebookEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertNoteTags(rows: List<NoteTagEntity>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertNotebookNotes(rows: List<NotebookNoteEntity>)
+    @Query("DELETE FROM note_tags") suspend fun clearAllNoteTags()
+    @Query("DELETE FROM notebook_notes") suspend fun clearAllNotebookNotes()
+    @Query("DELETE FROM note_links") suspend fun clearAllLinks()
+    @Query("DELETE FROM tags") suspend fun clearAllTags()
+    @Query("DELETE FROM notebooks") suspend fun clearAllNotebooks()
 }
 
 internal class OrganizationRepository(private val db: NotesDatabase) {

@@ -4,6 +4,11 @@ import androidx.room.withTransaction
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
+import io.github.z3275630ops.floatingnotes.data.backup.BackupConstants
+import io.github.z3275630ops.floatingnotes.data.backup.NoteRevisionSummary
+import io.github.z3275630ops.floatingnotes.data.backup.TrashPurgeImpact
+import io.github.z3275630ops.floatingnotes.data.backup.VersionDiff
+import io.github.z3275630ops.floatingnotes.data.backup.VersionDiffPreview
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskRecurrence
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -18,10 +23,30 @@ import java.time.format.DateTimeFormatterBuilder
 internal class StaleDraftException : IllegalStateException("The draft was superseded")
 internal class EmptyNoteException : IllegalArgumentException("The note is blank")
 
+internal sealed interface RestoreVersionResult {
+    data class Restored(
+        val note: NoteEntity,
+        val previousRevision: Long,
+        val referencedAttachmentIds: List<String>,
+        val reminderSync: TimeReconcileResult,
+    ) : RestoreVersionResult
+
+    data class Conflict(val actualRevision: Long) : RestoreVersionResult
+    data object NotFound : RestoreVersionResult
+    data object Trashed : RestoreVersionResult
+}
+
+internal data class PermanentDeleteResult(
+    val deletedNoteIds: List<String>,
+    val cancelledReminderIds: List<String>,
+)
+
 internal class NotesRepository(private val database: NotesDatabase) {
     private val dao = database.notes()
     private val taskDao = database.taskReminders()
     val notes = dao.observeNotes()
+    val trashedNotes = dao.observeTrashedNotes()
+    val trashedNoteIds = dao.observeTrashedNoteIds()
     val captureDrafts = dao.observeCaptureDrafts()
 
     fun observeTaskItems(): Flow<List<TaskItemProjection>> = taskDao.observeTaskRows().map { rows ->
@@ -386,6 +411,13 @@ internal class NotesRepository(private val database: NotesDatabase) {
         currentZone: ZoneId = ZoneId.systemDefault(),
         now: Instant = Instant.now(),
     ): TimeReconcileResult = database.withTransaction {
+        reconcileTimeChangeLocked(currentZone, now)
+    }
+
+    private suspend fun reconcileTimeChangeLocked(
+        currentZone: ZoneId,
+        now: Instant,
+    ): TimeReconcileResult {
         val timeStr = timestamp.format(now)
         val nowMs = now.toEpochMilli()
         val active = mutableListOf<ReminderEntity>()
@@ -393,7 +425,12 @@ internal class NotesRepository(private val database: NotesDatabase) {
         var missedCount = 0
 
         for (reminder in taskDao.activeOrMissedReminders()) {
-            val note = dao.note(reminder.noteId)?.takeIf { it.deletedAt == null }
+            val rawNote = dao.note(reminder.noteId)
+            if (rawNote != null && rawNote.deletedAt != null) {
+                cancelled.add(reminder.id)
+                continue
+            }
+            val note = rawNote?.takeIf { it.deletedAt == null }
             val block = note?.let {
                 runCatching { NoteDocument.decode(it.documentJson).findBlock(reminder.blockId) }.getOrNull()
             }?.takeIf { it.type == "checkbox" }
@@ -460,7 +497,7 @@ internal class NotesRepository(private val database: NotesDatabase) {
                 active.add(updated)
             }
         }
-        TimeReconcileResult(active, cancelled, missedCount)
+        return TimeReconcileResult(active, cancelled, missedCount)
     }
 
     suspend fun pendingMissedReminders(
@@ -499,7 +536,11 @@ internal class NotesRepository(private val database: NotesDatabase) {
             if (reminder.statusEnum == ReminderStatus.ACTIVE && !isDueNow) continue
             if (reminder.missedSummarized) continue
 
-            val note = dao.note(reminder.noteId)?.takeIf { it.deletedAt == null }
+            val rawNote = dao.note(reminder.noteId)
+            if (rawNote != null && rawNote.deletedAt != null) {
+                continue
+            }
+            val note = rawNote?.takeIf { it.deletedAt == null }
             val block = note?.let {
                 runCatching { NoteDocument.decode(it.documentJson).findBlock(reminder.blockId) }.getOrNull()
             }?.takeIf { it.type == "checkbox" }
@@ -570,7 +611,11 @@ internal class NotesRepository(private val database: NotesDatabase) {
         if (expectedOccurrenceId != null && reminder.occurrenceId != null && reminder.occurrenceId != expectedOccurrenceId) {
             return@withTransaction null
         }
-        val note = dao.note(reminder.noteId)?.takeIf { it.deletedAt == null }
+        val rawNote = dao.note(reminder.noteId)
+        if (rawNote != null && rawNote.deletedAt != null) {
+            return@withTransaction null
+        }
+        val note = rawNote?.takeIf { it.deletedAt == null }
         val block = note?.let {
             runCatching { NoteDocument.decode(it.documentJson).findBlock(reminder.blockId) }.getOrNull()
         }?.takeIf { it.type == "checkbox" }
@@ -914,6 +959,204 @@ internal class NotesRepository(private val database: NotesDatabase) {
             else it.copy(archivedAt = if (archived) now() else null)
         }
 
+    suspend fun listTrashedNotes(): List<NoteEntity> = dao.trashedNotes()
+
+    suspend fun moveToTrash(id: String): List<String> = database.withTransaction {
+        val previous = dao.note(id) ?: return@withTransaction emptyList()
+        if (previous.deletedAt != null) return@withTransaction emptyList()
+        val ts = now()
+        dao.deleteDraftsForNote(id)
+        writeRevision(
+            previous.copy(revision = previous.revision + 1L, updatedAt = ts, deletedAt = ts),
+            "trash",
+        )
+        taskDao.remindersForNote(id).map { it.id }
+    }
+
+    suspend fun restoreFromTrash(
+        id: String,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+        nowInstant: Instant = Instant.now(),
+    ): TimeReconcileResult? = database.withTransaction {
+        val previous = dao.note(id) ?: return@withTransaction null
+        if (previous.deletedAt == null) return@withTransaction null
+        val ts = timestamp.format(nowInstant)
+        writeRevision(
+            previous.copy(revision = previous.revision + 1L, updatedAt = ts, deletedAt = null),
+            "restore_trash",
+        )
+        reconcileTimeChangeLocked(zoneId, nowInstant)
+    }
+
+    suspend fun previewPurge(
+        noteIds: Collection<String>,
+        existingAttachmentIds: Set<String>? = null,
+    ): TrashPurgeImpact = database.withTransaction {
+        val targetIds = noteIds.filter { it.isNotBlank() }.toSet()
+        if (targetIds.isEmpty()) return@withTransaction TrashPurgeImpact(0, 0, 0)
+        val allNotes = dao.allNotes()
+        val targetNotes = allNotes.filter { it.id in targetIds && it.deletedAt != null }
+        if (targetNotes.isEmpty()) return@withTransaction TrashPurgeImpact(0, 0, 0)
+        val actualTargetIds = targetNotes.mapTo(HashSet()) { it.id }
+        val allVersions = dao.allVersions()
+        val allDrafts = dao.allDrafts()
+        val targetVersions = allVersions.filter { it.noteId in actualTargetIds }
+
+        val candidateRefs = HashSet<String>()
+        targetNotes.forEach { candidateRefs.addAll(VersionDiff.extractAttachmentIds(it.documentJson)) }
+        targetVersions.forEach {
+            candidateRefs.addAll(VersionDiff.decodeAttachmentRefs(it.attachmentRefs, it.documentJson))
+        }
+        allDrafts.asSequence().filter { it.noteId in actualTargetIds }.forEach {
+            candidateRefs.addAll(VersionDiff.extractAttachmentIds(it.documentJson))
+        }
+
+        val retainedRefs = HashSet<String>()
+        allNotes.asSequence().filter { it.id !in actualTargetIds }.forEach {
+            retainedRefs.addAll(VersionDiff.extractAttachmentIds(it.documentJson))
+        }
+        allVersions.asSequence().filter { it.noteId !in actualTargetIds }.forEach {
+            retainedRefs.addAll(VersionDiff.decodeAttachmentRefs(it.attachmentRefs, it.documentJson))
+        }
+        allDrafts.asSequence().filter { it.noteId !in actualTargetIds }.forEach {
+            retainedRefs.addAll(VersionDiff.extractAttachmentIds(it.documentJson))
+        }
+
+        val orphanedCount = (candidateRefs - retainedRefs).let { orphaned ->
+            if (existingAttachmentIds != null) orphaned.count { it in existingAttachmentIds } else orphaned.size
+        }
+        TrashPurgeImpact(
+            noteCount = targetNotes.size,
+            versionCount = targetVersions.size,
+            orphanedAttachmentCount = orphanedCount,
+        )
+    }
+
+    suspend fun permanentlyDeleteNotes(noteIds: Collection<String>): PermanentDeleteResult =
+        database.withTransaction {
+            permanentlyDeleteNotesLocked(noteIds)
+        }
+
+    suspend fun emptyTrash(): PermanentDeleteResult = database.withTransaction {
+        val trashedIds = dao.trashedNotes().map { it.id }
+        permanentlyDeleteNotesLocked(trashedIds)
+    }
+
+    private suspend fun permanentlyDeleteNotesLocked(noteIds: Collection<String>): PermanentDeleteResult {
+        val deleted = mutableListOf<String>()
+        val cancelledReminders = mutableListOf<String>()
+        val orgDao = database.organization()
+        for (id in noteIds.distinct()) {
+            val existing = dao.note(id) ?: continue
+            require(existing.deletedAt != null) { "只能彻底删除回收站中的笔记" }
+            cancelledReminders.addAll(taskDao.remindersForNote(id).map { it.id })
+            dao.deleteTasks(id)
+            taskDao.deleteRemindersForNote(id)
+            taskDao.deleteOccurrencesForNote(id)
+            dao.deleteDraftsForNote(id)
+            dao.deleteVersionsForNote(id)
+            dao.deleteUnsyncedOutboxForNote(id)
+            orgDao.clearLinksInvolving(id)
+            dao.deleteNoteById(id)
+            deleted.add(id)
+        }
+        return PermanentDeleteResult(
+            deletedNoteIds = deleted,
+            cancelledReminderIds = cancelledReminders.distinct(),
+        )
+    }
+
+    suspend fun listVersions(noteId: String): Pair<NoteEntity, List<NoteRevisionSummary>>? =
+        database.withTransaction {
+            val note = dao.note(noteId) ?: return@withTransaction null
+            val versions = dao.versionsForNote(noteId)
+            val summaries = versions.map { version ->
+                val effectiveTitle = version.title ?: if (version.revision == note.revision) note.title else null
+                val (snippet, attachmentCount) = VersionDiff.summarizeDocument(version.documentJson, effectiveTitle)
+                NoteRevisionSummary(
+                    noteId = version.noteId,
+                    revision = version.revision,
+                    origin = version.origin,
+                    title = effectiveTitle,
+                    snippet = snippet,
+                    attachmentCount = attachmentCount,
+                    createdAt = version.createdAt,
+                    isCurrent = version.revision == note.revision,
+                )
+            }
+            note to summaries
+        }
+
+    suspend fun loadVersionDiff(
+        noteId: String,
+        targetRevision: Long,
+        resolveAttachmentLabel: (String) -> String?,
+    ): VersionDiffPreview? {
+        val note = dao.note(noteId) ?: return null
+        val target = dao.version(noteId, targetRevision) ?: return null
+        val targetTitle = target.title ?: if (target.revision == note.revision) note.title else null
+        return VersionDiff.diffDocuments(
+            noteId = noteId,
+            targetRevision = target.revision,
+            targetTitle = targetTitle,
+            targetDocumentJson = target.documentJson,
+            targetAttachmentRefsJson = target.attachmentRefs,
+            targetOrigin = target.origin,
+            targetCreatedAt = target.createdAt,
+            currentRevision = note.revision,
+            currentTitle = note.title,
+            currentDocumentJson = note.documentJson,
+            resolveAttachmentLabel = resolveAttachmentLabel,
+        )
+    }
+
+    suspend fun restoreVersion(
+        noteId: String,
+        targetRevision: Long,
+        expectedCurrentRevision: Long,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+        nowInstant: Instant = Instant.now(),
+    ): RestoreVersionResult = database.withTransaction {
+        val current = dao.note(noteId) ?: return@withTransaction RestoreVersionResult.NotFound
+        if (current.deletedAt != null) return@withTransaction RestoreVersionResult.Trashed
+        if (current.revision != expectedCurrentRevision) {
+            return@withTransaction RestoreVersionResult.Conflict(current.revision)
+        }
+        val target = dao.version(noteId, targetRevision) ?: return@withTransaction RestoreVersionResult.NotFound
+        val restoredDoc = NoteDocument.decode(target.documentJson)
+        val ts = timestamp.format(nowInstant)
+        val restoredNote = current.copy(
+            title = target.title,
+            documentJson = target.documentJson,
+            searchText = restoredDoc.text,
+            mediaMask = restoredDoc.mediaMask(),
+            updatedAt = ts,
+            revision = current.revision + 1L,
+            contentHash = hash(target.documentJson),
+            lastDraftId = newId(),
+            committedSeq = 0L,
+        )
+        dao.deleteDraftsForNote(noteId)
+        writeRevision(restoredNote, "restore")
+        syncTasksForDocument(
+            updated = restoredNote,
+            previous = current,
+            document = restoredDoc,
+            timeStr = ts,
+            zoneId = zoneId,
+            now = nowInstant,
+        )
+        val reminderSync = reconcileTimeChangeLocked(zoneId, nowInstant)
+        database.organization().clearLinks(restoredNote.id)
+        database.organization().insertLinks(restoredDoc.linksFrom(restoredNote.id))
+        RestoreVersionResult.Restored(
+            note = restoredNote,
+            previousRevision = current.revision,
+            referencedAttachmentIds = VersionDiff.decodeAttachmentRefs(target.attachmentRefs, target.documentJson),
+            reminderSync = reminderSync,
+        )
+    }
+
     private suspend fun changeMetadata(id: String, change: (NoteEntity) -> NoteEntity) = database.withTransaction {
         val previous = dao.note(id) ?: return@withTransaction
         check(previous.deletedAt == null)
@@ -925,7 +1168,24 @@ internal class NotesRepository(private val database: NotesDatabase) {
 
     private suspend fun writeRevision(note: NoteEntity, origin: String) {
         dao.putNote(note)
-        dao.addVersion(NoteVersionEntity(note.id, note.revision, note.documentJson, origin, note.updatedAt))
+        dao.addVersion(
+            NoteVersionEntity(
+                noteId = note.id,
+                revision = note.revision,
+                documentJson = note.documentJson,
+                origin = origin,
+                createdAt = note.updatedAt,
+                title = note.title,
+                attachmentRefs = VersionDiff.encodeAttachmentRefsJson(
+                    VersionDiff.extractAttachmentIds(note.documentJson),
+                ),
+            ),
+        )
+        dao.pruneOldVersions(
+            noteId = note.id,
+            keepCount = BackupConstants.MAX_REVISIONS_PER_NOTE,
+            keepRevision = note.revision,
+        )
         val payload = JSONObject()
             .put("note_id", note.id)
             .put("revision", note.revision)

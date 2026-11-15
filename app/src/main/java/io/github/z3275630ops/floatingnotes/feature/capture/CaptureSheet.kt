@@ -23,10 +23,13 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -42,7 +45,6 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -154,6 +156,7 @@ internal fun BoxScope.CaptureSheet(
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val tier = if (imeVisible || fullScreen) GlassTier.Reduced else GlassTier.Enhanced
     var panelHeight by remember { mutableIntStateOf(0) }
+    val currentPanelHeight by rememberUpdatedState(panelHeight)
     val sheetShape = RoundedCornerShape(
         topStart = if (fullScreen) 0.dp else 28.dp,
         topEnd = if (fullScreen) 0.dp else 28.dp,
@@ -178,72 +181,93 @@ internal fun BoxScope.CaptureSheet(
                 .clearAndSetSemantics { },
         )
     }
-    GlassSurface(
-        backdrop = backdrop,
-        tier = tier,
-        dark = dark,
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .padding(start = horizontalPad, end = horizontalPad, bottom = bottomPad)
-            .widthIn(max = if (fullScreen) 900.dp else 640.dp)
-            .fillMaxWidth()
-            .fillMaxHeight(heightFraction)
-            .onSizeChanged { panelHeight = it.height }
-            .offset { IntOffset(0, ((1f - motion.progress) * (panelHeight + 32.dp.toPx())).roundToInt()) },
-        sampleTopHeight = if (fullScreen) null else 96.dp,
-        shapeRadius = if (fullScreen) 0.dp else 28.dp,
-        elevatedModal = true,
-        shape = sheetShape,
-    ) {
-        Column(Modifier.fillMaxSize().padding(horizontal = if (fullScreen) 12.dp else 10.dp)) {
+    val panelModifier = Modifier
+        .align(Alignment.BottomCenter)
+        .padding(start = horizontalPad, end = horizontalPad, bottom = bottomPad)
+        .widthIn(max = if (fullScreen) 900.dp else 640.dp)
+        .fillMaxWidth()
+        .fillMaxHeight(heightFraction)
+        .onSizeChanged { panelHeight = it.height }
+        .offset { IntOffset(0, ((1f - motion.progress) * (panelHeight + 32.dp.toPx())).roundToInt()) }
+
+    val panelBody: @Composable BoxScope.() -> Unit = {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = if (fullScreen) 0.dp else 12.dp),
+        ) {
             if (!fullScreen) {
+                var handleCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(40.dp)
+                        .height(28.dp)
+                        .onGloballyPositioned { handleCoords = it }
                         .testTag("capture-handle")
-                        .pointerInput(panelHeight) {
+                        .pointerInput(Unit) {
                             val tracker = VelocityTracker()
+                            var lastRootY = Float.NaN
                             detectVerticalDragGestures(
-                                onDragStart = {
+                                onDragStart = { startOffset ->
                                     tracker.resetTracking()
+                                    val coords = handleCoords?.takeIf { it.isAttached }
+                                    lastRootY = coords?.localToRoot(startOffset)?.y ?: Float.NaN
                                     motion.cancelSettle()
-                                    keyboard?.hide()
                                     dragStart()
                                 },
                                 onDragEnd = {
+                                    lastRootY = Float.NaN
                                     val velocity = tracker.calculateVelocity().y
-                                    val progressVelocity = -velocity / panelHeight.coerceAtLeast(1)
-                                    if (motion.progress < .65f || velocity > 1_000.dp.toPx()) {
+                                    val progressVelocity = -velocity / currentPanelHeight.coerceAtLeast(1)
+                                    if (motion.progress < .65f || velocity > 650.dp.toPx()) {
                                         dismissCleanly { dragClose(progressVelocity) }
                                     } else {
                                         motion.settle(true, progressVelocity)
                                     }
                                 },
-                                onDragCancel = { motion.settle(true) },
+                                onDragCancel = {
+                                    lastRootY = Float.NaN
+                                    motion.settle(true)
+                                },
                             ) { change, amount ->
                                 change.consume()
-                                tracker.addPosition(change.uptimeMillis, change.position)
-                                motion.follow(motion.progress - amount / panelHeight.coerceAtLeast(1))
+                                val coords = handleCoords?.takeIf { it.isAttached }
+                                val rootY = coords?.localToRoot(change.position)?.y
+                                val deltaY = if (rootY != null && !lastRootY.isNaN()) {
+                                    val d = rootY - lastRootY
+                                    if (d == 0f && amount != 0f) amount else d
+                                } else {
+                                    amount
+                                }
+                                if (rootY != null) {
+                                    lastRootY = rootY
+                                    tracker.addPosition(change.uptimeMillis, Offset(0f, rootY))
+                                } else {
+                                    tracker.addPosition(change.uptimeMillis, change.position)
+                                }
+                                motion.follow(motion.progress - deltaY / currentPanelHeight.coerceAtLeast(1))
                             }
                         },
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(
                         Modifier
-                            .size(40.dp, 4.dp)
-                            .background(scheme.onSurfaceVariant.copy(alpha = .32f), RoundedCornerShape(2.dp)),
+                            .size(36.dp, 5.dp)
+                            .background(scheme.onSurfaceVariant.copy(alpha = .28f), RoundedCornerShape(3.dp)),
                     )
                 }
             } else {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
             }
-            Row(
-                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (fullScreen) {
+            if (fullScreen) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Row(
                         modifier = Modifier
                             .defaultMinSize(minHeight = 48.dp)
@@ -283,22 +307,52 @@ internal fun BoxScope.CaptureSheet(
                         Spacer(Modifier.weight(1f))
                     }
                     headerActions?.invoke(this)
-                } else {
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .defaultMinSize(minHeight = 48.dp)
+                            .clip(RoundedCornerShape(50))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                role = Role.Button,
+                                onClick = { dismissCleanly { dismiss() } },
+                            )
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = dismissLabel,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal),
+                            color = scheme.primary,
+                        )
+                    }
                     Text(
                         text = title,
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.align(Alignment.Center),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                         color = scheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    headerActions?.invoke(this)
-                    MintPillButton(
-                        label = dismissLabel,
-                        onClick = { dismissCleanly { dismiss() } },
-                        dark = dark,
-                    )
+                    if (headerActions != null) {
+                        Row(
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            content = headerActions,
+                        )
+                    }
                 }
             }
-            Spacer(Modifier.height(if (fullScreen) 6.dp else 4.dp))
+            Spacer(Modifier.height(4.dp))
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -308,5 +362,36 @@ internal fun BoxScope.CaptureSheet(
                 content = content,
             )
         }
+    }
+
+    if (fullScreen) {
+        val solidCanvas = if (dark) Color(0xFF0D1813) else Color(0xFFF3FAF5)
+        Box(modifier = panelModifier.background(solidCanvas)) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clearAndSetSemantics { }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    ),
+            )
+            panelBody()
+        }
+    } else {
+        GlassSurface(
+            backdrop = backdrop,
+            tier = tier,
+            dark = dark,
+            modifier = panelModifier,
+            sampleTopHeight = 96.dp,
+            shapeRadius = 28.dp,
+            elevatedModal = true,
+            shape = sheetShape,
+            showBorder = true,
+            showShadow = true,
+            content = panelBody,
+        )
     }
 }

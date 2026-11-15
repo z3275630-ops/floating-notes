@@ -30,6 +30,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -49,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -62,12 +64,15 @@ internal fun ComposablesSearchField(
     label: String,
     modifier: Modifier = Modifier,
     tag: String = "note-reference-filter",
+    containerColor: Color? = null,
+    trailingContent: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(14.dp)
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val type = MaterialTheme.typography.bodyMedium
+    val fill = containerColor ?: scheme.surfaceContainerHigh.copy(alpha = 0.85f)
     BasicTextField(
         state = state,
         modifier = modifier
@@ -82,16 +87,15 @@ internal fun ComposablesSearchField(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = 44.dp)
                     .clip(shape)
-                    .background(scheme.surface.copy(alpha = 0.96f), shape)
-                    .border(
-                        width = if (focused) 1.8.dp else 1.dp,
-                        color = if (focused) scheme.primary else scheme.outline.copy(alpha = 0.34f),
-                        shape = shape,
+                    .background(fill, shape)
+                    .then(
+                        if (focused) Modifier.border(1.2.dp, scheme.primary.copy(alpha = 0.72f), shape)
+                        else Modifier
                     )
-                    .padding(start = 14.dp, end = if (state.text.isEmpty()) 14.dp else 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .padding(start = 12.dp, end = if (state.text.isEmpty() && trailingContent == null) 12.dp else 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -106,7 +110,7 @@ internal fun ComposablesSearchField(
                         .padding(
                             top = 10.dp,
                             bottom = 10.dp,
-                            end = if (state.text.isEmpty()) 2.dp else 8.dp,
+                            end = if (state.text.isEmpty()) 2.dp else 4.dp,
                         )
                         .clipToBounds(),
                     contentAlignment = Alignment.CenterStart,
@@ -137,6 +141,7 @@ internal fun ComposablesSearchField(
                         )
                     }
                 }
+                trailingContent?.invoke(this)
             }
         },
     )

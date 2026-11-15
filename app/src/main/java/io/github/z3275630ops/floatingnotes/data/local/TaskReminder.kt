@@ -238,11 +238,23 @@ internal interface TaskReminderDao {
     @Query("SELECT * FROM reminders WHERE note_id = :noteId")
     suspend fun remindersForNote(noteId: String): List<ReminderEntity>
 
-    @Query("SELECT * FROM reminders WHERE status = 'ACTIVE' AND trigger_instant_ms IS NOT NULL")
+    @Query(
+        """
+        SELECT r.* FROM reminders r
+        INNER JOIN notes n ON n.id = r.note_id AND n.deleted_at IS NULL
+        WHERE r.status = 'ACTIVE' AND r.trigger_instant_ms IS NOT NULL
+        """,
+    )
     suspend fun activeReminders(): List<ReminderEntity>
 
     @Query("SELECT * FROM reminders WHERE status IN ('ACTIVE', 'MISSED')")
     suspend fun activeOrMissedReminders(): List<ReminderEntity>
+
+    @Query("SELECT * FROM reminders")
+    suspend fun allReminders(): List<ReminderEntity>
+
+    @Query("SELECT * FROM task_occurrences")
+    suspend fun allOccurrences(): List<TaskOccurrenceEntity>
 
     @Upsert
     suspend fun upsertReminder(reminder: ReminderEntity)
@@ -250,17 +262,38 @@ internal interface TaskReminderDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertOccurrence(occurrence: TaskOccurrenceEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertReminders(reminders: List<ReminderEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOccurrences(occurrences: List<TaskOccurrenceEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTasks(tasks: List<TaskIndexEntity>)
+
     @Query("SELECT * FROM task_occurrences WHERE note_id = :noteId AND block_id = :blockId ORDER BY completed_at DESC")
     suspend fun occurrencesForTask(noteId: String, blockId: String): List<TaskOccurrenceEntity>
 
     @Query("UPDATE reminders SET status = 'CANCELLED', snoozed_until_ms = NULL, revision = revision + 1, updated_at = :updatedAt WHERE note_id = :noteId AND block_id = :blockId AND status != 'CANCELLED'")
     suspend fun cancelReminderForBlock(noteId: String, blockId: String, updatedAt: String)
 
+    @Query("DELETE FROM reminders WHERE note_id = :noteId")
+    suspend fun deleteRemindersForNote(noteId: String)
+
+    @Query("DELETE FROM task_occurrences WHERE note_id = :noteId")
+    suspend fun deleteOccurrencesForNote(noteId: String)
+
     @Query("SELECT * FROM notes WHERE deleted_at IS NULL")
     suspend fun allLiveNotes(): List<NoteEntity>
 
     @Query("DELETE FROM task_index")
     suspend fun clearAllTasks()
+
+    @Query("DELETE FROM reminders")
+    suspend fun clearAllReminders()
+
+    @Query("DELETE FROM task_occurrences")
+    suspend fun clearAllOccurrences()
 }
 
 internal val MIGRATION_3_4: Migration = object : Migration(3, 4) {
