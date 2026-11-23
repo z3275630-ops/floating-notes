@@ -39,6 +39,8 @@ internal data class ReviewCardModel(
     val tagNames: List<String>,
     val tagIds: List<String>,
     val eventActions: Set<String>,
+    val scheduleReason: String = "",
+    val keySentences: List<String> = emptyList(),
 )
 
 internal data class ActiveWalkSnapshot(
@@ -180,11 +182,28 @@ internal class DiscoveryRepository(
         val sessionEvents = events.filter { it.sessionId == session.id }
         val eventsByNote = sessionEvents.groupBy { it.noteId }
         val cardIds = decodeStringArray(session.cardIdsJson)
+        val cardNotes = cardIds.mapNotNull { id -> notesById[id]?.takeIf { it.deletedAt == null } }
+        val fsrsStates = FsrsReviewScheduler.computeNoteStates(
+            notes = cardNotes,
+            events = events,
+            now = now,
+            zoneId = zoneId,
+        )
         val cards = cardIds.mapNotNull { id ->
             val note = notesById[id]?.takeIf { it.deletedAt == null } ?: return@mapNotNull null
             val tIds = noteTagIdsMap[id].orEmpty().toList()
             val tNames = tIds.mapNotNull { tagsById[it]?.name }.sorted()
             val fullText = note.searchText.ifBlank { note.title.orEmpty() }
+            val scheduleReason = fsrsStates[id]?.scheduleReason.orEmpty()
+            val keySentences = if (fullText.length > 160) {
+                LocalTextIntelligence.extractKeySentences(
+                    text = fullText,
+                    maxSentences = 2,
+                    maxChars = 180,
+                ).sentences
+            } else {
+                emptyList()
+            }
             ReviewCardModel(
                 note = note,
                 title = LocalRetrievalEngine.displayNoteTitle(note),
@@ -193,6 +212,8 @@ internal class DiscoveryRepository(
                 tagNames = tNames,
                 tagIds = tIds,
                 eventActions = eventsByNote[id].orEmpty().mapTo(HashSet()) { it.action },
+                scheduleReason = scheduleReason,
+                keySentences = keySentences,
             )
         }
         val onThisDay = DiscoveryEngines.findOnThisDayNotes(
@@ -258,6 +279,65 @@ internal class DiscoveryRepository(
         val cardIds = decodeStringArray(current.cardIdsJson)
         val clamped = index.coerceIn(0, (cardIds.size - 1).coerceAtLeast(0))
         discoveryDao.upsertReviewSession(current.copy(currentIndex = clamped, updatedAt = isoFormatter.format(now)))
+    }
+
+    suspend fun markReviewCardSeen(
+        sessionId: String,
+        noteId: String,
+        now: Instant = Instant.now(),
+    ) = withContext(Dispatchers.IO) {
+        if (sessionId.isBlank() || noteId.isBlank()) return@withContext
+        val alreadySeen = discoveryDao.allReviewEvents().any {
+            it.sessionId == sessionId && it.noteId == noteId && it.action == "seen"
+        }
+        if (alreadySeen) return@withContext
+        discoveryDao.upsertReviewEvent(
+            ReviewEventEntity(
+                id = "seen:$sessionId:$noteId",
+                sessionId = sessionId,
+                noteId = noteId,
+                action = "seen",
+                untilIso = null,
+                createdAt = isoFormatter.format(now),
+            ),
+        )
+    }
+
+    suspend fun recommendTagsForDraft(
+        draftText: String,
+        currentNoteId: String?,
+        attachedTagIds: Set<String>,
+        limit: Int = 4,
+    ): List<TagRecommendation> = withContext(Dispatchers.IO) {
+        val allNotes = notesDao.allNotes()
+        val allChunks = discoveryDao.allChunks()
+        val tags = orgDao.tags()
+        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+        LocalTagAndGraphEngine.recommendTagsForDraft(
+            draftText = draftText,
+            currentNoteId = currentNoteId,
+            attachedTagIds = attachedTagIds,
+            allNotes = allNotes,
+            allChunks = allChunks,
+            tags = tags,
+            noteTagIdsByNote = noteTagMap,
+            limit = limit,
+        )
+    }
+
+    suspend fun findDuplicateGroups(
+        minSimilarityPercent: Int = 65,
+        maxGroups: Int = 10,
+    ): List<DuplicateNoteGroup> = withContext(Dispatchers.IO) {
+        ensureIndexFresh()
+        val allNotes = notesDao.allNotes()
+        val allChunks = discoveryDao.allChunks()
+        LocalTextIntelligence.findDuplicateGroups(
+            notes = allNotes,
+            allChunks = allChunks,
+            minSimilarityPercent = minSimilarityPercent,
+            maxGroups = maxGroups,
+        )
     }
 
     suspend fun recordReviewAction(
@@ -659,13 +739,17 @@ internal class DiscoveryRepository(
     suspend fun drawDualCollisionPair(excludePairKeys: Set<String> = emptySet()): DualPairDrawResult =
         withContext(Dispatchers.IO) {
             val allNotes = notesDao.allNotes()
+            val allChunks = discoveryDao.allChunks()
             val tagsById = orgDao.tags().associateBy { it.id }
             val noteTagIdsMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+            val links = orgDao.noteLinks()
             val (pair, eligibleCount) = DiscoveryEngines.pickDualCollisionPair(
                 notes = allNotes,
                 noteTagIdsByNote = noteTagIdsMap,
                 tagsById = tagsById,
                 excludePairKeys = excludePairKeys,
+                allChunks = allChunks,
+                links = links,
             )
             if (pair == null) DualPairDrawResult.Insufficient(eligibleCount)
             else DualPairDrawResult.Ready(pair, eligibleCount)
@@ -673,7 +757,16 @@ internal class DiscoveryRepository(
 
     suspend fun analyzeDualCollision(pair: DualCollisionPair): DualCollisionBridge = withContext(Dispatchers.IO) {
         val links = orgDao.noteLinks()
-        DiscoveryEngines.analyzeDualCollision(pair = pair, links = links)
+        val allNotes = notesDao.allNotes()
+        val tagsById = orgDao.tags().associateBy { it.id }
+        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+        DiscoveryEngines.analyzeDualCollision(
+            pair = pair,
+            links = links,
+            allNotes = allNotes,
+            noteTagIdsByNote = noteTagMap,
+            tagsById = tagsById,
+        )
     }
 
     suspend fun saveDualCollisionAsNote(

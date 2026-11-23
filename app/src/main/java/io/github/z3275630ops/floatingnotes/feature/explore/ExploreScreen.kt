@@ -113,6 +113,7 @@ internal fun ExploreScreen(
     onShareNote: (NoteEntity) -> Unit = {},
     selectedSectionIndex: Int? = null,
     onSelectSection: ((Int) -> Unit)? = null,
+    onMarkReviewCardSeen: (String) -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
     var internalSectionIndex by rememberSaveable { mutableStateOf(0) }
@@ -223,6 +224,7 @@ internal fun ExploreScreen(
                     onOpenTodos = onOpenTodos,
                     onOpenStats = onOpenStats,
                     onShareNote = onShareNote,
+                    onMarkReviewCardSeen = onMarkReviewCardSeen,
                 )
             }
             ExploreSection.Find -> {
@@ -292,6 +294,7 @@ private fun ReviewTabContent(
     onOpenTodos: () -> Unit,
     onOpenStats: () -> Unit,
     onShareNote: (NoteEntity) -> Unit,
+    onMarkReviewCardSeen: (String) -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
     val review = state.review
@@ -406,6 +409,7 @@ private fun ReviewTabContent(
                             text = formatShortDate(card.note.createdAt),
                             style = MaterialTheme.typography.labelMedium,
                             color = reviewAccent.fg,
+                            maxLines = 1,
                         )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -457,6 +461,24 @@ private fun ReviewTabContent(
                         }
                     }
 
+                    if (card.scheduleReason.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(reviewAccent.bg)
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                .testTag("review-fsrs-reason"),
+                        ) {
+                            Text(
+                                text = card.scheduleReason,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                color = reviewAccent.fg,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+
                     Text(
                         text = card.title,
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
@@ -477,6 +499,31 @@ private fun ReviewTabContent(
                                     onClick = {
                                         if (tId != null) onExcludeTag(tId, tName)
                                     },
+                                )
+                            }
+                        }
+                    }
+
+                    if (card.keySentences.isNotEmpty() && !expanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(mintSecondaryFill(dark))
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .testTag("review-key-sentences"),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                text = "原话重点",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = reviewAccent.fg,
+                            )
+                            card.keySentences.forEach { sentence ->
+                                Text(
+                                    text = sentence,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurface,
                                 )
                             }
                         }
@@ -566,7 +613,10 @@ private fun ReviewTabContent(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null,
                                         role = Role.Button,
-                                        onClick = { onSelectIndex(idx + 1) },
+                                        onClick = {
+                                            onMarkReviewCardSeen(card.note.id)
+                                            onSelectIndex(idx + 1)
+                                        },
                                     )
                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                             )

@@ -5,7 +5,9 @@ import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryRepository
+import io.github.z3275630ops.floatingnotes.data.discovery.DuplicateNoteGroup
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalRetrievalEngine
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalTextIntelligence
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.NoteTagEntity
@@ -312,6 +314,168 @@ internal class AgentRepository(
         }
         discoveryRepository.syncChunksForNote(created)
         AgentActionCommitResult.Committed(created.id, "已生成含 ${cleanTodos.size} 项待办的新笔记")
+    }
+
+    suspend fun findScopedDuplicateGroups(
+        scope: NoteScope,
+        timeRange: AgentTimeRange,
+        now: Instant = Instant.now(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): List<DuplicateNoteGroup> = withContext(Dispatchers.IO) {
+        discoveryRepository.ensureIndexFresh()
+        val allNotes = notesDao.allNotes()
+        val allChunks = discoveryDao.allChunks()
+        val tags = orgDao.tags()
+        val noteTags = orgDao.noteTags()
+        val notebookNotes = orgDao.notebookNotes()
+
+        val scopedNotes = LocalAgentEngine.filterScopedNotes(
+            notes = allNotes,
+            tags = tags,
+            noteTags = noteTags,
+            notebookNotes = notebookNotes,
+            scope = scope,
+            timeRange = timeRange,
+            now = now,
+        )
+        if (scopedNotes.size < 2) return@withContext emptyList()
+        val scopedIds = scopedNotes.mapTo(HashSet()) { it.id }
+        val scopedChunks = allChunks.filter { it.noteId in scopedIds }
+        LocalTextIntelligence.findDuplicateGroups(
+            notes = scopedNotes,
+            allChunks = scopedChunks,
+        )
+    }
+
+    suspend fun commitMergeDuplicateGroup(
+        group: DuplicateNoteGroup,
+        moveDuplicatesToTrash: Boolean,
+        actionId: String = "merge_dup:${group.groupId}",
+        now: Instant = Instant.now(),
+    ): AgentActionCommitResult = withContext(Dispatchers.IO) {
+        val existing = agentDao.actionById(actionId)
+        if (existing != null && existing.status == "committed") {
+            return@withContext AgentActionCommitResult.AlreadyApplied(
+                existingNoteId = existing.targetNoteId,
+                summary = existing.summary,
+            )
+        }
+
+        val sourceNotes = listOf(group.primaryNote) + group.duplicateNotes
+        val currentNotes = notesDao.allNotes().associateBy { it.id }
+        val conflictTitles = mutableListOf<String>()
+        val freshSources = ArrayList<NoteEntity>(sourceNotes.size)
+        for (src in sourceNotes) {
+            val fresh = currentNotes[src.id]
+            if (fresh == null || fresh.deletedAt != null || fresh.revision != src.revision) {
+                conflictTitles.add(LocalRetrievalEngine.displayNoteTitle(src))
+            } else {
+                freshSources.add(fresh)
+            }
+        }
+
+        val revJson = JSONObject().apply {
+            for (src in sourceNotes) {
+                put(src.id, src.revision)
+            }
+        }.toString()
+        val ts = isoFormatter.format(now)
+        if (conflictTitles.isNotEmpty()) {
+            val distinctConflicts = conflictTitles.distinct()
+            agentDao.insertAction(
+                AgentActionEntity(
+                    actionId = "${actionId}:conflict:${now.toEpochMilli()}",
+                    runId = group.groupId,
+                    actionType = "merge_duplicates",
+                    targetNoteId = null,
+                    sourceRevisionsJson = revJson,
+                    status = "conflict_refused",
+                    summary = "来源笔记已修订或移除：${distinctConflicts.joinToString("、")}",
+                    createdAt = ts,
+                ),
+            )
+            return@withContext AgentActionCommitResult.ConflictDetected(distinctConflicts)
+        }
+
+        val (saved, summary) = database.withTransaction {
+            val freshPrimary = freshSources.first()
+            val freshDuplicates = freshSources.drop(1)
+            val mergedParagraphs = LocalTextIntelligence.buildMergedParagraphs(freshPrimary, freshDuplicates)
+            val primaryTitle = LocalRetrievalEngine.displayNoteTitle(freshPrimary)
+
+            val blocks = mutableListOf<NoteBlock>()
+            if (mergedParagraphs.isNotEmpty()) {
+                for (para in mergedParagraphs) {
+                    blocks.add(NoteBlock.paragraph(para))
+                }
+            } else {
+                blocks.add(NoteBlock.paragraph("【合并整理】$primaryTitle"))
+            }
+
+            if (!moveDuplicatesToTrash) {
+                for (src in freshSources) {
+                    blocks.add(
+                        NoteBlock.reference(
+                            noteId = src.id,
+                            revision = src.revision,
+                            label = LocalRetrievalEngine.displayNoteTitle(src),
+                        ),
+                    )
+                }
+            }
+
+            val doc = NoteDocument(blocks)
+            val draft = notesRepository.newDraft("merge-cleanup-${newId()}").copy(
+                documentJson = doc.encode(),
+                editSeq = 1L,
+                sourceType = "merge_cleanup",
+            )
+            val createdNote = notesRepository.commit(draft)
+
+            val sourceIds = freshSources.mapTo(HashSet()) { it.id }
+            val validTagIds = orgDao.tags().mapTo(HashSet()) { it.id }
+            val unionTagIds = orgDao.noteTags()
+                .filter { it.noteId in sourceIds && it.tagId in validTagIds }
+                .mapTo(LinkedHashSet()) { it.tagId }
+            for (tagId in unionTagIds) {
+                orgDao.attachTag(NoteTagEntity(createdNote.id, tagId))
+            }
+            attachProvenanceTag(createdNote.id, "合并整理")
+
+            val mergedTitle = LocalRetrievalEngine.displayNoteTitle(createdNote)
+            val commitSummary = if (moveDuplicatesToTrash) {
+                "已合并 ${freshSources.size} 条相似笔记为《$mergedTitle》，原笔记已移入回收站"
+            } else {
+                "已合并 ${freshSources.size} 条相似笔记为《$mergedTitle》"
+            }
+
+            agentDao.insertAction(
+                AgentActionEntity(
+                    actionId = actionId,
+                    runId = group.groupId,
+                    actionType = "merge_duplicates",
+                    targetNoteId = createdNote.id,
+                    sourceRevisionsJson = revJson,
+                    status = "committed",
+                    summary = commitSummary,
+                    createdAt = ts,
+                ),
+            )
+
+            if (moveDuplicatesToTrash) {
+                for (src in freshSources) {
+                    notesRepository.moveToTrash(src.id)
+                }
+            }
+
+            createdNote to commitSummary
+        }
+
+        discoveryRepository.syncChunksForNote(saved)
+        if (moveDuplicatesToTrash) {
+            discoveryRepository.removeChunksForNoteIds(freshSources.map { it.id })
+        }
+        AgentActionCommitResult.Committed(saved.id, summary)
     }
 
     private suspend fun attachProvenanceTag(noteId: String, tagName: String) {

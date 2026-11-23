@@ -364,14 +364,26 @@ internal fun TasksScreenContent(
             bucket to item
         }
     }
-    val overdueItems = remember(classified) {
-        classified.filter { it.first == TaskBucket.OVERDUE }.map { it.second }
+    val overdueItems = remember(classified, today, zoneId) {
+        TaskUrgencyEngine.sortByUrgency(
+            classified.filter { it.first == TaskBucket.OVERDUE }.map { it.second },
+            today = today,
+            zoneId = zoneId,
+        )
     }
-    val todayItems = remember(classified) {
-        classified.filter { it.first == TaskBucket.TODAY }.map { it.second }
+    val todayItems = remember(classified, today, zoneId) {
+        TaskUrgencyEngine.sortByUrgency(
+            classified.filter { it.first == TaskBucket.TODAY }.map { it.second },
+            today = today,
+            zoneId = zoneId,
+        )
     }
-    val unscheduledItems = remember(classified) {
-        classified.filter { it.first == TaskBucket.UNSCHEDULED }.map { it.second }
+    val unscheduledItems = remember(classified, today, zoneId) {
+        TaskUrgencyEngine.sortByUrgency(
+            classified.filter { it.first == TaskBucket.UNSCHEDULED }.map { it.second },
+            today = today,
+            zoneId = zoneId,
+        )
     }
     val upcomingItems = remember(classified, zoneId) {
         classified.filter { it.first == TaskBucket.UPCOMING }
@@ -1048,6 +1060,10 @@ private fun TaskRowCard(
         item.reminderStatus != ReminderStatus.CANCELLED &&
         item.reminderStatus != ReminderStatus.COMPLETED &&
         item.reminderLocalTime != null
+    val urgency = remember(item, today, zoneId) {
+        if (!item.checked) TaskUrgencyEngine.evaluate(item, today, zoneId) else null
+    }
+    val urgencyBadge = urgency?.badgeLabel
     val rowInteraction = remember { MutableInteractionSource() }
     val scheme = MaterialTheme.colorScheme
 
@@ -1108,12 +1124,30 @@ private fun TaskRowCard(
                 }
             }
 
-            if (parsedDue != null || hasActiveReminder || item.recurrence != RecurrenceRule.NONE) {
+            if (urgencyBadge != null || parsedDue != null || hasActiveReminder || item.recurrence != RecurrenceRule.NONE) {
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (urgencyBadge != null && urgency != null) {
+                        val isCritical = urgency.tier == TaskUrgencyTier.CRITICAL
+                        val todoAccent = mintTodoAccent(dark)
+                        MetaBadge(
+                            label = urgencyBadge,
+                            container = if (isCritical) {
+                                mintDestructiveColor(dark).copy(alpha = 0.14f)
+                            } else {
+                                todoAccent.bg
+                            },
+                            content = if (isCritical) {
+                                mintDestructiveColor(dark)
+                            } else {
+                                todoAccent.fg
+                            },
+                            modifier = Modifier.testTag("task_urgency_badge_${item.noteId}_${item.blockId}"),
+                        )
+                    }
                     if (parsedDue != null) {
                         val overdueActive = isOverdue && !item.checked
                         MetaBadge(

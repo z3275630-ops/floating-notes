@@ -9,6 +9,7 @@ import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.FindSearchResult
 import io.github.z3275630ops.floatingnotes.data.discovery.RelatedNoteMatch
 import io.github.z3275630ops.floatingnotes.data.discovery.RetrievalCoverage
+import io.github.z3275630ops.floatingnotes.data.discovery.TagRecommendation
 import io.github.z3275630ops.floatingnotes.data.discovery.WalkPostcardSummary
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 
@@ -54,4 +55,5 @@ internal data class EditorDiscoveryState(
     val globalEchoEnabled: Boolean = true,
     val lastAutoShownAtMs: Long = 0L,
     val dismissedNoteIds: Set<String> = emptySet(),
+    val recommendedTags: List<TagRecommendation> = emptyList(),
 )

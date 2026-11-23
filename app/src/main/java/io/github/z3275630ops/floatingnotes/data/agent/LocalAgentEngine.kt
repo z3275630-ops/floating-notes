@@ -3,6 +3,7 @@ package io.github.z3275630ops.floatingnotes.data.agent
 import io.github.z3275630ops.floatingnotes.core.model.safeUtf16Slice
 import io.github.z3275630ops.floatingnotes.data.backup.MiniJson
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalRetrievalEngine
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalTextIntelligence
 import io.github.z3275630ops.floatingnotes.data.discovery.NoteChunkEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteLinkEntity
@@ -10,6 +11,9 @@ import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.NoteTagEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotebookNoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
+import io.github.z3275630ops.floatingnotes.feature.tasks.TaskUrgencyEngine
+import io.github.z3275630ops.floatingnotes.feature.tasks.TaskUrgencyScore
+import io.github.z3275630ops.floatingnotes.feature.tasks.TaskUrgencyTier
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -51,6 +55,12 @@ internal enum class AgentSkill(
         subtitle = "基于近 7 天笔记生成可确认草稿",
         defaultPrompt = "整理最近 7 天做了什么、完成了哪些与下周可继续的事",
     ),
+    DuplicateCleanup(
+        id = "duplicate_cleanup",
+        title = "相似碎片查重",
+        subtitle = "找出高度重复碎片并安全合并",
+        defaultPrompt = "扫描高度重复或相似的碎片笔记，给出合并建议",
+    ),
     FreeQuestion(
         id = "free_question",
         title = "自由追问",
@@ -60,7 +70,14 @@ internal enum class AgentSkill(
     ;
 
     companion object {
-        val quickSkills = listOf(DailyReflection, EvolutionTrack, CounterEvidence, TodoTriage, WeeklyDraft)
+        val quickSkills = listOf(
+            DailyReflection,
+            EvolutionTrack,
+            CounterEvidence,
+            TodoTriage,
+            WeeklyDraft,
+            DuplicateCleanup,
+        )
 
         fun fromId(id: String): AgentSkill = entries.firstOrNull { it.id == id } ?: FreeQuestion
     }
@@ -197,20 +214,42 @@ internal object LocalAgentEngine {
         val result: AgentRunResult,
     )
 
-    fun analyze(
-        skill: AgentSkill,
-        prompt: String,
+    private data class ScopedNotesContext(
+        val scopedNotes: List<NoteEntity>,
+        val filteredByPolicyCount: Int,
+        val tagsById: Map<String, TagEntity>,
+        val noteTagIds: Map<String, Set<String>>,
+        val noteNotebookIds: Map<String, Set<String>>,
+        val normalizedScope: NoteScope,
+    )
+
+    internal fun filterScopedNotes(
         notes: List<NoteEntity>,
-        chunks: List<NoteChunkEntity>,
         tags: List<TagEntity>,
         noteTags: List<NoteTagEntity>,
         notebookNotes: List<NotebookNoteEntity>,
-        links: List<NoteLinkEntity>,
         scope: NoteScope,
         timeRange: AgentTimeRange,
         now: Instant = Instant.now(),
-        zoneId: ZoneId = ZoneId.systemDefault(),
-    ): AnalysisOutcome {
+    ): List<NoteEntity> = filterScopedNotesWithContext(
+        notes = notes,
+        tags = tags,
+        noteTags = noteTags,
+        notebookNotes = notebookNotes,
+        scope = scope,
+        timeRange = timeRange,
+        now = now,
+    ).scopedNotes
+
+    private fun filterScopedNotesWithContext(
+        notes: List<NoteEntity>,
+        tags: List<TagEntity>,
+        noteTags: List<NoteTagEntity>,
+        notebookNotes: List<NotebookNoteEntity>,
+        scope: NoteScope,
+        timeRange: AgentTimeRange,
+        now: Instant,
+    ): ScopedNotesContext {
         val normalizedScope = scope.copy(aiOnly = true)
         val activeNonArchived = notes.filter { it.deletedAt == null && it.archivedAt == null }
         val excludedByPolicy = activeNonArchived.count { it.aiPolicy !in setOf("inherit", "allow") }
@@ -241,6 +280,46 @@ internal object LocalAgentEngine {
             }
             true
         }
+
+        return ScopedNotesContext(
+            scopedNotes = scopedNotes,
+            filteredByPolicyCount = excludedByPolicy,
+            tagsById = tagsById,
+            noteTagIds = noteTagIds,
+            noteNotebookIds = noteNotebookIds,
+            normalizedScope = normalizedScope,
+        )
+    }
+
+    fun analyze(
+        skill: AgentSkill,
+        prompt: String,
+        notes: List<NoteEntity>,
+        chunks: List<NoteChunkEntity>,
+        tags: List<TagEntity>,
+        noteTags: List<NoteTagEntity>,
+        notebookNotes: List<NotebookNoteEntity>,
+        links: List<NoteLinkEntity>,
+        scope: NoteScope,
+        timeRange: AgentTimeRange,
+        now: Instant = Instant.now(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): AnalysisOutcome {
+        val scopedContext = filterScopedNotesWithContext(
+            notes = notes,
+            tags = tags,
+            noteTags = noteTags,
+            notebookNotes = notebookNotes,
+            scope = scope,
+            timeRange = timeRange,
+            now = now,
+        )
+        val scopedNotes = scopedContext.scopedNotes
+        val excludedByPolicy = scopedContext.filteredByPolicyCount
+        val tagsById = scopedContext.tagsById
+        val noteTagIds = scopedContext.noteTagIds
+        val noteNotebookIds = scopedContext.noteNotebookIds
+        val normalizedScope = scopedContext.normalizedScope
 
         val stepScope = AgentToolStep(
             toolName = "scope_notes",
@@ -295,6 +374,8 @@ internal object LocalAgentEngine {
                 tagsById = tagsById,
                 stepScope = stepScope,
                 filteredByPolicyCount = excludedByPolicy,
+                now = now,
+                zoneId = zoneId,
             )
             AgentSkill.WeeklyDraft -> analyzeWeeklyDraft(
                 scopedNotes = scopedNotes,
@@ -303,6 +384,12 @@ internal object LocalAgentEngine {
                 filteredByPolicyCount = excludedByPolicy,
                 now = now,
                 zoneId = zoneId,
+            )
+            AgentSkill.DuplicateCleanup -> analyzeDuplicateCleanup(
+                scopedNotes = scopedNotes,
+                scopedChunks = scopedChunks,
+                stepScope = stepScope,
+                filteredByPolicyCount = excludedByPolicy,
             )
             AgentSkill.FreeQuestion -> analyzeFreeQuestion(
                 prompt = prompt,
@@ -542,6 +629,8 @@ internal object LocalAgentEngine {
         tagsById: Map<String, TagEntity>,
         stepScope: AgentToolStep,
         filteredByPolicyCount: Int,
+        now: Instant,
+        zoneId: ZoneId,
     ): AnalysisOutcome {
         val openTodos = collectOpenTodos(scopedNotes)
         val stepTodo = AgentToolStep("collect_open_todos", "扫描全部未勾选待办方块", "completed", openTodos.size)
@@ -553,33 +642,71 @@ internal object LocalAgentEngine {
             )
         }
 
-        val withDue = openTodos.filter { !it.dueDate.isNullOrBlank() }.sortedBy { it.dueDate }
-        val withoutDue = openTodos.filter { it.dueDate.isNullOrBlank() }
-        val prioritized = (withDue + withoutDue).take(5)
+        val today = now.atZone(zoneId).toLocalDate()
         val byNote = scopedNotes.associateBy { it.id }
+        val scoredTodos = openTodos.map { todo ->
+            val note = byNote[todo.noteId]
+            val urgency = TaskUrgencyEngine.evaluateRaw(
+                text = todo.text,
+                dueDate = todo.dueDate,
+                updatedAtIso = note?.updatedAt,
+                hasActiveReminder = todo.hasReminder,
+                reminderMissed = false,
+                isSnoozed = false,
+                isRecurring = false,
+                today = today,
+                zoneId = zoneId,
+            )
+            todo to urgency
+        }.sortedWith(
+            compareByDescending<Pair<OpenTodoRef, TaskUrgencyScore>> { it.second.score }
+                .thenBy { it.first.dueDate ?: "9999-12-31" }
+                .thenByDescending { byNote[it.first.noteId]?.updatedAt.orEmpty() },
+        )
 
-        val evidence = prioritized.distinctBy { it.noteId }.take(4).mapNotNull { todo ->
+        val prioritized = scoredTodos.take(5)
+        val withDueCount = scoredTodos.count { !it.first.dueDate.isNullOrBlank() }
+        val withoutDueCount = scoredTodos.size - withDueCount
+        val overdueCount = scoredTodos.count { it.second.tier == TaskUrgencyTier.CRITICAL }
+        val highCount = scoredTodos.count { it.second.tier == TaskUrgencyTier.HIGH }
+        val staleCount = scoredTodos.count { it.second.tier == TaskUrgencyTier.STALE }
+        val topTodo = scoredTodos.first()
+
+        val evidence = prioritized.distinctBy { it.first.noteId }.take(4).mapNotNull { (todo, urgency) ->
             byNote[todo.noteId]?.let { n ->
-                val reason = if (todo.dueDate != null) "含截止日期 ${todo.dueDate} · ${todo.text}" else "未设日期待办 · ${todo.text}"
+                val datePart = if (todo.dueDate != null) "截止 ${todo.dueDate}" else "未设日期"
+                val reason = "${urgency.tier.label}（${urgency.reason} · $datePart）· ${todo.text}"
                 toEvidenceItem(n, reason)
             }
         }
 
         val observations = buildList {
-            add("共扫描到 ${openTodos.size} 项未完成待办，其中 ${withDue.size} 项设定了明确日期，${withoutDue.size} 项尚无截止时间。")
-            if (withDue.isNotEmpty()) {
-                add("最早到期项为「${withDue.first().text}」（${withDue.first().dueDate}）。")
+            add("共扫描到 ${openTodos.size} 项未完成待办，其中 $withDueCount 项设定了明确日期，$withoutDueCount 项尚无截止时间。")
+            if (overdueCount > 0 || highCount > 0) {
+                add("紧急优先级提示：${overdueCount} 项已逾期、${highCount} 项今日到期，最需立即处理的是「${topTodo.first.text}」（${topTodo.second.reason}）。")
+            } else {
+                add("当前最优先待办为「${topTodo.first.text}」（${topTodo.second.reason}）。")
             }
-            if (withoutDue.isNotEmpty()) {
-                add("无日期事项中可先清理或归并「${withoutDue.first().text}」。")
+            if (staleCount > 0) {
+                val firstStale = scoredTodos.first { it.second.tier == TaskUrgencyTier.STALE }
+                add("另有 $staleCount 项无日期旧待办已长期搁置（如「${firstStale.first.text}」· ${firstStale.second.reason}），可清理或排期。")
+            } else if (withoutDueCount > 0) {
+                val firstUndated = scoredTodos.first { it.first.dueDate.isNullOrBlank() }
+                add("无日期事项中可先清理或归并「${firstUndated.first.text}」。")
             }
+        }
+
+        val headline = when {
+            overdueCount > 0 -> "当前共有 ${openTodos.size} 项未完成待办，其中 $overdueCount 项已逾期，建议优先处理「${topTodo.first.text}」。"
+            withDueCount > 0 -> "当前共有 ${openTodos.size} 项未完成待办，建议按紧迫度优先推进带日期的 $withDueCount 项。"
+            else -> "当前共有 ${openTodos.size} 项未完成待办，可按紧迫程度逐项清理或排期。"
         }
 
         return AnalysisOutcome(
             status = "completed",
             result = AgentRunResult(
                 engineNotice = ENGINE_NOTICE,
-                headline = "当前共有 ${openTodos.size} 项未完成待办，建议优先推进带日期的 ${withDue.size} 项。",
+                headline = headline,
                 observations = observations,
                 evidence = evidence,
                 alternativeView = "有些待办写成了一时念头却长期没动，与其全盘硬推，不如删掉或降级为灵感备注。",
@@ -588,8 +715,78 @@ internal object LocalAgentEngine {
                     "回看今天和近三天的重点",
                 ),
                 toolSteps = listOf(stepScope, stepTodo),
-                suggestedTodos = prioritized.take(3).map { item ->
+                suggestedTodos = prioritized.take(3).map { (item, _) ->
                     if (item.dueDate != null) "${item.text}（${item.dueDate}）" else item.text
+                },
+                filteredByPolicyCount = filteredByPolicyCount,
+                scannedCount = scopedNotes.size,
+            ),
+        )
+    }
+
+    private fun analyzeDuplicateCleanup(
+        scopedNotes: List<NoteEntity>,
+        scopedChunks: List<NoteChunkEntity>,
+        stepScope: AgentToolStep,
+        filteredByPolicyCount: Int,
+    ): AnalysisOutcome {
+        val groups = LocalTextIntelligence.findDuplicateGroups(
+            notes = scopedNotes,
+            allChunks = scopedChunks,
+        )
+        val stepCluster = AgentToolStep(
+            toolName = "find_duplicate_groups",
+            label = "使用 SimHash 与词袋指纹扫描高度相似笔记",
+            status = "completed",
+            itemCount = groups.size,
+        )
+        if (groups.isEmpty()) {
+            return insufficientOutcome(
+                steps = listOf(stepScope, stepCluster),
+                filteredByPolicyCount = filteredByPolicyCount,
+                reason = "太棒了，当前范围内没有发现高度重复的碎片笔记。",
+            )
+        }
+
+        val totalDupNotes = groups.sumOf { it.duplicateNotes.size }
+        val observations = groups.take(5).mapIndexed { idx, group ->
+            val primaryTitle = LocalRetrievalEngine.displayNoteTitle(group.primaryNote)
+            val dupTitles = group.duplicateNotes.take(2).joinToString("、") {
+                "「${LocalRetrievalEngine.displayNoteTitle(it)}」"
+            }
+            val extra = if (group.duplicateNotes.size > 2) " 等 ${group.duplicateNotes.size} 条" else ""
+            "第 ${idx + 1} 组（相似度 ${group.similarityPercent}% · ${group.reason}）：保留「$primaryTitle」，可合并 $dupTitles$extra。"
+        }
+
+        val evidence = groups.flatMap { group ->
+            val primaryItem = toEvidenceItem(
+                note = group.primaryNote,
+                reason = "主保留候选 · 相似度 ${group.similarityPercent}%（${group.reason}）",
+            )
+            val dupItems = group.duplicateNotes.map { dup ->
+                toEvidenceItem(
+                    note = dup,
+                    reason = "相似碎片（${group.similarityPercent}%）· 建议并入「${LocalRetrievalEngine.displayNoteTitle(group.primaryNote)}」",
+                )
+            }
+            listOf(primaryItem) + dupItems
+        }.distinctBy { it.noteId }.take(8)
+
+        return AnalysisOutcome(
+            status = "completed",
+            result = AgentRunResult(
+                engineNotice = ENGINE_NOTICE,
+                headline = "发现 ${groups.size} 组高度相似的碎片笔记（共涉及 ${groups.size + totalDupNotes} 条），可按组安全合并。",
+                observations = observations,
+                evidence = evidence,
+                alternativeView = "本机查重基于词袋加权与 SimHash 局部指纹判断；合并前请确认两条记录是否刻意保留不同语境，也可先保留原笔记仅建立互链。",
+                nextQuestions = listOf(
+                    "查看未完待办是否有重复条目",
+                    "回看今天与近三天的记录",
+                ),
+                toolSteps = listOf(stepScope, stepCluster),
+                suggestedTodos = groups.take(3).map { group ->
+                    "合并相似组：${LocalRetrievalEngine.displayNoteTitle(group.primaryNote)}（${group.similarityPercent}%）"
                 },
                 filteredByPolicyCount = filteredByPolicyCount,
                 scannedCount = scopedNotes.size,
@@ -769,6 +966,7 @@ internal object LocalAgentEngine {
         val noteId: String,
         val text: String,
         val dueDate: String?,
+        val hasReminder: Boolean = false,
     )
 
     private fun collectOpenTodos(notes: List<NoteEntity>): List<OpenTodoRef> {
@@ -778,9 +976,10 @@ internal object LocalAgentEngine {
                 val type = block["type"]?.toString()
                 val checked = block["checked"] as? Boolean ?: false
                 val text = block["text"]?.toString().orEmpty()
-                val dueDate = block["due_date"]?.toString()
+                val dueDate = block["due_date"]?.toString()?.takeIf { it.isNotBlank() }
+                val hasReminder = !block["reminder_id"]?.toString().isNullOrBlank()
                 if (type == "checkbox" && !checked && text.isNotBlank()) {
-                    out.add(OpenTodoRef(note.id, sanitizeQuoteText(text), dueDate))
+                    out.add(OpenTodoRef(note.id, sanitizeQuoteText(text), dueDate, hasReminder))
                 }
             }
         }
@@ -799,7 +998,16 @@ internal object LocalAgentEngine {
         val title = LocalRetrievalEngine.displayNoteTitle(note)
         val rawBody = LocalRetrievalEngine.bodyExcludingTitle(note, note.searchText, title)
             .ifBlank { note.searchText.ifBlank { title } }
-        val excerpt = safeUtf16Slice(sanitizeQuoteText(rawBody), 0, 140)
+        val summarizedBody = if (rawBody.length > 140) {
+            LocalTextIntelligence.extractKeySentences(
+                text = rawBody,
+                maxSentences = 2,
+                maxChars = 160,
+            ).joined.ifBlank { rawBody }
+        } else {
+            rawBody
+        }
+        val excerpt = safeUtf16Slice(sanitizeQuoteText(summarizedBody), 0, 140)
         return AgentEvidenceItem(
             noteId = note.id,
             noteTitle = title,

@@ -243,7 +243,7 @@ internal fun NotesShell(
             if (page == Page.Library && searching) {
                 delay(160)
                 try {
-                    model.search.observe(phrase, effectiveScope, searchLimit + 1).collect { value = it }
+                    model.search.observeSmart(phrase, effectiveScope, searchLimit + 1).collect { value = it }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -1054,6 +1054,7 @@ internal fun NotesShell(
                                                 onShareNote = { note -> sharingNoteId = note.id },
                                                 selectedSectionIndex = exploreSectionIndex,
                                                 onSelectSection = { exploreSectionIndex = it },
+                                                onMarkReviewCardSeen = { model.markReviewCardSeen(it) },
                                             )
                                         }
                                     }
@@ -1077,6 +1078,9 @@ internal fun NotesShell(
                                                 onOpenNote = { nid -> launchEditor(noteId = nid) },
                                                 onClearMessage = { model.clearAgentMessage() },
                                                 onQuickCapture = { launchEditor() },
+                                                onMergeDuplicateGroup = { grp, trash ->
+                                                    model.commitMergeDuplicateGroup(grp, trash)
+                                                },
                                             )
                                         }
                                     }

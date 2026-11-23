@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalTextIntelligence
 import io.github.z3275630ops.floatingnotes.data.discovery.RelatedNoteMatch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintActivityIndicator
@@ -234,8 +235,20 @@ internal fun EditorRelatedNotesSheet(
     onDismiss: () -> Unit,
     onOpenRelatedNote: (RelatedNoteMatch) -> Unit,
     onStartWalkFromCurrent: (String) -> Unit,
+    sourceBodyText: String = "",
 ) {
     val scheme = MaterialTheme.colorScheme
+    val keySummary = remember(sourceBodyText) {
+        if (sourceBodyText.length > 220) {
+            LocalTextIntelligence.extractKeySentences(
+                sourceBodyText,
+                maxSentences = 2,
+                maxChars = 160,
+            )
+        } else {
+            null
+        }
+    }
     MintBottomSheet(
         onDismissRequest = onDismiss,
         dark = dark,
@@ -254,6 +267,42 @@ internal fun EditorRelatedNotesSheet(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (keySummary != null && keySummary.sentences.isNotEmpty()) {
+                MintGroupedSection(
+                    dark = dark,
+                    containerColor = mintSecondaryFill(dark),
+                    modifier = Modifier.testTag("editor-related-key-sentences"),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(
+                                imageVector = MintIcons.Sparkles,
+                                contentDescription = null,
+                                tint = scheme.primary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = "本篇原话重点",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = scheme.primary,
+                            )
+                        }
+                        keySummary.sentences.forEach { sentence ->
+                            Text(
+                                text = sentence,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
             if (state.loadingRelated) {
                 MintGroupedSection(dark = dark) {
                     Row(

@@ -76,10 +76,6 @@ internal object DiscoveryEngines {
         zoneId: ZoneId,
     ): List<String> {
         val suppressedNoteIds = suppressedNoteIdsAt(events, now)
-        val seenRecentlyCounts = events
-            .filter { it.action == "seen" }
-            .groupingBy { it.noteId }
-            .eachCount()
 
         val cutoffInstant = if (config.rangeDays > 0) {
             now.minus(config.rangeDays.toLong(), ChronoUnit.DAYS)
@@ -107,29 +103,17 @@ internal object DiscoveryEngines {
 
         if (eligible.isEmpty()) return emptyList()
 
-        val seedString = "$localDate|$profileKey|${config.configHash()}|$round"
-        val baseSeed = seedString.hashCode().toLong()
-
-        val scored = eligible.map { note ->
-            val seenPenalty = (seenRecentlyCounts[note.id] ?: 0) * 100
-            val daysOld = runCatching {
-                val d = Instant.parse(note.createdAt).atZone(zoneId).toLocalDate()
-                ChronoUnit.DAYS.between(d, localDate).coerceAtLeast(0L)
-            }.getOrDefault(0L)
-            val ageBonus = when {
-                daysOld in 7..90 -> -8
-                daysOld > 90 -> -5
-                daysOld in 1..6 -> -3
-                else -> 0
-            }
-            val jitter = abs((note.id.hashCode().toLong() * 31L + baseSeed).hashCode() % 10_000)
-            Triple(note.id, seenPenalty + ageBonus, jitter)
-        }
-
-        return scored
-            .sortedWith(compareBy<Triple<String, Int, Int>> { it.second }.thenBy { it.third }.thenBy { it.first })
-            .take(config.dailyCount.coerceAtLeast(1))
-            .map { it.first }
+        return FsrsReviewScheduler.rankForDailyReview(
+            eligibleNotes = eligible,
+            events = events,
+            localDate = localDate,
+            profileKey = profileKey,
+            configHash = config.configHash(),
+            round = round,
+            now = now,
+            zoneId = zoneId,
+            dailyCount = config.dailyCount,
+        ).map { it.noteId }
     }
 
     fun suppressedNoteIdsAt(events: List<ReviewEventEntity>, now: Instant): Set<String> {
@@ -390,6 +374,8 @@ internal object DiscoveryEngines {
         tagsById: Map<String, TagEntity>,
         excludePairKeys: Set<String> = emptySet(),
         random: Random = Random.Default,
+        allChunks: List<NoteChunkEntity> = emptyList(),
+        links: List<NoteLinkEntity> = emptyList(),
     ): Pair<DualCollisionPair?, Int> {
         val eligible = notes.filter { n ->
             n.deletedAt == null &&
@@ -398,32 +384,19 @@ internal object DiscoveryEngines {
         }
         if (eligible.size < 2) return null to eligible.size
 
-        val candidates = eligible.shuffled(random)
-        var chosenLeft: NoteEntity? = null
-        var chosenRight: NoteEntity? = null
+        val chunksByNote = allChunks.groupBy { it.noteId }
+        val chosen = LocalTagAndGraphEngine.selectBestDualCollisionPair(
+            eligibleNotes = eligible,
+            chunksByNote = chunksByNote,
+            noteTagIdsByNote = noteTagIdsByNote,
+            tagsById = tagsById,
+            links = links,
+            excludePairKeys = excludePairKeys,
+            random = random,
+        ) ?: return null to eligible.size
 
-        for (left in candidates) {
-            val leftTags = noteTagIdsByNote[left.id].orEmpty()
-            val others = candidates.filter { it.id != left.id }
-            val unseen = others.filter { right ->
-                val key = listOf(left.id, right.id).sorted().joinToString("|")
-                key !in excludePairKeys
-            }.ifEmpty { others }
-
-            val contrasting = unseen.filter { right ->
-                val rightTags = noteTagIdsByNote[right.id].orEmpty()
-                leftTags.intersect(rightTags).isEmpty()
-            }
-            val right = (contrasting.ifEmpty { unseen }).firstOrNull()
-            if (right != null) {
-                chosenLeft = left
-                chosenRight = right
-                break
-            }
-        }
-
-        val left = chosenLeft ?: eligible[0]
-        val right = chosenRight ?: eligible.first { it.id != left.id }
+        val left = chosen.first
+        val right = chosen.second
         val leftTitle = LocalRetrievalEngine.displayNoteTitle(left)
         val rightTitle = LocalRetrievalEngine.displayNoteTitle(right)
         val leftTagNames = noteTagIdsByNote[left.id].orEmpty().mapNotNull { tagsById[it]?.name }.sorted()
@@ -447,10 +420,19 @@ internal object DiscoveryEngines {
     fun analyzeDualCollision(
         pair: DualCollisionPair,
         links: List<NoteLinkEntity>,
+        allNotes: List<NoteEntity> = emptyList(),
+        noteTagIdsByNote: Map<String, Set<String>> = emptyMap(),
+        tagsById: Map<String, TagEntity> = emptyMap(),
     ): DualCollisionBridge {
-        val leftTokens = LocalRetrievalEngine.tokenizeForIndex("${pair.leftTitle} ${pair.leftNote.searchText}").filter { it.length >= 2 }.toSet()
-        val rightTokens = LocalRetrievalEngine.tokenizeForIndex("${pair.rightTitle} ${pair.rightNote.searchText}").filter { it.length >= 2 }.toSet()
-        val sharedTokens = leftTokens.intersect(rightTokens).take(4)
+        val (sharedTerms, bridgeTagNames, jaccardSim) = LocalTagAndGraphEngine.computeBridgeInsights(
+            left = pair.leftNote,
+            right = pair.rightNote,
+            leftTags = pair.leftTags,
+            rightTags = pair.rightTags,
+            allNotes = allNotes,
+            noteTagIdsByNote = noteTagIdsByNote,
+            tagsById = tagsById,
+        )
         val sharedTags = pair.leftTags.intersect(pair.rightTags.toSet()).toList()
         val directLinked = links.any {
             (it.sourceId == pair.leftNote.id && it.targetId == pair.rightNote.id) ||
@@ -473,8 +455,12 @@ internal object DiscoveryEngines {
                 val rt = pair.rightTags.take(2).joinToString(" ") { "#$it" }.ifEmpty { "无标签" }
                 add("跨领域对撞：左卡侧重 $lt，右卡侧重 $rt，试着用其中一条的思路检验另一条。")
             }
-            if (sharedTokens.isNotEmpty()) {
-                add("共同出现的实词/概念：${sharedTokens.joinToString("、")}。")
+            if (bridgeTagNames.isNotEmpty()) {
+                add("图谱桥梁标签：${bridgeTagNames.joinToString("、") { "#$it" }}（在其它笔记中常同时与两边主题共现）。")
+            }
+            if (sharedTerms.isNotEmpty()) {
+                val overlapPct = (jaccardSim * 100.0).toInt()
+                add("高区分度共同概念：${sharedTerms.joinToString("、")}（词集重合度约 ${overlapPct}%）。")
             } else {
                 val lTop = LocalAgentEngine.sanitizeQuoteText(pair.leftTitle)
                 val rTop = LocalAgentEngine.sanitizeQuoteText(pair.rightTitle)
@@ -487,7 +473,8 @@ internal object DiscoveryEngines {
 
         val headline = when {
             directLinked -> "它们本就有引用关联，适合做一次合并延伸"
-            sharedTokens.isNotEmpty() -> "两条相隔记录在「${sharedTokens.first()}」上产生交集"
+            sharedTerms.isNotEmpty() -> "两条相隔记录在「${sharedTerms.first()}」上产生交集"
+            bridgeTagNames.isNotEmpty() -> "两条笔记可通过 #${bridgeTagNames.first()} 桥梁主题串联思考"
             sharedTags.isNotEmpty() -> "同属 #${sharedTags.first()} 主题的两种不同切片"
             else -> "这是一组跨主题偶然相遇，适合自己写下新联系"
         }

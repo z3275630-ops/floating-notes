@@ -64,6 +64,8 @@ import io.github.z3275630ops.floatingnotes.data.local.RecurrenceRule
 import io.github.z3275630ops.floatingnotes.data.local.ReminderStatus
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalFuzzyMatcher
+import io.github.z3275630ops.floatingnotes.data.discovery.TagRecommendation
 import io.github.z3275630ops.floatingnotes.feature.explore.EdgeEchoPreviewSheet
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorEdgeEchoStrip
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorRelatedNotesSheet
@@ -673,6 +675,17 @@ internal fun ColumnScope.NoteEditor(
     }
     val echoCurrentText = echoBlock?.text?.text?.toString().orEmpty()
     val echoIsComposing = echoBlock?.text?.composition != null
+    val fullDraftText = session.blocks
+        .filter { it.editable }
+        .joinToString("\n") { it.text.text.toString() }
+    val attachedTagIdsSnapshot = noteTagIds + session.pendingTagIds
+    LaunchedEffect(session.draft.id, attachedTagIdsSnapshot) {
+        model.refreshEditorTagRecommendations(
+            draftText = fullDraftText,
+            noteId = if (session.existingNote) session.draft.noteId else null,
+            attachedTagIds = attachedTagIdsSnapshot,
+        )
+    }
     LaunchedEffect(session.draft.id, echoBlock?.id, echoCurrentText, echoIsComposing) {
         if (echoBlock != null && echoCurrentText != echoInitialText) {
             model.onEditorTextActivity(
@@ -680,6 +693,13 @@ internal fun ColumnScope.NoteEditor(
                 blockText = echoCurrentText,
                 isComposing = echoIsComposing,
             )
+            if (!echoIsComposing) {
+                model.refreshEditorTagRecommendations(
+                    draftText = fullDraftText,
+                    noteId = if (session.existingNote) session.draft.noteId else null,
+                    attachedTagIds = attachedTagIdsSnapshot,
+                )
+            }
         }
     }
 
@@ -728,6 +748,55 @@ internal fun ColumnScope.NoteEditor(
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = aiAccent.fg,
                 )
+            }
+        }
+    }
+
+    val visibleRecommendedTags = discoveryState.recommendedTags.filter { it.tag.id !in attachedTagIdsSnapshot }
+    if (visibleRecommendedTags.isNotEmpty()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp)
+                .focusProperties { canFocus = false }
+                .horizontalScroll(rememberScrollState())
+                .testTag("editor-tag-suggestions"),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "推荐标签",
+                style = MaterialTheme.typography.labelSmall,
+                color = mintTertiaryTextColor(dark),
+            )
+            for (rec in visibleRecommendedTags) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(mintSecondaryFill(dark))
+                        .focusProperties { canFocus = false }
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Button,
+                            onClick = {
+                                model.attachTagToSession(session, rec.tag.id)
+                                model.refreshEditorTagRecommendations(
+                                    draftText = fullDraftText,
+                                    noteId = if (session.existingNote) session.draft.noteId else null,
+                                    attachedTagIds = attachedTagIdsSnapshot + rec.tag.id,
+                                )
+                            },
+                        )
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        text = "+ #${rec.tag.name}",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+                        color = scheme.primary,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -875,6 +944,7 @@ internal fun ColumnScope.NoteEditor(
                     openOrg()
                 }
             },
+            recommendedTags = visibleRecommendedTags,
         )
     }
 
@@ -915,6 +985,7 @@ internal fun ColumnScope.NoteEditor(
                 showRelatedSheet = false
                 onStartWalkFromNote?.invoke(nid)
             },
+            sourceBodyText = fullDraftText,
         )
     }
 
@@ -1132,7 +1203,11 @@ private fun InlineTriggerSuggestionBar(
         InlineTriggerKind.TAG -> {
             val matches = availableTags.filter {
                 it.id !in attachedTagIds &&
-                    (query.isEmpty() || it.name.contains(query, ignoreCase = true))
+                    (
+                        query.isEmpty() ||
+                            it.name.contains(query, ignoreCase = true) ||
+                            LocalFuzzyMatcher.matchesTagOrNoteQuery(query, it.name)
+                        )
             }.take(8)
             val canCreate = query.isNotEmpty() &&
                 query.length <= 60 &&
@@ -1181,8 +1256,11 @@ private fun InlineTriggerSuggestionBar(
 
         InlineTriggerKind.REFERENCE -> {
             val matches = candidateNotes.filter {
-                query.isEmpty() || referenceLabel(it).contains(query, ignoreCase = true) ||
-                    it.searchText.contains(query, ignoreCase = true)
+                query.isEmpty() ||
+                    referenceLabel(it).contains(query, ignoreCase = true) ||
+                    it.searchText.contains(query, ignoreCase = true) ||
+                    LocalFuzzyMatcher.matchesTagOrNoteQuery(query, referenceLabel(it)) ||
+                    LocalFuzzyMatcher.matchesTagOrNoteQuery(query, it.searchText.take(240))
             }.take(6)
 
             if (matches.isNotEmpty()) {
@@ -1555,10 +1633,13 @@ private fun ReferencePickerDialog(
         onTrailingClick = onDismiss,
     ) {
         if (excerptTarget == null) {
+            val trimmedQuery = query.trim()
             val filtered = candidates.filter { note ->
-                query.isBlank() ||
-                    referenceLabel(note).contains(query, ignoreCase = true) ||
-                    note.searchText.contains(query, ignoreCase = true)
+                trimmedQuery.isEmpty() ||
+                    referenceLabel(note).contains(trimmedQuery, ignoreCase = true) ||
+                    note.searchText.contains(trimmedQuery, ignoreCase = true) ||
+                    LocalFuzzyMatcher.matchesTagOrNoteQuery(trimmedQuery, referenceLabel(note)) ||
+                    LocalFuzzyMatcher.matchesTagOrNoteQuery(trimmedQuery, note.searchText.take(240))
             }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ComposablesSearchField(
@@ -1813,6 +1894,7 @@ private fun ReferencePickerDialog(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TagPickerDialog(
     availableTags: List<TagEntity>,
@@ -1823,13 +1905,17 @@ private fun TagPickerDialog(
     onSelectExisting: (TagEntity) -> Unit,
     onCreateTag: (String) -> Unit,
     onOpenFullOrganizer: (() -> Unit)?,
+    recommendedTags: List<TagRecommendation> = emptyList(),
 ) {
     val scheme = MaterialTheme.colorScheme
     val filter = rememberTextFieldState()
     val query = filter.text.toString().trim()
     val matches = availableTags.filter {
-        query.isEmpty() || it.name.contains(query, ignoreCase = true)
+        query.isEmpty() ||
+            it.name.contains(query, ignoreCase = true) ||
+            LocalFuzzyMatcher.matchesTagOrNoteQuery(query, it.name)
     }
+    val visibleRecommendations = recommendedTags.filter { it.tag.id !in selectedTagIds }
     val canCreate = query.isNotEmpty() &&
         query.length <= 60 &&
         '/' !in query &&
@@ -1847,6 +1933,27 @@ private fun TagPickerDialog(
         onTrailingClick = onDismiss,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (visibleRecommendations.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "智能推荐标签",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = scheme.primary,
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        visibleRecommendations.forEach { rec ->
+                            MintChip(
+                                label = "+ #${rec.tag.name}",
+                                dark = dark,
+                                onClick = { onSelectExisting(rec.tag) },
+                            )
+                        }
+                    }
+                }
+            }
             ComposablesSearchField(
                 state = filter,
                 label = "搜索或创建标签",

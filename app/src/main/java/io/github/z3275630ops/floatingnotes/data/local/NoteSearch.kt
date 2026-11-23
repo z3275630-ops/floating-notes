@@ -5,7 +5,9 @@ import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteQuery
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalFuzzyMatcher
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -113,6 +115,35 @@ internal class SearchRepository(private val database: NotesDatabase) {
 
     fun observe(keyword: String, scope: NoteScope, limit: Int) =
         database.search().observe(searchQuery(keyword, scope, limit))
+
+    fun observeSmart(keyword: String, scope: NoteScope, limit: Int): Flow<List<NoteEntity>> {
+        val trimmed = keyword.trim()
+        if (trimmed.isEmpty()) return observe("", scope, limit)
+        return combine(
+            observe(trimmed, scope, limit),
+            observe("", scope, 500),
+        ) { exactMatches, scopedPool ->
+            if (exactMatches.size >= limit) return@combine exactMatches.take(limit)
+            val seenIds = exactMatches.mapTo(HashSet(exactMatches.size)) { it.id }
+            val fuzzyMatches = scopedPool
+                .asSequence()
+                .filter { it.id !in seenIds }
+                .mapNotNull { note ->
+                    val target = "${note.title.orEmpty()}\n${note.searchText}"
+                    val res = LocalFuzzyMatcher.matchFuzzyText(trimmed, target)
+                    if (res.matched) note to res.score else null
+                }
+                .sortedWith(
+                    compareByDescending<Pair<NoteEntity, Double>> { it.second }
+                        .thenByDescending { it.first.pinned }
+                        .thenByDescending { it.first.updatedAt }
+                        .thenBy { it.first.id },
+                )
+                .map { it.first }
+                .toList()
+            (exactMatches + fuzzyMatches).take(limit)
+        }
+    }
 
     suspend fun save(name: String, keyword: String, scope: NoteScope) {
         val label = name.trim()

@@ -26,6 +26,7 @@ import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.TrashPurgeImpact
 import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryEngines
 import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryRepository
+import io.github.z3275630ops.floatingnotes.data.discovery.DuplicateNoteGroup
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceBasketItem
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.ExplorePreferences
@@ -306,6 +307,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     val editorDiscoveryState: StateFlow<EditorDiscoveryState> = _editorDiscoveryState.asStateFlow()
 
     private var edgeEchoJob: Job? = null
+    private var tagRecJob: Job? = null
 
     val captureDrafts = repository.captureDrafts.catch {
         error = "无法读取跨应用草稿"
@@ -1087,6 +1089,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     } else {
                         session.addPendingTag(tagId)
                     }
+                    refreshRecommendationsForSession(session, extraTagId = tagId)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -1111,6 +1114,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     } else {
                         session.addPendingTag(tagId)
                     }
+                    refreshRecommendationsForSession(session, extraTagId = tagId)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (err: IllegalArgumentException) {
@@ -1801,8 +1805,15 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch {
             runCatching { discovery.setReviewIndex(review.session.id, clamped) }
             review.cards.getOrNull(clamped)?.let { card ->
-                runCatching { discovery.recordReviewAction(review.session.id, card.note.id, "seen") }
+                runCatching { discovery.markReviewCardSeen(review.session.id, card.note.id) }
             }
+        }
+    }
+
+    fun markReviewCardSeen(noteId: String) {
+        val sessionId = _exploreState.value.review?.session?.id ?: return
+        viewModelScope.launch {
+            runCatching { discovery.markReviewCardSeen(sessionId, noteId) }
         }
     }
 
@@ -2279,6 +2290,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             it.copy(
                 running = true,
                 promptDraft = if (skill == AgentSkill.FreeQuestion) prompt else it.promptDraft,
+                duplicateGroups = emptyList(),
                 statusMessage = null,
                 errorMessage = null,
             )
@@ -2292,12 +2304,20 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     timeRange = current.timeRange,
                 )
                 val actions = agentRepository.actionsForRun(entity.id)
+                val dupGroups = if (skill == AgentSkill.DuplicateCleanup) {
+                    runCatching {
+                        agentRepository.findScopedDuplicateGroups(scope, current.timeRange)
+                    }.getOrDefault(emptyList())
+                } else {
+                    emptyList()
+                }
                 _agentState.update {
                     it.copy(
                         running = false,
                         activeRun = entity,
                         activeResult = result,
                         activeActions = actions,
+                        duplicateGroups = dupGroups,
                     )
                 }
             } catch (cancelled: CancellationException) {
@@ -2317,17 +2337,83 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     fun loadPastAgentRun(run: AgentRunEntity) {
         val decoded = AgentRunResult.decode(run.resultJson) ?: return
+        val pastSkill = AgentSkill.fromId(run.skillId)
+        val pastScope = runCatching { NoteScope.decode(run.scopeJson) }.getOrDefault(NoteScope(aiOnly = true))
+        val currentRange = _agentState.value.timeRange
         viewModelScope.launch {
             val actions = runCatching { agentRepository.actionsForRun(run.id) }.getOrDefault(emptyList())
+            val dupGroups = if (pastSkill == AgentSkill.DuplicateCleanup) {
+                runCatching {
+                    agentRepository.findScopedDuplicateGroups(pastScope, currentRange)
+                }.getOrDefault(emptyList())
+            } else {
+                emptyList()
+            }
             _agentState.update {
                 it.copy(
                     running = false,
                     activeRun = run,
                     activeResult = decoded,
                     activeActions = actions,
+                    duplicateGroups = dupGroups,
                     statusMessage = null,
                     errorMessage = null,
                 )
+            }
+        }
+    }
+
+    fun commitMergeDuplicateGroup(group: DuplicateNoteGroup, moveDuplicatesToTrash: Boolean) {
+        val run = _agentState.value.activeRun
+        viewModelScope.launch {
+            try {
+                val commitRes = persistenceMutex.withLock {
+                    val result = agentRepository.commitMergeDuplicateGroup(
+                        group = group,
+                        moveDuplicatesToTrash = moveDuplicatesToTrash,
+                    )
+                    if (result is AgentActionCommitResult.Committed && moveDuplicatesToTrash) {
+                        val srcIds = buildSet {
+                            add(group.primaryNote.id)
+                            group.duplicateNotes.forEach { add(it.id) }
+                        }
+                        closeEditorIfMatchingLocked(srcIds)
+                    }
+                    result
+                }
+                val refreshedActions = if (run != null) {
+                    runCatching { agentRepository.actionsForRun(run.id) }
+                        .getOrDefault(_agentState.value.activeActions)
+                } else {
+                    _agentState.value.activeActions
+                }
+                if (commitRes is AgentActionCommitResult.Committed) {
+                    WidgetUpdater.requestRefreshAll(getApplication())
+                }
+                _agentState.update { cur ->
+                    when (commitRes) {
+                        is AgentActionCommitResult.Committed -> cur.copy(
+                            activeActions = refreshedActions,
+                            duplicateGroups = cur.duplicateGroups.filterNot { it.groupId == group.groupId },
+                            statusMessage = commitRes.summary,
+                            errorMessage = null,
+                        )
+                        is AgentActionCommitResult.AlreadyApplied -> cur.copy(
+                            activeActions = refreshedActions,
+                            duplicateGroups = cur.duplicateGroups.filterNot { it.groupId == group.groupId },
+                            statusMessage = "该组相似碎片已合并（不重复写入）",
+                            errorMessage = null,
+                        )
+                        is AgentActionCommitResult.ConflictDetected -> cur.copy(
+                            activeActions = refreshedActions,
+                            errorMessage = "来源笔记已更新或删除（${commitRes.changedNoteTitles.joinToString("、")}），请先重新扫描再合并",
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update { it.copy(errorMessage = "合并相似碎片失败，请重试") }
             }
         }
     }
@@ -2420,8 +2506,63 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
+    fun refreshEditorTagRecommendations(
+        draftText: String,
+        noteId: String?,
+        attachedTagIds: Set<String>,
+    ) {
+        tagRecJob?.cancel()
+        if (draftText.isBlank() && attachedTagIds.isEmpty()) {
+            _editorDiscoveryState.update { it.copy(recommendedTags = emptyList()) }
+            return
+        }
+        tagRecJob = viewModelScope.launch {
+            delay(250)
+            val recs = runCatching {
+                discovery.recommendTagsForDraft(
+                    draftText = draftText,
+                    currentNoteId = noteId,
+                    attachedTagIds = attachedTagIds,
+                    limit = 4,
+                )
+            }.getOrDefault(emptyList())
+            _editorDiscoveryState.update { state ->
+                val currentSession = editor ?: return@update state
+                val sessionNoteId = if (currentSession.existingNote) currentSession.draft.noteId else null
+                if (sessionNoteId != noteId) state
+                else state.copy(recommendedTags = recs)
+            }
+        }
+    }
+
+    private suspend fun refreshRecommendationsForSession(
+        session: EditorSession,
+        extraTagId: String? = null,
+    ) {
+        val draftText = session.blocks
+            .filter { it.editable }
+            .joinToString("\n") { it.text.text.toString() }
+        val sessionNoteId = if (session.existingNote) session.draft.noteId else null
+        val dbTagIds = if (sessionNoteId != null) {
+            withContext(Dispatchers.IO) {
+                database.organization().noteTags()
+                    .filter { it.noteId == sessionNoteId }
+                    .mapTo(HashSet()) { it.tagId }
+            }
+        } else {
+            emptySet()
+        }
+        val attached = buildSet {
+            addAll(dbTagIds)
+            addAll(session.pendingTagIds)
+            if (extraTagId != null) add(extraTagId)
+        }
+        refreshEditorTagRecommendations(draftText, sessionNoteId, attached)
+    }
+
     private fun resetEditorDiscoveryForSession(noteId: String?) {
         edgeEchoJob?.cancel()
+        tagRecJob?.cancel()
         _editorDiscoveryState.value = EditorDiscoveryState(
             noteId = noteId,
             loadingRelated = noteId != null,
@@ -2431,14 +2572,29 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             globalEchoEnabled = explorePreferences.edgeEchoEnabled,
             lastAutoShownAtMs = 0L,
             dismissedNoteIds = emptySet(),
+            recommendedTags = emptyList(),
         )
         if (noteId != null) {
             refreshEditorRelatedNotes(noteId)
+        }
+        val currentSession = editor
+        if (currentSession != null) {
+            viewModelScope.launch {
+                refreshRecommendationsForSession(currentSession)
+            }
         }
     }
 
     fun onEditorTextActivity(noteId: String?, blockText: String, isComposing: Boolean) {
         edgeEchoJob?.cancel()
+        if (!isComposing) {
+            val currentSession = editor
+            if (currentSession != null) {
+                viewModelScope.launch {
+                    refreshRecommendationsForSession(currentSession)
+                }
+            }
+        }
         val state = _editorDiscoveryState.value
         val nowMs = System.currentTimeMillis()
         if (!DiscoveryEngines.shouldTriggerAutoEcho(

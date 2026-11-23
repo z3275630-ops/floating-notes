@@ -373,6 +373,7 @@ internal object LocalRetrievalEngine {
             }
         }
         val totalDocs = eligibleNotes.size.coerceAtLeast(1)
+        val isPinyinQuery = LocalFuzzyMatcher.isAsciiPinyinQuery(trimmed)
 
         val hits = ArrayList<EvidenceHit>()
         for (note in eligibleNotes) {
@@ -385,6 +386,9 @@ internal object LocalRetrievalEngine {
 
             var titleBonus = 0.0
             val matchedTerms = LinkedHashSet<String>()
+            var matchedPinyin = false
+            var matchedFuzzy = false
+
             if (titleLower.contains(rawLower)) {
                 titleBonus += 6.0
                 matchedTerms.add(trimmed)
@@ -395,11 +399,24 @@ internal object LocalRetrievalEngine {
                     matchedTerms.add(term)
                 }
             }
+            if (isPinyinQuery && titleText.isNotEmpty() && !titleLower.contains(rawLower)) {
+                val pinyinRes = LocalFuzzyMatcher.matchPinyin(trimmed, titleText)
+                if (pinyinRes.matched) {
+                    titleBonus += 5.0 * pinyinRes.score
+                    matchedPinyin = true
+                    pinyinRes.matchedSnippet?.let { matchedTerms.add(it) }
+                }
+            }
+
             var tagBonus = 0.0
             for (tagName in tagNames) {
                 val tl = tagName.lowercase(Locale.ROOT)
                 if (rawLower.contains(tl) || queryTerms.any { it.length >= 2 && tl.contains(it) }) {
                     tagBonus += 3.0
+                    matchedTerms.add("#$tagName")
+                } else if (isPinyinQuery && LocalFuzzyMatcher.matchPinyin(trimmed, tagName).matched) {
+                    tagBonus += 3.5
+                    matchedPinyin = true
                     matchedTerms.add("#$tagName")
                 }
             }
@@ -427,8 +444,38 @@ internal object LocalRetrievalEngine {
                         matchedTerms.add(term)
                     }
                 }
+                if (isPinyinQuery && !excerptLower.contains(rawLower)) {
+                    val pinyinRes = LocalFuzzyMatcher.matchPinyin(trimmed, chunk.excerpt)
+                    if (pinyinRes.matched) {
+                        chunkScore += 3.2 * pinyinRes.score
+                        matchedPinyin = true
+                        pinyinRes.matchedSnippet?.let { matchedTerms.add(it) }
+                    }
+                }
                 if (chunkScore > 0.35) {
                     scoredChunks.add(chunk to chunkScore)
+                }
+            }
+
+            if (scoredChunks.isEmpty() && titleBonus <= 0.0 && tagBonus <= 0.0 && !bodyLower.contains(rawLower)) {
+                if (titleText.isNotEmpty()) {
+                    val fuzzyTitle = LocalFuzzyMatcher.matchFuzzyText(trimmed, titleText)
+                    if (fuzzyTitle.matched && fuzzyTitle.kind == FuzzyMatchKind.EDIT_DISTANCE) {
+                        titleBonus += 3.6 * fuzzyTitle.score
+                        matchedFuzzy = true
+                        fuzzyTitle.matchedSnippet?.let { matchedTerms.add(it) }
+                    }
+                }
+                for (chunk in chunks) {
+                    val fuzzyChunk = LocalFuzzyMatcher.matchFuzzyText(trimmed, chunk.excerpt)
+                    if (fuzzyChunk.matched && fuzzyChunk.kind == FuzzyMatchKind.EDIT_DISTANCE) {
+                        val chunkScore = 2.6 * fuzzyChunk.score
+                        if (chunkScore > 0.35) {
+                            scoredChunks.add(chunk to chunkScore)
+                            matchedFuzzy = true
+                            fuzzyChunk.matchedSnippet?.let { matchedTerms.add(it) }
+                        }
+                    }
                 }
             }
 
@@ -456,6 +503,12 @@ internal object LocalRetrievalEngine {
             val reasons = ArrayList<String>()
             if (excerptContainsExact(mergedExcerpt, titleText, rawLower)) {
                 reasons.add("原句命中")
+            }
+            if (matchedPinyin) {
+                reasons.add("拼音匹配")
+            }
+            if (matchedFuzzy) {
+                reasons.add("近似拼写匹配")
             }
             if (tagBonus > 0.0) {
                 reasons.add("标签匹配")
@@ -534,8 +587,39 @@ internal object LocalRetrievalEngine {
         val sourceNotebooks = noteNotebookIdsByNote[sourceNote.id].orEmpty()
         val outgoingTargets = links.filter { it.sourceId == sourceNote.id }.mapTo(HashSet()) { it.targetId }
         val incomingSources = links.filter { it.targetId == sourceNote.id }.mapTo(HashSet()) { it.sourceId }
-        val sourceTokens = tokensForNote(sourceNote, chunksByNote[sourceNote.id])
         val sourceInstant = runCatching { Instant.parse(sourceNote.updatedAt) }.getOrElse { now }
+
+        val activeCorpus = ArrayList<NoteEntity>(allNotes.size + 1)
+        val seenCorpusIds = HashSet<String>(allNotes.size + 1)
+        if (seenCorpusIds.add(sourceNote.id)) {
+            activeCorpus.add(sourceNote)
+        }
+        for (note in allNotes) {
+            if (note.deletedAt != null) continue
+            if (note.id in excludedNoteIds) continue
+            if (!includeArchived && note.archivedAt != null) continue
+            if (seenCorpusIds.add(note.id)) {
+                activeCorpus.add(note)
+            }
+        }
+
+        val tokensByNote = HashMap<String, Set<String>>(activeCorpus.size)
+        val df = HashMap<String, Int>()
+        for (note in activeCorpus) {
+            val tokens = tokensForNote(note, chunksByNote[note.id])
+            tokensByNote[note.id] = tokens
+            for (tok in tokens) {
+                df[tok] = (df[tok] ?: 0) + 1
+            }
+        }
+        val totalDocs = activeCorpus.size.coerceAtLeast(1)
+        fun idfOf(tok: String): Double {
+            val count = df[tok] ?: 0
+            return ln(1.0 + (totalDocs.toDouble() + 0.5) / (count.toDouble() + 0.5))
+        }
+
+        val sourceTokens = tokensByNote[sourceNote.id].orEmpty()
+        val sourceNorm = vectorNorm(sourceTokens, ::idfOf)
 
         val matches = ArrayList<RelatedNoteMatch>()
         for (candidate in allNotes) {
@@ -545,7 +629,7 @@ internal object LocalRetrievalEngine {
             if (!includeArchived && candidate.archivedAt != null) continue
 
             val candidateChunks = chunksByNote[candidate.id].orEmpty()
-            val candidateTokens = tokensForNote(candidate, candidateChunks)
+            val candidateTokens = tokensByNote[candidate.id] ?: tokensForNote(candidate, candidateChunks)
             val candidateTagIds = noteTagIdsByNote[candidate.id].orEmpty()
             val candidateAncestors = ancestorTagIds(candidateTagIds, tagsById)
             val candidateNotebooks = noteNotebookIdsByNote[candidate.id].orEmpty()
@@ -585,7 +669,8 @@ internal object LocalRetrievalEngine {
                 reasons.add("同一笔记本")
             }
 
-            val lexical = cosineSimilarity(sourceTokens, candidateTokens)
+            val candidateNorm = vectorNorm(candidateTokens, ::idfOf)
+            val lexical = idfCosineSimilarity(sourceTokens, sourceNorm, candidateTokens, candidateNorm, ::idfOf)
             if (lexical >= 0.08) {
                 score += lexical * 6.5
                 reasons.add("主题内容相近")
@@ -735,11 +820,33 @@ internal object LocalRetrievalEngine {
         return out
     }
 
-    private fun cosineSimilarity(a: Set<String>, b: Set<String>): Double {
-        if (a.isEmpty() || b.isEmpty()) return 0.0
-        val overlap = a.count { it in b }
-        if (overlap == 0) return 0.0
-        return overlap.toDouble() / sqrt(a.size.toDouble() * b.size.toDouble())
+    private fun vectorNorm(tokens: Set<String>, idfOf: (String) -> Double): Double {
+        if (tokens.isEmpty()) return 0.0
+        var sumSq = 0.0
+        for (tok in tokens) {
+            val w = idfOf(tok)
+            sumSq += w * w
+        }
+        return sqrt(sumSq)
+    }
+
+    private fun idfCosineSimilarity(
+        a: Set<String>,
+        aNorm: Double,
+        b: Set<String>,
+        bNorm: Double,
+        idfOf: (String) -> Double,
+    ): Double {
+        if (a.isEmpty() || b.isEmpty() || aNorm <= 0.0 || bNorm <= 0.0) return 0.0
+        val (smaller, larger) = if (a.size <= b.size) a to b else b to a
+        var dot = 0.0
+        for (tok in smaller) {
+            if (tok in larger) {
+                val w = idfOf(tok)
+                dot += w * w
+            }
+        }
+        return if (dot > 0.0) dot / (aNorm * bNorm) else 0.0
     }
 
     private fun ancestorTagIds(tagIds: Set<String>, tagsById: Map<String, TagEntity>): Set<String> {

@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,19 +36,25 @@ import io.github.z3275630ops.floatingnotes.data.agent.AgentRunResult
 import io.github.z3275630ops.floatingnotes.data.agent.AgentSkill
 import io.github.z3275630ops.floatingnotes.data.agent.AgentTimeRange
 import io.github.z3275630ops.floatingnotes.data.agent.LocalAgentEngine
+import io.github.z3275630ops.floatingnotes.data.discovery.DuplicateNoteGroup
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalRetrievalEngine
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalTextIntelligence
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChip
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedRow
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAiAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDividerColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
+import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
 
 internal data class AgentUiState(
     val running: Boolean = false,
@@ -58,6 +65,7 @@ internal data class AgentUiState(
     val activeResult: AgentRunResult? = null,
     val activeActions: List<AgentActionEntity> = emptyList(),
     val recentRuns: List<AgentRunEntity> = emptyList(),
+    val duplicateGroups: List<DuplicateNoteGroup> = emptyList(),
     val statusMessage: String? = null,
     val errorMessage: String? = null,
 )
@@ -81,11 +89,14 @@ internal fun AgentWorkspace(
     onOpenNote: (String) -> Unit,
     onClearMessage: () -> Unit,
     onQuickCapture: () -> Unit,
+    onMergeDuplicateGroup: (DuplicateNoteGroup, Boolean) -> Unit = { _, _ -> },
 ) {
     val scheme = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
+    val backdrop = rememberGlassBackdrop()
     var showToolLog by rememberSaveable(state.activeRun?.id) { mutableStateOf(false) }
     var showPrivacyDetails by rememberSaveable { mutableStateOf(false) }
+    var previewDuplicateGroup by remember { mutableStateOf<DuplicateNoteGroup?>(null) }
     val aiAccent = mintAiAccent(dark)
 
     Column(
@@ -106,7 +117,8 @@ internal fun AgentWorkspace(
                     role = Role.Button,
                     onClick = { showPrivacyDetails = !showPrivacyDetails },
                 )
-                .padding(horizontal = 12.dp, vertical = 9.dp),
+                .padding(horizontal = 12.dp, vertical = 9.dp)
+                .testTag("agent-privacy-pill"),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(
@@ -121,7 +133,7 @@ internal fun AgentWorkspace(
                     modifier = Modifier.size(14.dp),
                 )
                 Text(
-                    text = "仅在本机运行 · 不上传云端 · ${notesCount} 篇可检索",
+                    text = "本机离线运行 · 不上传 · ${notesCount} 篇可检索",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
                     color = aiAccent.fg,
                     maxLines = 1,
@@ -345,6 +357,7 @@ internal fun AgentWorkspace(
                         AgentSkill.CounterEvidence -> MintIcons.Link
                         AgentSkill.TodoTriage -> MintIcons.Checklist
                         AgentSkill.WeeklyDraft -> MintIcons.Records
+                        AgentSkill.DuplicateCleanup -> MintIcons.Library
                         AgentSkill.FreeQuestion -> MintIcons.Agent
                     }
                     MintGroupedRow(
@@ -620,6 +633,126 @@ internal fun AgentWorkspace(
             }
         }
 
+        // Duplicate cleanup groups section
+        if (activeRun?.skillId == AgentSkill.DuplicateCleanup.id && state.duplicateGroups.isNotEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "发现 ${state.duplicateGroups.size} 组高度相似碎片",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+                state.duplicateGroups.forEach { group ->
+                    val primaryTitle = LocalRetrievalEngine.displayNoteTitle(group.primaryNote)
+                    MintGroupedSection(
+                        dark = dark,
+                        containerColor = mintCardSurface(dark),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(mintSecondaryFill(dark))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                                ) {
+                                    Text(
+                                        text = "${group.similarityPercent}% · ${group.reason}",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = scheme.primary,
+                                    )
+                                }
+                                Text(
+                                    text = "共 ${1 + group.duplicateNotes.size} 条",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = scheme.onSurfaceVariant,
+                                )
+                            }
+
+                            Text(
+                                text = "主笔记：$primaryTitle",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = scheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = { onOpenNote(group.primaryNote.id) },
+                                    )
+                                    .padding(vertical = 2.dp),
+                            )
+
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                group.duplicateNotes.forEach { dup ->
+                                    val dupTitle = LocalRetrievalEngine.displayNoteTitle(dup)
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(mintSecondaryFill(dark))
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                role = Role.Button,
+                                                onClick = { onOpenNote(dup.id) },
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    ) {
+                                        Text(
+                                            text = "相似：$dupTitle",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = scheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (group.previewText.isNotBlank()) {
+                                Text(
+                                    text = group.previewText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+
+                            MintPillButton(
+                                label = "预览并安全合并",
+                                primary = true,
+                                dark = dark,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("agent-dup-merge-trigger-${group.groupId}"),
+                                onClick = { previewDuplicateGroup = group },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // Persisted history list (across restarts)
         if (state.recentRuns.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -649,6 +782,111 @@ internal fun AgentWorkspace(
                         )
                     }
                 }
+            }
+        }
+    }
+
+    previewDuplicateGroup?.let { group ->
+        var moveToTrash by remember(group.groupId) { mutableStateOf(false) }
+        val mergedParagraphs = remember(group.groupId) {
+            LocalTextIntelligence.buildMergedParagraphs(group.primaryNote, group.duplicateNotes)
+        }
+        MintBottomSheet(
+            onDismissRequest = { previewDuplicateGroup = null },
+            dark = dark,
+            backdrop = backdrop,
+            title = "预览并安全合并",
+            subtitle = "共 ${1 + group.duplicateNotes.size} 篇 · ${group.similarityPercent}% · ${group.reason}",
+            leadingLabel = "取消",
+            modifier = Modifier.testTag("agent-dup-merge-sheet"),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                MintGroupedSection(dark = dark, containerColor = mintSecondaryFill(dark)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "合并后段落预览",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = scheme.primary,
+                        )
+                        if (mergedParagraphs.isEmpty()) {
+                            Text(
+                                text = group.previewText.ifBlank { "（无正文段落）" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurfaceVariant,
+                            )
+                        } else {
+                            mergedParagraphs.forEach { para ->
+                                Text(
+                                    text = para,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = scheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                role = Role.Switch,
+                                onClick = { moveToTrash = !moveToTrash },
+                            )
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = "合并后将原碎片移入 30 天回收站",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = scheme.onSurface,
+                            )
+                            Text(
+                                text = if (moveToTrash) "原笔记将移入回收站，30 天内可随时还原" else "默认保留原笔记，并在新笔记中附带引用",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = scheme.onSurfaceVariant,
+                            )
+                        }
+                        MintSwitch(
+                            checked = moveToTrash,
+                            onCheckedChange = { moveToTrash = it },
+                            dark = dark,
+                            modifier = Modifier.testTag("agent-dup-merge-trash-switch"),
+                        )
+                    }
+                }
+
+                MintPillButton(
+                    label = "确认生成合并笔记",
+                    primary = true,
+                    dark = dark,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("agent-dup-merge-confirm"),
+                    onClick = {
+                        previewDuplicateGroup = null
+                        onMergeDuplicateGroup(group, moveToTrash)
+                    },
+                )
             }
         }
     }

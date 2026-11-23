@@ -259,4 +259,135 @@ class DiscoveryEngineTest {
             ),
         )
     }
+
+    @Test
+    fun searchEvidenceSupportsPinyinInitialsFullAndFuzzyTypoWithoutNoise() {
+        val bookNote = note(
+            id = "n-book",
+            title = "读书笔记",
+            paragraphs = listOf("整理今日阅读心得与系统思考"),
+        )
+        val reviewNote = note(
+            id = "n-rev",
+            title = "项目复盘",
+            paragraphs = listOf("回顾本周交付节奏与测试覆盖"),
+        )
+        val engNote = note(
+            id = "n-eng",
+            title = "Floating Notes Architecture",
+            paragraphs = listOf("Incremental indexing pipeline"),
+        )
+        val all = listOf(bookNote, reviewNote, engNote)
+        val chunks = all.flatMap { LocalRetrievalEngine.buildChunks(it) }
+
+        val initialsHit = LocalRetrievalEngine.searchEvidence(
+            query = "dsbj",
+            scope = NoteScope(archived = false),
+            allNotes = all,
+            allChunks = chunks,
+            tags = emptyList(),
+            noteTagIdsByNote = emptyMap(),
+            noteNotebookIdsByNote = emptyMap(),
+        )
+        assertEquals(listOf("n-book"), initialsHit.hits.map { it.note.id })
+        assertTrue(initialsHit.hits.single().reasons.contains("拼音匹配"))
+
+        val fullPinyinHit = LocalRetrievalEngine.searchEvidence(
+            query = "xiangmu",
+            scope = NoteScope(archived = false),
+            allNotes = all,
+            allChunks = chunks,
+            tags = emptyList(),
+            noteTagIdsByNote = emptyMap(),
+            noteNotebookIdsByNote = emptyMap(),
+        )
+        assertEquals(listOf("n-rev"), fullPinyinHit.hits.map { it.note.id })
+        assertTrue(fullPinyinHit.hits.single().reasons.contains("拼音匹配"))
+
+        val fuzzyTypoHit = LocalRetrievalEngine.searchEvidence(
+            query = "floting",
+            scope = NoteScope(archived = false),
+            allNotes = all,
+            allChunks = chunks,
+            tags = emptyList(),
+            noteTagIdsByNote = emptyMap(),
+            noteNotebookIdsByNote = emptyMap(),
+        )
+        assertEquals(listOf("n-eng"), fuzzyTypoHit.hits.map { it.note.id })
+        assertTrue(fuzzyTypoHit.hits.single().reasons.contains("近似拼写匹配"))
+
+        val noiseCjk = LocalRetrievalEngine.searchEvidence(
+            query = "完全不存在外星量子信号",
+            scope = NoteScope(archived = false),
+            allNotes = all,
+            allChunks = chunks,
+            tags = emptyList(),
+            noteTagIdsByNote = emptyMap(),
+            noteNotebookIdsByNote = emptyMap(),
+        )
+        assertTrue(noiseCjk.hits.isEmpty())
+
+        val noiseAscii = LocalRetrievalEngine.searchEvidence(
+            query = "zzzzqqqq",
+            scope = NoteScope(archived = false),
+            allNotes = all,
+            allChunks = chunks,
+            tags = emptyList(),
+            noteTagIdsByNote = emptyMap(),
+            noteNotebookIdsByNote = emptyMap(),
+        )
+        assertTrue(noiseAscii.hits.isEmpty())
+    }
+
+    @Test
+    fun dailyReviewUsesFsrsUrgencyOrderingAndScheduleReasons() {
+        val zone = ZoneId.of("Asia/Shanghai")
+        val today = LocalDate.of(2026, 11, 20)
+        val now = Instant.parse("2026-11-20T08:00:00Z")
+
+        val dueNote = note("n-due", paragraphs = listOf("之前批注过但已到期的笔记"), createdAt = "2026-11-01T08:00:00Z")
+        val oldUnreviewed = note("n-old", paragraphs = listOf("两周前写下尚未重温的笔记"), createdAt = "2026-11-05T08:00:00Z")
+        val earlySeen = note("n-early", paragraphs = listOf("昨天刚看过一遍的笔记"), createdAt = "2026-11-01T08:00:00Z")
+        val todayNote = note("n-today", paragraphs = listOf("今天新建的笔记"), createdAt = "2026-11-20T01:00:00Z")
+
+        val events = listOf(
+            ReviewEventEntity("ev-1", "sess-prev", "n-due", "annotated", null, "2026-11-10T08:00:00Z"),
+            ReviewEventEntity("ev-2", "sess-prev", "n-early", "seen", null, "2026-11-19T08:00:00Z"),
+        )
+
+        val selected = DiscoveryEngines.selectDailyReviewNoteIds(
+            notes = listOf(earlySeen, todayNote, oldUnreviewed, dueNote),
+            noteTagIdsByNote = emptyMap(),
+            events = events,
+            config = ReviewConfig(dailyCount = 3),
+            localDate = today,
+            profileKey = "default",
+            round = 1,
+            now = now,
+            zoneId = zone,
+        )
+        assertEquals(listOf("n-due", "n-old", "n-today"), selected)
+    }
+
+    @Test
+    fun relatedNotesPrioritizesRareSharedConceptsViaIdfWeighting() {
+        val src = note("n-src", title = "空间插值方案", paragraphs = listOf("日常记录研究克里金插值算法"))
+        val rarePeer = note("n-rare", title = "气象网格拟合", paragraphs = listOf("日常记录验证克里金插值精度"))
+        val commonPeer = note("n-common", title = "日常随笔一", paragraphs = listOf("日常记录采购清单与作息"))
+        val fillerA = note("n-fa", title = "日常随笔二", paragraphs = listOf("日常记录散步见闻"))
+        val fillerB = note("n-fb", title = "日常随笔三", paragraphs = listOf("日常记录读书摘录"))
+
+        val all = listOf(src, rarePeer, commonPeer, fillerA, fillerB)
+        val related = LocalRetrievalEngine.computeRelatedNotes(
+            sourceNote = src,
+            allNotes = all,
+            chunksByNote = emptyMap(),
+            tags = emptyList(),
+            noteTagIdsByNote = emptyMap(),
+            noteNotebookIdsByNote = emptyMap(),
+            links = emptyList(),
+        )
+        assertTrue(related.isNotEmpty())
+        assertEquals("n-rare", related.first().note.id)
+    }
 }
