@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +7,35 @@ plugins {
     alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.room)
 }
+
+val releaseSigningProps = Properties().apply {
+    val userHomeCandidates = listOfNotNull(
+        rootProject.file("release-signing.properties"),
+        System.getenv("USERPROFILE")?.takeIf { it.isNotBlank() }?.let {
+            file("$it/.android/floating-notes-signing.properties")
+        },
+        file("${System.getProperty("user.home")}/.android/floating-notes-signing.properties"),
+    )
+    userHomeCandidates.firstOrNull { it.isFile }?.bufferedReader(Charsets.UTF_8)?.use { load(it) }
+}
+
+val releaseStorePath = System.getenv("FLOATING_NOTES_STORE_FILE")
+    ?: releaseSigningProps.getProperty("storeFile")
+val releaseStorePassword = System.getenv("FLOATING_NOTES_STORE_PASSWORD")
+    ?: releaseSigningProps.getProperty("storePassword")
+val releaseKeyAlias = System.getenv("FLOATING_NOTES_KEY_ALIAS")
+    ?: releaseSigningProps.getProperty("keyAlias")
+val releaseKeyPassword = System.getenv("FLOATING_NOTES_KEY_PASSWORD")
+    ?: releaseSigningProps.getProperty("keyPassword")
+val releaseKeystoreFile = releaseStorePath?.takeIf { it.isNotBlank() }?.let { path ->
+    val f = file(path)
+    if (f.isAbsolute) f else rootProject.file(path)
+}
+val hasReleaseSigning = releaseKeystoreFile?.isFile == true &&
+    !releaseStorePassword.isNullOrBlank() &&
+    !releaseKeyAlias.isNullOrBlank() &&
+    !releaseKeyPassword.isNullOrBlank()
+
 android {
     namespace = "io.github.z3275630ops.floatingnotes"
     compileSdk = 35
@@ -12,10 +43,23 @@ android {
         applicationId = "io.github.z3275630ops.floatingnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "0.2.7-p1-polish.1"
+        versionCode = 27
+        versionName = "0.2.7-p1-polish.2"
         buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseKeystoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
     }
     buildTypes {
         debug {
@@ -26,6 +70,9 @@ android {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         create("benchmark") {
             initWith(getByName("release"))

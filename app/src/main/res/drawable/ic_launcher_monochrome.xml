@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Rear tilted card inside the 66dp safe zone -->
+    <group
+        android:pivotX="50"
+        android:pivotY="50"
+        android:rotation="-9">
+        <path
+            android:fillAlpha="0.45"
+            android:fillColor="#FF000000"
+            android:pathData="M39,32H61A7,7 0 0,1 68,39V61A7,7 0 0,1 61,68H39A7,7 0 0,1 32,61V39A7,7 0 0,1 39,32Z" />
+    </group>
+    <!-- Front upright card with EvenOdd pill lines and spark dot cutouts -->
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="
+            M44,36H69A8,8 0 0,1 77,44V67A8,8 0 0,1 69,75H44A8,8 0 0,1 36,67V44A8,8 0 0,1 44,36Z
+            M43.75,51H55.25A1.75,1.75 0 0,1 57,52.75A1.75,1.75 0 0,1 55.25,54.5H43.75A1.75,1.75 0 0,1 42,52.75A1.75,1.75 0 0,1 43.75,51Z
+            M43.75,58H50.25A1.75,1.75 0 0,1 52,59.75A1.75,1.75 0 0,1 50.25,61.5H43.75A1.75,1.75 0 0,1 42,59.75A1.75,1.75 0 0,1 43.75,58Z
+            M68,42A3,3 0 1,0 68,48A3,3 0 1,0 68,42Z" />
+</vector>
