@@ -113,7 +113,8 @@ internal object FsrsReviewScheduler {
         var lastReviewAt: Instant? = null
         var lastAction: String? = null
 
-        val sortedEvents = noteEvents.sortedWith(
+        val deduplicatedEvents = deduplicateSameSessionEvents(noteEvents)
+        val sortedEvents = deduplicatedEvents.sortedWith(
             compareBy<ReviewEventEntity>(
                 { parseInstant(it.createdAt) ?: Instant.EPOCH },
                 { it.createdAt },
@@ -222,6 +223,47 @@ internal object FsrsReviewScheduler {
             urgencyScore = urgencyScore,
             scheduleReason = scheduleReason,
         )
+    }
+
+    private fun deduplicateSameSessionEvents(noteEvents: List<ReviewEventEntity>): List<ReviewEventEntity> {
+        if (noteEvents.size <= 1) return noteEvents
+        val result = ArrayList<ReviewEventEntity>(noteEvents.size)
+        val bySessionDay = LinkedHashMap<Pair<String, String>, MutableList<ReviewEventEntity>>()
+        for (ev in noteEvents) {
+            if (ev.sessionId.isBlank()) {
+                result.add(ev)
+            } else {
+                val dayKey = ev.createdAt.take(10)
+                bySessionDay.getOrPut(ev.sessionId to dayKey) { ArrayList() }.add(ev)
+            }
+        }
+        for (group in bySessionDay.values) {
+            if (group.size == 1) {
+                result.add(group[0])
+                continue
+            }
+            // Keep at most one exposure/positive-rep signal per session-day ("annotated" subsumes "seen"/"reviewed")
+            // without discarding "deferred" lapses that rely on a prior exposure in the same session.
+            val annotated = group.filter { it.action == "annotated" }.maxByOrNull { it.createdAt }
+            val passive = if (annotated == null) {
+                group.filter { it.action == "seen" || it.action == "reviewed" }.maxByOrNull { it.createdAt }
+            } else {
+                null
+            }
+            annotated?.let(result::add)
+            passive?.let(result::add)
+
+            val byOtherAction = LinkedHashMap<String, ReviewEventEntity>()
+            for (ev in group) {
+                if (ev.action == "annotated" || ev.action == "seen" || ev.action == "reviewed") continue
+                val existing = byOtherAction[ev.action]
+                if (existing == null || ev.createdAt > existing.createdAt) {
+                    byOtherAction[ev.action] = ev
+                }
+            }
+            result.addAll(byOtherAction.values)
+        }
+        return result
     }
 
     private fun parseInstant(raw: String?): Instant? =

@@ -107,6 +107,24 @@ internal class DiscoveryRepository(
         }
     }
 
+    private data class TagCorpusCacheKey(
+        val noteCount: Int,
+        val maxUpdatedAt: String,
+        val tagCount: Int,
+        val noteTagCount: Int,
+    )
+
+    private data class TagCorpusSnapshot(
+        val key: TagCorpusCacheKey,
+        val allNotes: List<NoteEntity>,
+        val allChunks: List<NoteChunkEntity>,
+        val tags: List<TagEntity>,
+        val noteTagMap: Map<String, Set<String>>,
+    )
+
+    @Volatile
+    private var cachedTagCorpus: TagCorpusSnapshot? = null
+
     suspend fun loadOrCreateDailyReview(
         startExtraRound: Boolean = false,
         now: Instant = Instant.now(),
@@ -126,13 +144,13 @@ internal class DiscoveryRepository(
         val noteTagIdsMap = noteTags.groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
         val events = discoveryDao.allReviewEvents()
 
-        val existing = discoveryDao.latestReviewSessionForDay(todayStr, profileKey)
+        val daySessions = discoveryDao.reviewSessionsForDay(todayStr, profileKey)
+        val existingForConfig = discoveryDao.latestReviewSessionForDayAndConfig(todayStr, profileKey, configHash)
         val session = if (
             !startExtraRound &&
-            existing != null &&
-            existing.configHash == configHash
+            existingForConfig != null
         ) {
-            val savedIds = decodeStringArray(existing.cardIdsJson)
+            val savedIds = decodeStringArray(existingForConfig.cardIdsJson)
                 .filter { id ->
                     val n = notesById[id]
                     n != null && n.deletedAt == null && n.archivedAt == null
@@ -140,16 +158,16 @@ internal class DiscoveryRepository(
             val suppressedNow = DiscoveryEngines.suppressedNoteIdsAt(events, now)
             val validSaved = savedIds.filterNot { it in suppressedNow }
             if (validSaved.isNotEmpty() || savedIds.isNotEmpty()) {
-                if (validSaved.size != savedIds.size || validSaved != decodeStringArray(existing.cardIdsJson)) {
-                    val updated = existing.copy(
+                if (validSaved.size != savedIds.size || validSaved != decodeStringArray(existingForConfig.cardIdsJson)) {
+                    val updated = existingForConfig.copy(
                         cardIdsJson = JSONArray(validSaved).toString(),
-                        currentIndex = existing.currentIndex.coerceIn(0, (validSaved.size - 1).coerceAtLeast(0)),
+                        currentIndex = existingForConfig.currentIndex.coerceIn(0, (validSaved.size - 1).coerceAtLeast(0)),
                         updatedAt = isoFormatter.format(now),
                     )
                     discoveryDao.upsertReviewSession(updated)
                     updated
                 } else {
-                    existing
+                    existingForConfig
                 }
             } else {
                 createAndSaveReviewSession(
@@ -159,13 +177,19 @@ internal class DiscoveryRepository(
                     config = config,
                     localDate = today,
                     profileKey = profileKey,
-                    round = existing.round,
+                    round = existingForConfig.round,
                     now = now,
                     zoneId = zoneId,
                 )
             }
         } else {
-            val nextRound = if (startExtraRound && existing != null) existing.round + 1 else (existing?.round ?: 1)
+            val maxRoundToday = daySessions.maxOfOrNull { it.round } ?: 0
+            val nextRound = if (maxRoundToday > 0) maxRoundToday + 1 else 1
+            val shownTodayIds = if (startExtraRound) {
+                daySessions.flatMapTo(HashSet()) { decodeStringArray(it.cardIdsJson) }
+            } else {
+                emptySet()
+            }
             createAndSaveReviewSession(
                 notes = allNotes,
                 noteTagIdsMap = noteTagIdsMap,
@@ -176,6 +200,7 @@ internal class DiscoveryRepository(
                 round = nextRound,
                 now = now,
                 zoneId = zoneId,
+                alreadyShownNoteIds = shownTodayIds,
             )
         }
 
@@ -249,6 +274,7 @@ internal class DiscoveryRepository(
         round: Int,
         now: Instant,
         zoneId: ZoneId,
+        alreadyShownNoteIds: Set<String> = emptySet(),
     ): ReviewSessionEntity {
         val selectedIds = DiscoveryEngines.selectDailyReviewNoteIds(
             notes = notes,
@@ -260,6 +286,7 @@ internal class DiscoveryRepository(
             round = round,
             now = now,
             zoneId = zoneId,
+            alreadyShownNoteIds = alreadyShownNoteIds,
         )
         val ts = isoFormatter.format(now)
         val session = ReviewSessionEntity(
@@ -278,10 +305,12 @@ internal class DiscoveryRepository(
     }
 
     suspend fun setReviewIndex(sessionId: String, index: Int, now: Instant = Instant.now()) = withContext(Dispatchers.IO) {
-        val current = discoveryDao.reviewSession(sessionId) ?: return@withContext
-        val cardIds = decodeStringArray(current.cardIdsJson)
-        val clamped = index.coerceIn(0, (cardIds.size - 1).coerceAtLeast(0))
-        discoveryDao.upsertReviewSession(current.copy(currentIndex = clamped, updatedAt = isoFormatter.format(now)))
+        database.withTransaction {
+            val current = discoveryDao.reviewSession(sessionId) ?: return@withTransaction
+            val cardIds = decodeStringArray(current.cardIdsJson)
+            val clamped = index.coerceIn(0, (cardIds.size - 1).coerceAtLeast(0))
+            discoveryDao.updateReviewSessionIndex(sessionId, clamped, isoFormatter.format(now))
+        }
     }
 
     suspend fun markReviewCardSeen(
@@ -290,11 +319,7 @@ internal class DiscoveryRepository(
         now: Instant = Instant.now(),
     ) = withContext(Dispatchers.IO) {
         if (sessionId.isBlank() || noteId.isBlank()) return@withContext
-        val alreadySeen = discoveryDao.allReviewEvents().any {
-            it.sessionId == sessionId && it.noteId == noteId && it.action == "seen"
-        }
-        if (alreadySeen) return@withContext
-        discoveryDao.upsertReviewEvent(
+        discoveryDao.insertReviewEventIfAbsent(
             ReviewEventEntity(
                 id = "seen:$sessionId:$noteId",
                 sessionId = sessionId,
@@ -313,17 +338,32 @@ internal class DiscoveryRepository(
         limit: Int = 4,
     ): List<TagRecommendation> = withContext(Dispatchers.IO) {
         val allNotes = notesDao.allNotes()
-        val allChunks = discoveryDao.allChunks()
         val tags = orgDao.tags()
-        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+        val rawNoteTags = orgDao.noteTags()
+        val maxUpdatedAt = allNotes.maxOfOrNull { it.updatedAt }.orEmpty()
+        val key = TagCorpusCacheKey(
+            noteCount = allNotes.size,
+            maxUpdatedAt = maxUpdatedAt,
+            tagCount = tags.size,
+            noteTagCount = rawNoteTags.size,
+        )
+        val cached = cachedTagCorpus?.takeIf { it.key == key }
+        val snapshot = cached ?: TagCorpusSnapshot(
+            key = key,
+            allNotes = allNotes,
+            allChunks = discoveryDao.allChunks(),
+            tags = tags,
+            noteTagMap = rawNoteTags.groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() },
+        ).also { cachedTagCorpus = it }
+
         LocalTagAndGraphEngine.recommendTagsForDraft(
             draftText = draftText,
             currentNoteId = currentNoteId,
             attachedTagIds = attachedTagIds,
-            allNotes = allNotes,
-            allChunks = allChunks,
-            tags = tags,
-            noteTagIdsByNote = noteTagMap,
+            allNotes = snapshot.allNotes,
+            allChunks = snapshot.allChunks,
+            tags = snapshot.tags,
+            noteTagIdsByNote = snapshot.noteTagMap,
             limit = limit,
         )
     }
@@ -358,31 +398,35 @@ internal class DiscoveryRepository(
             "suppressed_7d" -> isoFormatter.format(now.plus(7, ChronoUnit.DAYS))
             else -> null
         }
-        discoveryDao.upsertReviewEvent(
-            ReviewEventEntity(
-                id = newId(),
-                sessionId = sessionId,
-                noteId = noteId,
-                action = action,
-                untilIso = untilIso,
-                createdAt = isoFormatter.format(now),
-            ),
-        )
-        if (action == "deferred" || action == "suppressed_7d" || action == "excluded") {
-            val session = discoveryDao.reviewSession(sessionId) ?: return@withContext
-            val ids = decodeStringArray(session.cardIdsJson)
-            val remaining = if (action == "deferred") {
-                ids.filter { it != noteId }
-            } else {
-                ids.filter { it != noteId }
-            }
-            discoveryDao.upsertReviewSession(
-                session.copy(
-                    cardIdsJson = JSONArray(remaining).toString(),
-                    currentIndex = session.currentIndex.coerceIn(0, (remaining.size - 1).coerceAtLeast(0)),
-                    updatedAt = isoFormatter.format(now),
+        database.withTransaction {
+            discoveryDao.upsertReviewEvent(
+                ReviewEventEntity(
+                    id = newId(),
+                    sessionId = sessionId,
+                    noteId = noteId,
+                    action = action,
+                    untilIso = untilIso,
+                    createdAt = isoFormatter.format(now),
                 ),
             )
+            if (action == "deferred" || action == "suppressed_7d" || action == "excluded") {
+                val session = discoveryDao.reviewSession(sessionId) ?: return@withTransaction
+                val ids = decodeStringArray(session.cardIdsJson)
+                val removedIdx = ids.indexOf(noteId)
+                val remaining = ids.filter { it != noteId }
+                val adjustedIdx = when {
+                    remaining.isEmpty() -> 0
+                    removedIdx in 0 until session.currentIndex -> session.currentIndex - 1
+                    else -> session.currentIndex
+                }.coerceIn(0, (remaining.size - 1).coerceAtLeast(0))
+                discoveryDao.upsertReviewSession(
+                    session.copy(
+                        cardIdsJson = JSONArray(remaining).toString(),
+                        currentIndex = adjustedIdx,
+                        updatedAt = isoFormatter.format(now),
+                    ),
+                )
+            }
         }
     }
 
@@ -537,7 +581,33 @@ internal class DiscoveryRepository(
         if (hit.note.id == currentNoteId) return@withContext null
         if (hit.note.id in excludedNoteIds) return@withContext null
         val fresh = notesDao.note(hit.note.id) ?: return@withContext null
-        if (fresh.deletedAt != null || fresh.archivedAt != null) return@withContext null
+        if (fresh.deletedAt != null || fresh.archivedAt != null || fresh.aiPolicy == "exclude") {
+            return@withContext null
+        }
+        val stale = fresh.revision != hit.note.revision || fresh.contentHash != hit.note.contentHash
+        if (stale) {
+            val freshCorpus = buildString {
+                fresh.title?.let(::append)
+                append('\n')
+                append(fresh.searchText)
+            }
+            val snippetProbe = hit.mergedExcerpt.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.length >= 4 && it != "…" }
+                ?.take(24)
+            if (snippetProbe != null && !freshCorpus.contains(snippetProbe, ignoreCase = true)) {
+                return@withContext null
+            }
+            val validBlockIds = runCatching {
+                NoteDocument.decode(fresh.documentJson).blocks.mapTo(HashSet()) { it.id }
+            }.getOrDefault(emptySet())
+            val safeBlockId = hit.matchedBlockId?.takeIf { it in validBlockIds }
+            return@withContext hit.copy(
+                note = fresh,
+                noteTitle = LocalRetrievalEngine.displayNoteTitle(fresh),
+                matchedBlockId = safeBlockId,
+            )
+        }
         hit.copy(note = fresh, noteTitle = LocalRetrievalEngine.displayNoteTitle(fresh))
     }
 
@@ -739,6 +809,11 @@ internal class DiscoveryRepository(
         data object SourceChangedOrDeleted : DualCollisionSaveResult()
     }
 
+    sealed class DualBridgeAnalyzeResult {
+        data class Ready(val pair: DualCollisionPair, val bridge: DualCollisionBridge) : DualBridgeAnalyzeResult()
+        data object Unavailable : DualBridgeAnalyzeResult()
+    }
+
     suspend fun drawDualCollisionPair(excludePairKeys: Set<String> = emptySet()): DualPairDrawResult =
         withContext(Dispatchers.IO) {
             val allNotes = notesDao.allNotes()
@@ -753,6 +828,7 @@ internal class DiscoveryRepository(
                 excludePairKeys = excludePairKeys,
                 allChunks = allChunks,
                 links = links,
+                excludedNoteIds = preferences.excludedFindNoteIds,
             )
             if (pair == null) DualPairDrawResult.Insufficient(eligibleCount)
             else DualPairDrawResult.Ready(pair, eligibleCount)
@@ -771,6 +847,57 @@ internal class DiscoveryRepository(
             tagsById = tagsById,
         )
     }
+
+    suspend fun analyzeDualCollisionRefreshed(pair: DualCollisionPair): DualBridgeAnalyzeResult =
+        withContext(Dispatchers.IO) {
+            val allNotes = notesDao.allNotes()
+            val byId = allNotes.associateBy { it.id }
+            val leftFresh = byId[pair.leftNote.id]
+            val rightFresh = byId[pair.rightNote.id]
+            val excludedIds = preferences.excludedFindNoteIds
+            fun NoteEntity?.isEligible(): Boolean =
+                this != null &&
+                    deletedAt == null &&
+                    archivedAt == null &&
+                    aiPolicy != "exclude" &&
+                    id !in excludedIds
+            if (!leftFresh.isEligible() || !rightFresh.isEligible()) {
+                return@withContext DualBridgeAnalyzeResult.Unavailable
+            }
+            val links = orgDao.noteLinks()
+            val tagsById = orgDao.tags().associateBy { it.id }
+            val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+            val leftNote = leftFresh!!
+            val rightNote = rightFresh!!
+            val alignedPair = if (leftNote.revision != pair.leftRevision || rightNote.revision != pair.rightRevision) {
+                val leftTitle = LocalRetrievalEngine.displayNoteTitle(leftNote)
+                val rightTitle = LocalRetrievalEngine.displayNoteTitle(rightNote)
+                val leftTags = noteTagMap[leftNote.id].orEmpty().mapNotNull { tagsById[it]?.name }.sorted()
+                val rightTags = noteTagMap[rightNote.id].orEmpty().mapNotNull { tagsById[it]?.name }.sorted()
+                pair.copy(
+                    leftNote = leftNote,
+                    leftTitle = leftTitle,
+                    leftBody = LocalRetrievalEngine.bodyExcludingTitle(leftNote, title = leftTitle),
+                    leftTags = leftTags,
+                    leftRevision = leftNote.revision,
+                    rightNote = rightNote,
+                    rightTitle = rightTitle,
+                    rightBody = LocalRetrievalEngine.bodyExcludingTitle(rightNote, title = rightTitle),
+                    rightTags = rightTags,
+                    rightRevision = rightNote.revision,
+                )
+            } else {
+                pair
+            }
+            val bridge = DiscoveryEngines.analyzeDualCollision(
+                pair = alignedPair,
+                links = links,
+                allNotes = allNotes,
+                noteTagIdsByNote = noteTagMap,
+                tagsById = tagsById,
+            )
+            DualBridgeAnalyzeResult.Ready(alignedPair, bridge)
+        }
 
     suspend fun saveDualCollisionAsNote(
         pair: DualCollisionPair,

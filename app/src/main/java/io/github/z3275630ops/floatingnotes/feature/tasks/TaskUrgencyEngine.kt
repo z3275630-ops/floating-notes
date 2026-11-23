@@ -177,7 +177,7 @@ internal object TaskUrgencyEngine {
                 score = 28 + minOf(staleDays - 14, 20)
                 tier = TaskUrgencyTier.STALE
                 badge = "搁置 ${staleDays} 天"
-                reasons.add("已搁置 ${staleDays} 天")
+                reasons.add("所在笔记已 ${staleDays} 天未更新")
             } else {
                 score = 10
                 tier = TaskUrgencyTier.NORMAL

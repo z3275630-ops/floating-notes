@@ -360,6 +360,10 @@ private fun ReviewTabContent(
             val card = cards[idx]
             val expanded = expandedCardId == card.note.id
 
+            LaunchedEffect(review.session.id, card.note.id) {
+                onMarkReviewCardSeen(card.note.id)
+            }
+
             var reviewMenu by remember { mutableStateOf(false) }
             val reviewAccent = mintReviewAccent(dark)
 
@@ -614,7 +618,6 @@ private fun ReviewTabContent(
                                         indication = null,
                                         role = Role.Button,
                                         onClick = {
-                                            onMarkReviewCardSeen(card.note.id)
                                             onSelectIndex(idx + 1)
                                         },
                                     )

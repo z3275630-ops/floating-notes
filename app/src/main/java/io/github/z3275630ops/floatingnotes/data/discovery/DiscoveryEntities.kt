@@ -129,9 +129,23 @@ internal interface DiscoveryDao {
     suspend fun clearAllChunks()
 
     @Query(
-        "SELECT * FROM review_sessions WHERE local_date = :localDate AND profile_key = :profileKey ORDER BY round DESC LIMIT 1",
+        "SELECT * FROM review_sessions WHERE local_date = :localDate AND profile_key = :profileKey ORDER BY round DESC, updated_at DESC, id DESC LIMIT 1",
     )
     suspend fun latestReviewSessionForDay(localDate: String, profileKey: String): ReviewSessionEntity?
+
+    @Query(
+        "SELECT * FROM review_sessions WHERE local_date = :localDate AND profile_key = :profileKey AND config_hash = :configHash ORDER BY round DESC, updated_at DESC, id DESC LIMIT 1",
+    )
+    suspend fun latestReviewSessionForDayAndConfig(
+        localDate: String,
+        profileKey: String,
+        configHash: String,
+    ): ReviewSessionEntity?
+
+    @Query(
+        "SELECT * FROM review_sessions WHERE local_date = :localDate AND profile_key = :profileKey ORDER BY round DESC, updated_at DESC, id DESC",
+    )
+    suspend fun reviewSessionsForDay(localDate: String, profileKey: String): List<ReviewSessionEntity>
 
     @Query("SELECT * FROM review_sessions WHERE id = :id")
     suspend fun reviewSession(id: String): ReviewSessionEntity?
@@ -141,6 +155,9 @@ internal interface DiscoveryDao {
 
     @Upsert
     suspend fun upsertReviewSession(session: ReviewSessionEntity)
+
+    @Query("UPDATE review_sessions SET current_index = :index, updated_at = :updatedAt WHERE id = :sessionId")
+    suspend fun updateReviewSessionIndex(sessionId: String, index: Int, updatedAt: String)
 
     @Query("SELECT * FROM review_events WHERE session_id = :sessionId ORDER BY created_at")
     fun observeReviewEventsForSession(sessionId: String): Flow<List<ReviewEventEntity>>
@@ -153,6 +170,9 @@ internal interface DiscoveryDao {
 
     @Upsert
     suspend fun upsertReviewEvent(event: ReviewEventEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertReviewEventIfAbsent(event: ReviewEventEntity): Long
 
     @Query("DELETE FROM review_events WHERE action IN ('excluded', 'suppressed_7d', 'deferred')")
     suspend fun clearSuppressionEvents()

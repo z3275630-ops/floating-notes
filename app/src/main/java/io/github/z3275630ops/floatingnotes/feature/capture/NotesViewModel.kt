@@ -233,10 +233,12 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         blocks.add(EditorBlock(NoteBlock.paragraph()))
     }
 
-    fun insertTranscript(block: EditorBlock, text: String) {
-        if (writing || closing) return
+    fun insertTranscript(block: EditorBlock, text: String): Boolean {
+        if (writing || closing) return false
         val position = blocks.indexOf(block)
-        if (position >= 0) blocks.add(position + 1, EditorBlock(NoteBlock.paragraph(text)))
+        if (position < 0) return false
+        blocks.add(position + 1, EditorBlock(NoteBlock.paragraph(text)))
+        return true
     }
 
     fun removeAttachment(block: EditorBlock) {
@@ -368,6 +370,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     private var voiceRecorder: VoiceRecorder? = null
     private var voiceClock: Job? = null
     private var foreground = false
+    private var expiredTrashPurged = false
     private var pendingFocusBlockId: String? = null
 
     fun queueFocusBlock(blockId: String?) {
@@ -378,6 +381,32 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         foreground = true
         viewModelScope.launch {
             runCatching { reconcileTimeChange() }
+        }
+        purgeExpiredTrashIfNeeded()
+    }
+
+    private fun purgeExpiredTrashIfNeeded() {
+        if (expiredTrashPurged) return
+        expiredTrashPurged = true
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    runCatching {
+                        val openNoteId = editor?.draft?.noteId
+                        val result = repository.purgeExpiredTrash(
+                            excludeNoteIds = setOfNotNull(openNoteId),
+                        )
+                        if (result.deletedNoteIds.isNotEmpty()) {
+                            runCatching { discovery.removeChunksForNoteIds(result.deletedNoteIds) }
+                            val app = getApplication<Application>()
+                            result.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
+                            attachments.collectUnreferenced(database, backupManager.activeLeaseIds())
+                        }
+                    }.onFailure {
+                        expiredTrashPurged = false
+                    }
+                }
+            }
         }
     }
 
@@ -895,11 +924,18 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         val mergedDoc = session.document()
         val mergedSeq = session.sequenceFor(mergedDoc)
         val committed = repository.commit(encode(session, mergedDoc, mergedSeq))
+        syncChunksAsync(committed)
         session.draft = session.draft.copy(baseRevision = committed.revision)
         session.committedSeq = maxOf(session.committedSeq, mergedSeq)
         commitSessionExtras(session)
         session.syncAfterExternalCommit(committed.revision)
         return committed
+    }
+
+    private fun syncChunksAsync(note: NoteEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { discovery.syncChunksForNote(note) }
+        }
     }
 
     private fun watch(session: EditorSession) {
@@ -944,6 +980,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                 val commitDraft = encode(session, document, sequence)
                                 try {
                                     val committed = repository.commit(commitDraft)
+                                    syncChunksAsync(committed)
                                     session.draft = session.draft.copy(baseRevision = committed.revision)
                                     session.committedSeq = maxOf(session.committedSeq, sequence)
                                     commitSessionExtras(session)
@@ -1158,6 +1195,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         val sequence = session.sequenceFor(document)
                         if (document.hasContent && sequence > session.committedSeq) {
                             val committed = repository.commit(encode(session, document, sequence))
+                            syncChunksAsync(committed)
                             session.draft = session.draft.copy(baseRevision = committed.revision)
                             session.committedSeq = maxOf(session.committedSeq, sequence)
                             commitSessionExtras(session)
@@ -1229,6 +1267,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                 } catch (stale: StaleDraftException) {
                                     tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
                                 }
+                                syncChunksAsync(committed)
                                 session.draft = session.draft.copy(baseRevision = committed.revision)
                                 session.committedSeq = maxOf(session.committedSeq, sequence)
                             }
@@ -1303,6 +1342,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                 } catch (stale: StaleDraftException) {
                                     tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
                                 }
+                                syncChunksAsync(committed)
                                 session.draft = session.draft.copy(baseRevision = committed.revision)
                                 session.committedSeq = maxOf(session.committedSeq, sequence)
                             }
@@ -2081,9 +2121,6 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
         viewModelScope.launch {
             runCatching { discovery.setReviewIndex(review.session.id, clamped) }
-            review.cards.getOrNull(clamped)?.let { card ->
-                runCatching { discovery.markReviewCardSeen(review.session.id, card.note.id) }
-            }
         }
     }
 
@@ -2487,12 +2524,25 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         val pair = _exploreState.value.dualPair ?: return
         viewModelScope.launch {
             runCatching {
-                discovery.analyzeDualCollision(pair)
-            }.onSuccess { bridge ->
+                discovery.analyzeDualCollisionRefreshed(pair)
+            }.onSuccess { analyzed ->
                 _exploreState.update {
                     if (it.dualPair?.pairId == pair.pairId) {
-                        it.copy(dualBridge = bridge, dualBridgeFarFetched = false)
-                    } else it
+                        when (analyzed) {
+                            is DiscoveryRepository.DualBridgeAnalyzeResult.Ready -> it.copy(
+                                dualPair = analyzed.pair,
+                                dualBridge = analyzed.bridge,
+                                dualBridgeFarFetched = false,
+                            )
+                            DiscoveryRepository.DualBridgeAnalyzeResult.Unavailable -> it.copy(
+                                dualBridge = null,
+                                dualBridgeFarFetched = false,
+                                statusMessage = "其中一条笔记已移入回收站或设为不参与分析，请“换一组”",
+                            )
+                        }
+                    } else {
+                        it
+                    }
                 }
             }
         }
@@ -2587,7 +2637,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 val actions = agentRepository.actionsForRun(entity.id)
                 val dupGroups = if (skill == AgentSkill.DuplicateCleanup) {
                     runCatching {
-                        agentRepository.findScopedDuplicateGroups(scope, current.timeRange)
+                        agentRepository.hydrateDuplicateGroups(result.duplicateGroupSnapshots)
                     }.getOrDefault(emptyList())
                 } else {
                     emptyList()
@@ -2625,7 +2675,14 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             val actions = runCatching { agentRepository.actionsForRun(run.id) }.getOrDefault(emptyList())
             val dupGroups = if (pastSkill == AgentSkill.DuplicateCleanup) {
                 runCatching {
-                    agentRepository.findScopedDuplicateGroups(pastScope, currentRange)
+                    if (decoded.duplicateGroupSnapshots.isNotEmpty()) {
+                        agentRepository.hydrateDuplicateGroups(decoded.duplicateGroupSnapshots)
+                    } else {
+                        val fallbackRange = io.github.z3275630ops.floatingnotes.data.agent.AgentTimeRange.entries
+                            .firstOrNull { it.name == decoded.timeRangeName }
+                            ?: currentRange
+                        agentRepository.findScopedDuplicateGroups(pastScope, fallbackRange)
+                    }
                 }.getOrDefault(emptyList())
             } else {
                 emptyList()
@@ -2661,6 +2718,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     val result = agentRepository.commitMergeDuplicateGroup(
                         group = group,
                         moveDuplicatesToTrash = moveDuplicatesToTrash,
+                        runId = run?.id,
                     )
                     if (result is AgentActionCommitResult.Committed && moveDuplicatesToTrash) {
                         if (activeSession != null && activeSession.draft.noteId in srcIds) {
@@ -2876,14 +2934,6 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     fun onEditorTextActivity(noteId: String?, blockText: String, isComposing: Boolean) {
         edgeEchoJob?.cancel()
-        if (!isComposing) {
-            val currentSession = editor
-            if (currentSession != null) {
-                viewModelScope.launch {
-                    refreshRecommendationsForSession(currentSession)
-                }
-            }
-        }
         val state = _editorDiscoveryState.value
         val nowMs = System.currentTimeMillis()
         if (!DiscoveryEngines.shouldTriggerAutoEcho(

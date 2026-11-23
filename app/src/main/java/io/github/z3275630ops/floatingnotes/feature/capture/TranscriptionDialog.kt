@@ -46,8 +46,18 @@ internal class TranscriptionStore(context: Context, private val audio: File) {
 
     private fun readResult(): Transcript? {
         if (!result.baseFile.isFile) return null
-        val json = JSONObject(result.readFully().decodeToString())
-        return Transcript(json.getString("raw"), json.getString("formatted"))
+        return try {
+            val json = JSONObject(result.readFully().decodeToString())
+            if (!json.has("raw") || !json.has("formatted")) {
+                result.delete()
+                null
+            } else {
+                Transcript(json.getString("raw"), json.getString("formatted"))
+            }
+        } catch (_: Exception) {
+            result.delete()
+            null
+        }
     }
 
     suspend fun run(onStatus: (String) -> Unit): Transcript = lock.withLock {
@@ -95,7 +105,7 @@ internal fun TranscriptionDialog(
     store: AttachmentStore,
     attachment: LocalAttachment,
     dismiss: () -> Unit,
-    insert: (String) -> Unit,
+    insert: (String) -> Boolean,
 ) {
     val context = LocalContext.current.applicationContext
     val dark = isSystemInDarkTheme()
@@ -144,8 +154,11 @@ internal fun TranscriptionDialog(
                     icon = MintIcons.Check,
                     dark = dark,
                     onClick = {
-                        insert(text)
-                        dismiss()
+                        if (insert(text)) {
+                            dismiss()
+                        } else {
+                            status = "笔记正在保存，请稍后再点“插入正文”"
+                        }
                     },
                 )
             } else {

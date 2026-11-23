@@ -10,7 +10,11 @@ import io.github.z3275630ops.floatingnotes.data.local.NoteLinkEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.NoteTagEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotebookNoteEntity
+import io.github.z3275630ops.floatingnotes.data.local.RecurrenceRule
+import io.github.z3275630ops.floatingnotes.data.local.ReminderEntity
+import io.github.z3275630ops.floatingnotes.data.local.ReminderStatus
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
+import io.github.z3275630ops.floatingnotes.feature.tasks.TaskRecurrence
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskUrgencyEngine
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskUrgencyScore
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskUrgencyTier
@@ -105,6 +109,17 @@ internal data class AgentEvidenceItem(
     val updatedAt: String,
 )
 
+internal data class DuplicateGroupSnapshot(
+    val groupId: String,
+    val primaryNoteId: String,
+    val primaryRevision: Long,
+    val duplicateNoteIds: List<String>,
+    val duplicateRevisions: Map<String, Long>,
+    val similarityPercent: Int,
+    val reason: String,
+    val previewText: String,
+)
+
 internal data class AgentRunResult(
     val engineNotice: String,
     val headline: String,
@@ -116,6 +131,8 @@ internal data class AgentRunResult(
     val suggestedTodos: List<String>,
     val filteredByPolicyCount: Int,
     val scannedCount: Int,
+    val duplicateGroupSnapshots: List<DuplicateGroupSnapshot> = emptyList(),
+    val timeRangeName: String? = null,
 ) {
     fun encode(): String = MiniJson.encode(
         linkedMapOf(
@@ -145,6 +162,19 @@ internal data class AgentRunResult(
             "suggested_todos" to suggestedTodos,
             "filtered_by_policy_count" to filteredByPolicyCount,
             "scanned_count" to scannedCount,
+            "duplicate_groups" to duplicateGroupSnapshots.map { snap ->
+                linkedMapOf(
+                    "group_id" to snap.groupId,
+                    "primary_note_id" to snap.primaryNoteId,
+                    "primary_revision" to snap.primaryRevision,
+                    "duplicate_note_ids" to snap.duplicateNoteIds,
+                    "duplicate_revisions" to snap.duplicateRevisions,
+                    "similarity_percent" to snap.similarityPercent,
+                    "reason" to snap.reason,
+                    "preview_text" to snap.previewText,
+                )
+            },
+            "time_range" to timeRangeName,
         ),
     )
 
@@ -175,6 +205,26 @@ internal data class AgentRunResult(
                 )
             }
             val suggestedTodos = (root["suggested_todos"] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
+            val dupSnapshots = (root["duplicate_groups"] as? List<*>).orEmpty().mapNotNull { entry ->
+                val o = entry as? Map<String, Any?> ?: return@mapNotNull null
+                val rawRevs = o["duplicate_revisions"] as? Map<*, *>
+                val revMap = LinkedHashMap<String, Long>()
+                rawRevs?.forEach { (k, v) ->
+                    val key = k?.toString()
+                    val num = (v as? Number)?.toLong()
+                    if (!key.isNullOrBlank() && num != null) revMap[key] = num
+                }
+                DuplicateGroupSnapshot(
+                    groupId = o["group_id"]?.toString().orEmpty(),
+                    primaryNoteId = o["primary_note_id"]?.toString().orEmpty(),
+                    primaryRevision = (o["primary_revision"] as? Number)?.toLong() ?: 0L,
+                    duplicateNoteIds = (o["duplicate_note_ids"] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty(),
+                    duplicateRevisions = revMap,
+                    similarityPercent = (o["similarity_percent"] as? Number)?.toInt() ?: 0,
+                    reason = o["reason"]?.toString().orEmpty(),
+                    previewText = o["preview_text"]?.toString().orEmpty(),
+                )
+            }.filter { it.groupId.isNotBlank() && it.primaryNoteId.isNotBlank() }
             AgentRunResult(
                 engineNotice = root["engine_notice"]?.toString() ?: LocalAgentEngine.ENGINE_NOTICE,
                 headline = root["headline"]?.toString().orEmpty(),
@@ -186,6 +236,8 @@ internal data class AgentRunResult(
                 suggestedTodos = suggestedTodos,
                 filteredByPolicyCount = (root["filtered_by_policy_count"] as? Number)?.toInt() ?: 0,
                 scannedCount = (root["scanned_count"] as? Number)?.toInt() ?: 0,
+                duplicateGroupSnapshots = dupSnapshots,
+                timeRangeName = root["time_range"]?.toString()?.takeIf { it.isNotBlank() },
             )
         }.getOrNull()
     }
@@ -306,7 +358,10 @@ internal object LocalAgentEngine {
         timeRange: AgentTimeRange,
         now: Instant = Instant.now(),
         zoneId: ZoneId = ZoneId.systemDefault(),
+        reminders: List<ReminderEntity> = emptyList(),
+        checkCancelled: () -> Unit = {},
     ): AnalysisOutcome {
+        checkCancelled()
         val scopedContext = filterScopedNotesWithContext(
             notes = notes,
             tags = tags,
@@ -331,17 +386,18 @@ internal object LocalAgentEngine {
         )
 
         if (scopedNotes.isEmpty()) {
-            return insufficientOutcome(
+            val emptyOutcome = insufficientOutcome(
                 steps = listOf(stepScope),
                 filteredByPolicyCount = excludedByPolicy,
                 reason = "当前时间或标签范围内没有可供本机分析的已授权笔记。可以切换为“全部笔记”或先写几条想法。",
             )
+            return emptyOutcome.copy(result = emptyOutcome.result.copy(timeRangeName = timeRange.name))
         }
 
         val scopedIds = scopedNotes.mapTo(HashSet()) { it.id }
         val scopedChunks = chunks.filter { it.noteId in scopedIds }
 
-        return when (skill) {
+        val rawOutcome = when (skill) {
             AgentSkill.DailyReflection -> analyzeDailyReflection(
                 scopedNotes = scopedNotes,
                 noteTagIds = noteTagIds,
@@ -372,8 +428,7 @@ internal object LocalAgentEngine {
             )
             AgentSkill.TodoTriage -> analyzeTodoTriage(
                 scopedNotes = scopedNotes,
-                noteTagIds = noteTagIds,
-                tagsById = tagsById,
+                reminders = reminders,
                 stepScope = stepScope,
                 filteredByPolicyCount = excludedByPolicy,
                 now = now,
@@ -392,6 +447,7 @@ internal object LocalAgentEngine {
                 scopedChunks = scopedChunks,
                 stepScope = stepScope,
                 filteredByPolicyCount = excludedByPolicy,
+                checkCancelled = checkCancelled,
             )
             AgentSkill.FreeQuestion -> analyzeFreeQuestion(
                 prompt = prompt,
@@ -406,6 +462,7 @@ internal object LocalAgentEngine {
                 filteredByPolicyCount = excludedByPolicy,
             )
         }
+        return rawOutcome.copy(result = rawOutcome.result.copy(timeRangeName = timeRange.name))
     }
 
     private fun analyzeDailyReflection(
@@ -627,8 +684,7 @@ internal object LocalAgentEngine {
 
     private fun analyzeTodoTriage(
         scopedNotes: List<NoteEntity>,
-        noteTagIds: Map<String, Set<String>>,
-        tagsById: Map<String, TagEntity>,
+        reminders: List<ReminderEntity>,
         stepScope: AgentToolStep,
         filteredByPolicyCount: Int,
         now: Instant,
@@ -646,37 +702,52 @@ internal object LocalAgentEngine {
 
         val today = now.atZone(zoneId).toLocalDate()
         val byNote = scopedNotes.associateBy { it.id }
+        val remindersById = reminders
+            .filter { it.statusEnum != ReminderStatus.CANCELLED }
+            .associateBy { it.id }
+        val remindersByBlock = reminders
+            .filter { it.statusEnum != ReminderStatus.CANCELLED }
+            .associateBy { it.noteId to it.blockId }
         val scoredTodos = openTodos.map { todo ->
             val note = byNote[todo.noteId]
+            val reminder = todo.reminderId?.let(remindersById::get)
+                ?: remindersByBlock[todo.noteId to todo.blockId]
+            val effectiveDate = TaskRecurrence.effectiveLocalDate(
+                dueDateRaw = todo.dueDate,
+                reminderLocalDateRaw = reminder?.localDate,
+                triggerInstantMs = reminder?.triggerInstantMs,
+                zoneId = zoneId,
+            )?.toString()
             val urgency = TaskUrgencyEngine.evaluateRaw(
                 text = todo.text,
-                dueDate = todo.dueDate,
+                dueDate = effectiveDate,
                 updatedAtIso = note?.updatedAt,
-                hasActiveReminder = todo.hasReminder,
-                reminderMissed = false,
-                isSnoozed = false,
-                isRecurring = false,
+                hasActiveReminder = reminder?.statusEnum == ReminderStatus.ACTIVE,
+                reminderMissed = reminder?.statusEnum == ReminderStatus.MISSED,
+                isSnoozed = reminder?.snoozedUntilMs != null,
+                isRecurring = reminder != null && reminder.recurrenceEnum != RecurrenceRule.NONE,
                 today = today,
                 zoneId = zoneId,
             )
-            todo to urgency
+            (todo to effectiveDate) to urgency
         }.sortedWith(
-            compareByDescending<Pair<OpenTodoRef, TaskUrgencyScore>> { it.second.score }
-                .thenBy { it.first.dueDate ?: "9999-12-31" }
-                .thenByDescending { byNote[it.first.noteId]?.updatedAt.orEmpty() },
+            compareByDescending<Pair<Pair<OpenTodoRef, String?>, TaskUrgencyScore>> { it.second.score }
+                .thenBy { it.first.second ?: "9999-12-31" }
+                .thenByDescending { byNote[it.first.first.noteId]?.updatedAt.orEmpty() },
         )
 
         val prioritized = scoredTodos.take(5)
-        val withDueCount = scoredTodos.count { !it.first.dueDate.isNullOrBlank() }
+        val withDueCount = scoredTodos.count { !it.first.second.isNullOrBlank() }
         val withoutDueCount = scoredTodos.size - withDueCount
         val overdueCount = scoredTodos.count { it.second.tier == TaskUrgencyTier.CRITICAL }
         val highCount = scoredTodos.count { it.second.tier == TaskUrgencyTier.HIGH }
         val staleCount = scoredTodos.count { it.second.tier == TaskUrgencyTier.STALE }
         val topTodo = scoredTodos.first()
 
-        val evidence = prioritized.distinctBy { it.first.noteId }.take(4).mapNotNull { (todo, urgency) ->
+        val evidence = prioritized.distinctBy { it.first.first.noteId }.take(4).mapNotNull { (todoPair, urgency) ->
+            val (todo, effDate) = todoPair
             byNote[todo.noteId]?.let { n ->
-                val datePart = if (todo.dueDate != null) "截止 ${todo.dueDate}" else "未设日期"
+                val datePart = if (effDate != null) "截止 $effDate" else "未设日期"
                 val reason = "${urgency.tier.label}（${urgency.reason} · $datePart）· ${todo.text}"
                 toEvidenceItem(n, reason)
             }
@@ -685,21 +756,21 @@ internal object LocalAgentEngine {
         val observations = buildList {
             add("共扫描到 ${openTodos.size} 项未完成待办，其中 $withDueCount 项设定了明确日期，$withoutDueCount 项尚无截止时间。")
             if (overdueCount > 0 || highCount > 0) {
-                add("紧急优先级提示：${overdueCount} 项已逾期、${highCount} 项今日到期，最需立即处理的是「${topTodo.first.text}」（${topTodo.second.reason}）。")
+                add("紧急优先级提示：${overdueCount} 项已逾期、${highCount} 项今日到期，最需立即处理的是「${topTodo.first.first.text}」（${topTodo.second.reason}）。")
             } else {
-                add("当前最优先待办为「${topTodo.first.text}」（${topTodo.second.reason}）。")
+                add("当前最优先待办为「${topTodo.first.first.text}」（${topTodo.second.reason}）。")
             }
             if (staleCount > 0) {
                 val firstStale = scoredTodos.first { it.second.tier == TaskUrgencyTier.STALE }
-                add("另有 $staleCount 项无日期旧待办已长期搁置（如「${firstStale.first.text}」· ${firstStale.second.reason}），可清理或排期。")
+                add("另有 $staleCount 项无日期旧待办已长期搁置（如「${firstStale.first.first.text}」· ${firstStale.second.reason}），可清理或排期。")
             } else if (withoutDueCount > 0) {
-                val firstUndated = scoredTodos.first { it.first.dueDate.isNullOrBlank() }
-                add("无日期事项中可先清理或归并「${firstUndated.first.text}」。")
+                val firstUndated = scoredTodos.first { it.first.second.isNullOrBlank() }
+                add("无日期事项中可先清理或归并「${firstUndated.first.first.text}」。")
             }
         }
 
         val headline = when {
-            overdueCount > 0 -> "当前共有 ${openTodos.size} 项未完成待办，其中 $overdueCount 项已逾期，建议优先处理「${topTodo.first.text}」。"
+            overdueCount > 0 -> "当前共有 ${openTodos.size} 项未完成待办，其中 $overdueCount 项已逾期，建议优先处理「${topTodo.first.first.text}」。"
             withDueCount > 0 -> "当前共有 ${openTodos.size} 项未完成待办，建议按紧迫度优先推进带日期的 $withDueCount 项。"
             else -> "当前共有 ${openTodos.size} 项未完成待办，可按紧迫程度逐项清理或排期。"
         }
@@ -717,8 +788,9 @@ internal object LocalAgentEngine {
                     "回看今天和近三天的重点",
                 ),
                 toolSteps = listOf(stepScope, stepTodo),
-                suggestedTodos = prioritized.take(3).map { (item, _) ->
-                    if (item.dueDate != null) "${item.text}（${item.dueDate}）" else item.text
+                suggestedTodos = prioritized.take(3).map { (todoPair, _) ->
+                    val (item, effDate) = todoPair
+                    if (effDate != null) "${item.text}（$effDate）" else item.text
                 },
                 filteredByPolicyCount = filteredByPolicyCount,
                 scannedCount = scopedNotes.size,
@@ -731,10 +803,12 @@ internal object LocalAgentEngine {
         scopedChunks: List<NoteChunkEntity>,
         stepScope: AgentToolStep,
         filteredByPolicyCount: Int,
+        checkCancelled: () -> Unit = {},
     ): AnalysisOutcome {
         val groups = LocalTextIntelligence.findDuplicateGroups(
             notes = scopedNotes,
             allChunks = scopedChunks,
+            checkCancelled = checkCancelled,
         )
         val stepCluster = AgentToolStep(
             toolName = "find_duplicate_groups",
@@ -747,6 +821,19 @@ internal object LocalAgentEngine {
                 steps = listOf(stepScope, stepCluster),
                 filteredByPolicyCount = filteredByPolicyCount,
                 reason = "太棒了，当前范围内没有发现高度重复的碎片笔记。",
+            )
+        }
+
+        val snapshots = groups.map { group ->
+            DuplicateGroupSnapshot(
+                groupId = group.groupId,
+                primaryNoteId = group.primaryNote.id,
+                primaryRevision = group.primaryNote.revision,
+                duplicateNoteIds = group.duplicateNotes.map { it.id },
+                duplicateRevisions = group.duplicateNotes.associate { it.id to it.revision },
+                similarityPercent = group.similarityPercent,
+                reason = group.reason,
+                previewText = group.previewText,
             )
         }
 
@@ -792,6 +879,7 @@ internal object LocalAgentEngine {
                 },
                 filteredByPolicyCount = filteredByPolicyCount,
                 scannedCount = scopedNotes.size,
+                duplicateGroupSnapshots = snapshots,
             ),
         )
     }
@@ -966,9 +1054,10 @@ internal object LocalAgentEngine {
 
     private data class OpenTodoRef(
         val noteId: String,
+        val blockId: String,
         val text: String,
         val dueDate: String?,
-        val hasReminder: Boolean = false,
+        val reminderId: String? = null,
     )
 
     private fun collectOpenTodos(notes: List<NoteEntity>): List<OpenTodoRef> {
@@ -978,10 +1067,11 @@ internal object LocalAgentEngine {
                 val type = block["type"]?.toString()
                 val checked = block["checked"] as? Boolean ?: false
                 val text = block["text"]?.toString().orEmpty()
+                val blockId = block["id"]?.toString().orEmpty()
                 val dueDate = block["due_date"]?.toString()?.takeIf { it.isNotBlank() }
-                val hasReminder = !block["reminder_id"]?.toString().isNullOrBlank()
+                val reminderId = block["reminder_id"]?.toString()?.takeIf { it.isNotBlank() }
                 if (type == "checkbox" && !checked && text.isNotBlank()) {
-                    out.add(OpenTodoRef(note.id, sanitizeQuoteText(text), dueDate, hasReminder))
+                    out.add(OpenTodoRef(note.id, blockId, sanitizeQuoteText(text), dueDate, reminderId))
                 }
             }
         }

@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -103,10 +104,13 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDestructiveColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSpringSpec
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTodoAccent
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
@@ -168,6 +172,8 @@ internal fun TasksScreen(
 
     var selectedFilter by remember { mutableStateOf(TasksFilter.TODAY) }
     var capability by remember { mutableStateOf(capabilityProvider(context)) }
+    var currentZone by remember { mutableStateOf(ZoneId.systemDefault()) }
+    var currentToday by remember { mutableStateOf(LocalDate.now(currentZone)) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var editingDraft by remember { mutableStateOf<TasksScheduleDraft?>(null) }
 
@@ -175,10 +181,23 @@ internal fun TasksScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 capability = capabilityProvider(context)
+                val latestZone = ZoneId.systemDefault()
+                currentZone = latestZone
+                currentToday = LocalDate.now(latestZone)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(currentToday, currentZone) {
+        val nowZoned = ZonedDateTime.now(currentZone)
+        val nextMidnight = currentToday.plusDays(1).atStartOfDay(currentZone)
+        val waitMs = (Duration.between(nowZoned, nextMidnight).toMillis() + 1_000L).coerceAtLeast(1_000L)
+        delay(waitMs)
+        val latestZone = ZoneId.systemDefault()
+        currentZone = latestZone
+        currentToday = LocalDate.now(latestZone)
     }
 
     val openNotificationSettings = {
@@ -216,7 +235,7 @@ internal fun TasksScreen(
         onDismissStatusFeedback = { statusBanner = null },
         editingDraft = editingDraft,
         onEditSchedule = { item ->
-            editingDraft = TasksScheduleDraft.fromItem(item, LocalDate.now())
+            editingDraft = TasksScheduleDraft.fromItem(item, currentToday)
         },
         onDismissScheduleEditor = { editingDraft = null },
         onSaveSchedule = { draft ->
@@ -316,6 +335,8 @@ internal fun TasksScreen(
         tier = tier,
         dark = dark,
         modifier = modifier,
+        zoneId = currentZone,
+        today = currentToday,
         onRequestNotificationPermission = requestNotifications,
     )
 }
@@ -385,17 +406,21 @@ internal fun TasksScreenContent(
             zoneId = zoneId,
         )
     }
-    val upcomingItems = remember(classified, zoneId) {
+    val upcomingItems = remember(classified, today, zoneId) {
         classified.filter { it.first == TaskBucket.UPCOMING }
             .map { it.second }
-            .sortedBy {
-                TaskRecurrence.effectiveLocalDate(
-                    it.dueDate,
-                    it.reminderLocalDate,
-                    it.triggerInstantMs,
-                    zoneId,
-                ) ?: LocalDate.MAX
-            }
+            .sortedWith(
+                compareBy<TaskItemProjection> {
+                    TaskRecurrence.effectiveLocalDate(
+                        it.dueDate,
+                        it.reminderLocalDate,
+                        it.triggerInstantMs,
+                        zoneId,
+                    ) ?: LocalDate.MAX
+                }.thenByDescending {
+                    TaskUrgencyEngine.evaluate(it, today, zoneId).score
+                },
+            )
     }
     val completedItems = remember(classified) {
         classified.filter { it.first == TaskBucket.COMPLETED }.map { it.second }

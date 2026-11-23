@@ -1201,14 +1201,19 @@ private fun InlineTriggerSuggestionBar(
 
     when (trigger.kind) {
         InlineTriggerKind.TAG -> {
-            val matches = availableTags.filter {
-                it.id !in attachedTagIds &&
-                    (
-                        query.isEmpty() ||
-                            it.name.contains(query, ignoreCase = true) ||
-                            LocalFuzzyMatcher.matchesTagOrNoteQuery(query, it.name)
-                        )
-            }.take(8)
+            val matches = remember(trigger.kind, query, availableTags, attachedTagIds) {
+                availableTags.asSequence()
+                    .filter {
+                        it.id !in attachedTagIds &&
+                            (
+                                query.isEmpty() ||
+                                    it.name.contains(query, ignoreCase = true) ||
+                                    LocalFuzzyMatcher.matchesTagOrNoteQuery(query, it.name)
+                                )
+                    }
+                    .take(8)
+                    .toList()
+            }
             val canCreate = query.isNotEmpty() &&
                 query.length <= 60 &&
                 '/' !in query &&
@@ -1255,13 +1260,18 @@ private fun InlineTriggerSuggestionBar(
         }
 
         InlineTriggerKind.REFERENCE -> {
-            val matches = candidateNotes.filter {
-                query.isEmpty() ||
-                    referenceLabel(it).contains(query, ignoreCase = true) ||
-                    it.searchText.contains(query, ignoreCase = true) ||
-                    LocalFuzzyMatcher.matchesTagOrNoteQuery(query, referenceLabel(it)) ||
-                    LocalFuzzyMatcher.matchesTagOrNoteQuery(query, it.searchText.take(240))
-            }.take(6)
+            val matches = remember(trigger.kind, query, candidateNotes) {
+                candidateNotes.asSequence()
+                    .filter {
+                        query.isEmpty() ||
+                            referenceLabel(it).contains(query, ignoreCase = true) ||
+                            it.searchText.contains(query, ignoreCase = true) ||
+                            LocalFuzzyMatcher.matchesTagOrNoteQuery(query, referenceLabel(it)) ||
+                            LocalFuzzyMatcher.matchesTagOrNoteQuery(query, it.searchText.take(240))
+                    }
+                    .take(6)
+                    .toList()
+            }
 
             if (matches.isNotEmpty()) {
                 Column(

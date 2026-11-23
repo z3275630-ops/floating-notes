@@ -19,6 +19,7 @@ internal object BackupConstants {
         "signing_credentials",
         "rebuildable_thumbnails",
         "rebuildable_search_indexes",
+        "uninserted_audio_transcripts",
     )
 }
 

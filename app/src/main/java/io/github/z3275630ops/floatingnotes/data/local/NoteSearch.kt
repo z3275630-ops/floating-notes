@@ -6,8 +6,10 @@ import androidx.sqlite.db.SupportSQLiteQuery
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalFuzzyMatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -119,9 +121,10 @@ internal class SearchRepository(private val database: NotesDatabase) {
     fun observeSmart(keyword: String, scope: NoteScope, limit: Int): Flow<List<NoteEntity>> {
         val trimmed = keyword.trim()
         if (trimmed.isEmpty()) return observe("", scope, limit)
+        val fuzzyPoolLimit = maxOf(limit * 4, 20_000)
         return combine(
             observe(trimmed, scope, limit),
-            observe("", scope, 500),
+            observe("", scope, fuzzyPoolLimit),
         ) { exactMatches, scopedPool ->
             if (exactMatches.size >= limit) return@combine exactMatches.take(limit)
             val seenIds = exactMatches.mapTo(HashSet(exactMatches.size)) { it.id }
@@ -142,7 +145,7 @@ internal class SearchRepository(private val database: NotesDatabase) {
                 .map { it.first }
                 .toList()
             (exactMatches + fuzzyMatches).take(limit)
-        }
+        }.flowOn(Dispatchers.Default)
     }
 
     suspend fun save(name: String, keyword: String, scope: NoteScope) {

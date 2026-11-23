@@ -88,6 +88,7 @@ internal class AgentRepository(
             val noteTags = orgDao.noteTags()
             val notebookNotes = orgDao.notebookNotes()
             val links = orgDao.noteLinks()
+            val allReminders = database.taskReminders().allReminders()
 
             coroutineContext.ensureActive()
 
@@ -104,6 +105,8 @@ internal class AgentRepository(
                 timeRange = timeRange,
                 now = now,
                 zoneId = zoneId,
+                reminders = allReminders,
+                checkCancelled = { coroutineContext.ensureActive() },
             )
 
             val doneAt = isoFormatter.format(Instant.now())
@@ -368,10 +371,36 @@ internal class AgentRepository(
         return "merge_dup:${group.groupId}:$revHex:$modeTag"
     }
 
+    suspend fun hydrateDuplicateGroups(
+        snapshots: List<DuplicateGroupSnapshot>,
+    ): List<DuplicateNoteGroup> = withContext(Dispatchers.IO) {
+        if (snapshots.isEmpty()) return@withContext emptyList()
+        val notesById = notesDao.allNotes().associateBy { it.id }
+        snapshots.mapNotNull { snap ->
+            val primary = notesById[snap.primaryNoteId]
+                ?.takeIf { it.deletedAt == null && it.archivedAt == null && it.aiPolicy in ALLOWED_AI_POLICIES }
+                ?: return@mapNotNull null
+            val dups = snap.duplicateNoteIds.mapNotNull { dupId ->
+                notesById[dupId]
+                    ?.takeIf { it.deletedAt == null && it.archivedAt == null && it.aiPolicy in ALLOWED_AI_POLICIES }
+            }
+            if (dups.isEmpty()) return@mapNotNull null
+            DuplicateNoteGroup(
+                groupId = snap.groupId,
+                primaryNote = primary,
+                duplicateNotes = dups,
+                similarityPercent = snap.similarityPercent,
+                reason = snap.reason,
+                previewText = snap.previewText,
+            )
+        }
+    }
+
     suspend fun commitMergeDuplicateGroup(
         group: DuplicateNoteGroup,
         moveDuplicatesToTrash: Boolean,
         actionId: String = defaultMergeActionId(group, moveDuplicatesToTrash),
+        runId: String? = null,
         now: Instant = Instant.now(),
     ): AgentActionCommitResult = withContext(Dispatchers.IO) {
         val sourceNotes = listOf(group.primaryNote) + group.duplicateNotes
@@ -412,7 +441,7 @@ internal class AgentRepository(
                 agentDao.insertAction(
                     AgentActionEntity(
                         actionId = "${actionId}:conflict:${now.toEpochMilli()}",
-                        runId = group.groupId,
+                        runId = runId ?: group.groupId,
                         actionType = "merge_duplicates",
                         targetNoteId = null,
                         sourceRevisionsJson = revJson,
@@ -480,7 +509,7 @@ internal class AgentRepository(
             agentDao.insertAction(
                 AgentActionEntity(
                     actionId = actionId,
-                    runId = group.groupId,
+                    runId = runId ?: group.groupId,
                     actionType = "merge_duplicates",
                     targetNoteId = createdNote.id,
                     sourceRevisionsJson = revJson,

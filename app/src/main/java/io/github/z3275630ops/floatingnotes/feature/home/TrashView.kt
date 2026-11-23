@@ -169,7 +169,7 @@ internal fun TrashView(
                     .testTag("trash-retention-banner"),
             ) {
                 Text(
-                    text = "废纸篓中的笔记及其历史版本与附件均保留在本地（默认保留 30 天内可随时恢复）。永久清理不可撤回，清理前可先导出备份。",
+                    text = "废纸篓中的笔记及其历史版本与附件均保留在本地，超过 30 天后启动时将自动彻底清理。永久清理不可撤回，清理前可先导出备份。",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
                 )

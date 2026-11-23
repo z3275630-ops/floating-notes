@@ -58,7 +58,6 @@ internal class BackupManager(
 
     private var stagedPreflightArchive: File? = null
     private var stagedPreflightSource: String? = null
-    private var stagedParsedArchive: ParsedBackupArchive? = null
     internal var beforePromoteHook: (() -> Unit)? = null
 
     fun stagingDirForRestore(restoreId: String): File = File(journalDir, "staging/$restoreId")
@@ -255,7 +254,6 @@ internal class BackupManager(
         val conflictCount = parsed.snapshot.notes.count { it.id in existingNoteIds }
         stagedPreflightArchive = candidateZip
         stagedPreflightSource = sourceLabel
-        stagedParsedArchive = parsed
         val counts = parsed.manifest.counts
         return RestorePreflight(
             sourceUri = sourceLabel,
@@ -279,7 +277,6 @@ internal class BackupManager(
         stagedPreflightArchive?.delete()
         stagedPreflightArchive = null
         stagedPreflightSource = null
-        stagedParsedArchive = null
         preflightDir.deleteRecursively()
     }
 
@@ -1095,43 +1092,45 @@ internal class BackupManager(
         val taskDao = database.taskReminders()
         val readyAttachments = attachments.listReady()
 
-        return BackupSnapshot(
-            exportedAt = timestamp.format(now),
-            appVersion = BuildConfig.VERSION_NAME,
-            dbSchemaVersion = NotesDatabase.SCHEMA_VERSION,
-            notes = notesDao.allNotes().map { it.toBackupRecord() },
-            versions = notesDao.allVersions().map {
-                BackupVersionRecord(
-                    noteId = it.noteId,
-                    revision = it.revision,
-                    documentJson = it.documentJson,
-                    origin = it.origin,
-                    createdAt = it.createdAt,
-                    title = it.title,
-                    attachmentRefs = it.attachmentRefs,
-                )
-            },
-            drafts = notesDao.allDrafts().map { it.toBackupRecord() },
-            tags = orgDao.tags().map { BackupTagRecord(it.id, it.parentId, it.name, it.nameKey) },
-            notebooks = orgDao.notebooks().map { BackupNotebookRecord(it.id, it.name, it.nameKey) },
-            noteTags = orgDao.noteTags().map { BackupNoteTagRecord(it.noteId, it.tagId) },
-            notebookNotes = orgDao.notebookNotes().map { BackupNotebookNoteRecord(it.noteId, it.notebookId) },
-            noteLinks = orgDao.noteLinks().map { BackupNoteLinkRecord(it.sourceId, it.blockId, it.targetId, it.targetRevision) },
-            savedSearches = searchDao.allSavedSearches().map { BackupSavedSearchRecord(it.id, it.name, it.keyword, it.scopeJson) },
-            reminders = taskDao.allReminders().map { it.toBackupRecord() },
-            taskOccurrences = taskDao.allOccurrences().map { it.toBackupRecord() },
-            attachments = readyAttachments.map { att ->
-                val ext = BackupCodec.safeAttachmentExtension(att.mime, att.name)
-                BackupAttachmentEntry(
-                    id = att.id,
-                    archivePath = "attachments/${att.id}.$ext",
-                    originalName = att.name,
-                    mime = att.mime,
-                    bytes = att.bytes,
-                    sha256 = att.sha256,
-                )
-            },
-        )
+        return database.withTransaction {
+            BackupSnapshot(
+                exportedAt = timestamp.format(now),
+                appVersion = BuildConfig.VERSION_NAME,
+                dbSchemaVersion = NotesDatabase.SCHEMA_VERSION,
+                notes = notesDao.allNotes().map { it.toBackupRecord() },
+                versions = notesDao.allVersions().map {
+                    BackupVersionRecord(
+                        noteId = it.noteId,
+                        revision = it.revision,
+                        documentJson = it.documentJson,
+                        origin = it.origin,
+                        createdAt = it.createdAt,
+                        title = it.title,
+                        attachmentRefs = it.attachmentRefs,
+                    )
+                },
+                drafts = notesDao.allDrafts().map { it.toBackupRecord() },
+                tags = orgDao.tags().map { BackupTagRecord(it.id, it.parentId, it.name, it.nameKey) },
+                notebooks = orgDao.notebooks().map { BackupNotebookRecord(it.id, it.name, it.nameKey) },
+                noteTags = orgDao.noteTags().map { BackupNoteTagRecord(it.noteId, it.tagId) },
+                notebookNotes = orgDao.notebookNotes().map { BackupNotebookNoteRecord(it.noteId, it.notebookId) },
+                noteLinks = orgDao.noteLinks().map { BackupNoteLinkRecord(it.sourceId, it.blockId, it.targetId, it.targetRevision) },
+                savedSearches = searchDao.allSavedSearches().map { BackupSavedSearchRecord(it.id, it.name, it.keyword, it.scopeJson) },
+                reminders = taskDao.allReminders().map { it.toBackupRecord() },
+                taskOccurrences = taskDao.allOccurrences().map { it.toBackupRecord() },
+                attachments = readyAttachments.map { att ->
+                    val ext = BackupCodec.safeAttachmentExtension(att.mime, att.name)
+                    BackupAttachmentEntry(
+                        id = att.id,
+                        archivePath = "attachments/${att.id}.$ext",
+                        originalName = att.name,
+                        mime = att.mime,
+                        bytes = att.bytes,
+                        sha256 = att.sha256,
+                    )
+                },
+            )
+        }
     }
 
     private fun copyFileToUri(source: File, destinationUri: Uri) {

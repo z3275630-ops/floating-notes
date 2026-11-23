@@ -29,11 +29,15 @@ internal object VersionDiff {
         if (blocksArray.isEmpty()) {
             throw BackupValidationException("文档块列表为空")
         }
+        val seenIds = HashSet<String>(blocksArray.size)
         return blocksArray.map { entry ->
             @Suppress("UNCHECKED_CAST")
             val obj = entry as? Map<String, Any?>
                 ?: throw BackupValidationException("文档块必须是 JSON 对象")
             val id = obj.reqString("id")
+            if (!seenIds.add(id)) {
+                throw BackupValidationException("文档包含重复块 ID: $id")
+            }
             val type = obj.reqString("type")
             val label = obj.optString("label")
             val text = if (type == "reference") label.orEmpty() else obj.optString("text").orEmpty()

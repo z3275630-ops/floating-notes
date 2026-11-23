@@ -61,7 +61,7 @@ internal object LocalFuzzyMatcher {
         }
         if (normalizedQuery.length < 2) return NO_MATCH
 
-        val indexed = indexSyllables(targetText)
+        val indexed = ChinesePinyinTable.indexSyllables(targetText)
         if (indexed.isEmpty()) return NO_MATCH
 
         // 1. Syllable-aligned full pinyin match (start and end on syllable boundaries).
@@ -321,59 +321,5 @@ internal object LocalFuzzyMatcher {
     private fun isCjk(ch: Char): Boolean {
         val code = ch.code
         return code in 0x4E00..0x9FFF || code in 0x3400..0x4DBF || code in 0xF900..0xFAFF
-    }
-
-    private data class IndexedSyllable(
-        val syllable: String,
-        val startOffset: Int,
-        val endOffset: Int,
-    )
-
-    private fun indexSyllables(text: String): List<IndexedSyllable> {
-        val result = ArrayList<IndexedSyllable>()
-        val asciiBuf = StringBuilder()
-        var asciiStart = -1
-
-        fun flushAscii(endIdx: Int) {
-            if (asciiBuf.isEmpty()) return
-            result.add(
-                IndexedSyllable(
-                    syllable = asciiBuf.toString(),
-                    startOffset = asciiStart,
-                    endOffset = endIdx,
-                ),
-            )
-            asciiBuf.setLength(0)
-            asciiStart = -1
-        }
-
-        for (i in text.indices) {
-            val ch = text[i]
-            when {
-                ch in 'a'..'z' || ch in '0'..'9' -> {
-                    if (asciiStart < 0) asciiStart = i
-                    asciiBuf.append(ch)
-                }
-                ch in 'A'..'Z' -> {
-                    if (asciiStart < 0) asciiStart = i
-                    asciiBuf.append((ch.code + 32).toChar())
-                }
-                else -> {
-                    flushAscii(i)
-                    val syl = ChinesePinyinTable.pinyinOf(ch)
-                    if (!syl.isNullOrEmpty()) {
-                        result.add(
-                            IndexedSyllable(
-                                syllable = syl,
-                                startOffset = i,
-                                endOffset = i + 1,
-                            ),
-                        )
-                    }
-                }
-            }
-        }
-        flushAscii(text.length)
-        return result
     }
 }

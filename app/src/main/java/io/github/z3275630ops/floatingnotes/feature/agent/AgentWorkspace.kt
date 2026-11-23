@@ -39,8 +39,11 @@ import io.github.z3275630ops.floatingnotes.data.agent.LocalAgentEngine
 import io.github.z3275630ops.floatingnotes.data.discovery.DuplicateNoteGroup
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalRetrievalEngine
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalTextIntelligence
+import io.github.z3275630ops.floatingnotes.data.discovery.MergedDuplicateContent
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintChip
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
@@ -148,7 +151,7 @@ internal fun AgentWorkspace(
             }
             AnimatedVisibility(visible = showPrivacyDetails) {
                 Text(
-                    text = "所有检索、归纳与待办梳理都在手机本地完成，默认遵守每条笔记的隐私策略，写入新笔记前都会先由你确认。",
+                    text = "所有检索、归纳、回响、标签推荐与双卡对撞都在手机本地完成，默认遵守每条笔记的「不参与 AI 整理」策略，写入新笔记前都会先由你确认。",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
                 )
@@ -788,14 +791,20 @@ internal fun AgentWorkspace(
 
     previewDuplicateGroup?.let { group ->
         var moveToTrash by remember(group.groupId) { mutableStateOf(false) }
-        val mergedContent = remember(group.groupId, moveToTrash) {
-            LocalTextIntelligence.buildMergedContent(group.primaryNote, group.duplicateNotes, moveToTrash)
+        val mergedContent by produceState<MergedDuplicateContent?>(
+            initialValue = null,
+            group.groupId,
+            moveToTrash,
+        ) {
+            value = withContext(Dispatchers.Default) {
+                LocalTextIntelligence.buildMergedContent(group.primaryNote, group.duplicateNotes, moveToTrash)
+            }
         }
-        val mergedLines = mergedContent.previewLines
+        val mergedLines = mergedContent?.previewLines.orEmpty()
         val preservedParts = buildList {
-            if (mergedContent.preservedCheckboxCount > 0) add("${mergedContent.preservedCheckboxCount} 项待办")
-            if (mergedContent.preservedAttachmentCount > 0) add("${mergedContent.preservedAttachmentCount} 个附件")
-            if (mergedContent.preservedReferenceCount > 0) add("${mergedContent.preservedReferenceCount} 条引用")
+            if ((mergedContent?.preservedCheckboxCount ?: 0) > 0) add("${mergedContent?.preservedCheckboxCount} 项待办")
+            if ((mergedContent?.preservedAttachmentCount ?: 0) > 0) add("${mergedContent?.preservedAttachmentCount} 个附件")
+            if ((mergedContent?.preservedReferenceCount ?: 0) > 0) add("${mergedContent?.preservedReferenceCount} 条引用")
         }
         MintBottomSheet(
             onDismissRequest = { previewDuplicateGroup = null },
@@ -828,7 +837,7 @@ internal fun AgentWorkspace(
                         if (preservedParts.isNotEmpty()) {
                             Text(
                                 text = "已保留原格式：${preservedParts.joinToString(" · ")}" +
-                                    if (mergedContent.hadRemindersInSources) "（原定时闹钟仍留在原笔记）" else "",
+                                    if (mergedContent?.hadRemindersInSources == true) "（原定时闹钟仍留在原笔记）" else "",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = scheme.primary,
                             )

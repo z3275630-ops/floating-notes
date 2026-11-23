@@ -41,8 +41,9 @@ internal object LocalTagAndGraphEngine {
         if (trimmed.isEmpty() && attachedTagIds.isEmpty()) return emptyList()
 
         val tagsById = tags.associateBy { it.id }
-        val corpusNotes = allNotes.filter { it.deletedAt == null }
-        val deletedIds = allNotes.filter { it.deletedAt != null }.mapTo(HashSet()) { it.id }
+        val corpusNotes = allNotes.filter { it.deletedAt == null && it.aiPolicy != "exclude" }
+        val excludedCorpusIds = allNotes.filter { it.deletedAt != null || it.aiPolicy == "exclude" }
+            .mapTo(HashSet()) { it.id }
         val chunksByNote = allChunks.groupBy { it.noteId }
 
         val noteTokensById = HashMap<String, Set<String>>(corpusNotes.size)
@@ -98,7 +99,7 @@ internal object LocalTagAndGraphEngine {
         // Signal (c): Tag co-occurrence Jaccard graph with attachedTagIds
         val notesByTag = HashMap<String, MutableSet<String>>()
         for ((noteId, tagIds) in noteTagIdsByNote) {
-            if (noteId in deletedIds) continue
+            if (noteId in excludedCorpusIds) continue
             for (tagId in tagIds) {
                 notesByTag.getOrPut(tagId) { HashSet() }.add(noteId)
             }
@@ -187,12 +188,6 @@ internal object LocalTagAndGraphEngine {
     ): Pair<NoteEntity, NoteEntity>? {
         if (eligibleNotes.size < 2) return null
 
-        val pool = if (eligibleNotes.size > 70) {
-            eligibleNotes.shuffled(random).take(60)
-        } else {
-            eligibleNotes
-        }
-
         // Compute corpus IDF across eligible notes
         val df = HashMap<String, Int>()
         val tokensByNote = HashMap<String, Set<String>>(eligibleNotes.size)
@@ -209,64 +204,79 @@ internal object LocalTagAndGraphEngine {
             return ln(1.0 + (totalDocs.toDouble() + 0.5) / (count.toDouble() + 0.5))
         }
 
-        val poolVecs = Array(pool.size) { idx ->
-            buildTfIdfVector(tokensByNote[pool[idx].id].orEmpty(), ::idfOf)
-        }
-        val poolInstants = Array(pool.size) { idx -> parseInstant(pool[idx].createdAt) }
-        val poolTagSets = Array(pool.size) { idx -> noteTagIdsByNote[pool[idx].id].orEmpty() }
-
+        val eligibleIds = eligibleNotes.mapTo(HashSet(eligibleNotes.size)) { it.id }
+        val eligibleTagMap = noteTagIdsByNote.filterKeys { it in eligibleIds }
         val linkedPairs = links.mapTo(HashSet(links.size)) { canonicalPairKey(it.sourceId, it.targetId) }
-        val coNeighbors = buildTagCoOccurrenceNeighbors(noteTagIdsByNote, excludedNoteIds = emptySet())
+        val coNeighbors = buildTagCoOccurrenceNeighbors(eligibleTagMap, excludedNoteIds = emptySet())
 
-        val unseenCandidates = ArrayList<ScoredPair>()
-        val allCandidates = ArrayList<ScoredPair>()
+        fun scorePool(pool: List<NoteEntity>): Pair<List<ScoredPair>, List<ScoredPair>> {
+            val poolVecs = Array(pool.size) { idx ->
+                buildTfIdfVector(tokensByNote[pool[idx].id].orEmpty(), ::idfOf)
+            }
+            val poolInstants = Array(pool.size) { idx -> parseInstant(pool[idx].createdAt) }
+            val poolTagSets = Array(pool.size) { idx -> noteTagIdsByNote[pool[idx].id].orEmpty() }
+            val unseen = ArrayList<ScoredPair>()
+            val all = ArrayList<ScoredPair>()
 
-        for (i in pool.indices) {
-            val left = pool[i]
-            val leftTags = poolTagSets[i]
-            val leftVec = poolVecs[i]
-            val leftInstant = poolInstants[i]
-            val leftOneHop = leftTags.flatMapTo(HashSet()) { coNeighbors[it].orEmpty() }
+            for (i in pool.indices) {
+                val left = pool[i]
+                val leftTags = poolTagSets[i]
+                val leftVec = poolVecs[i]
+                val leftInstant = poolInstants[i]
+                val leftOneHop = leftTags.flatMapTo(HashSet()) { coNeighbors[it].orEmpty() }
 
-            for (j in i + 1 until pool.size) {
-                val right = pool[j]
-                val rightTags = poolTagSets[j]
-                val key = canonicalPairKey(left.id, right.id)
+                for (j in i + 1 until pool.size) {
+                    val right = pool[j]
+                    val rightTags = poolTagSets[j]
+                    val key = canonicalPairKey(left.id, right.id)
 
-                var score = 0.0
-                if (leftTags.intersect(rightTags).isEmpty()) {
-                    score += 2.2
-                }
-                if (key !in linkedPairs) {
-                    score += 0.6
-                }
-                val cosine = cosineSimilarity(leftVec, poolVecs[j])
-                when {
-                    cosine in 0.04..0.55 -> score += cosine * 8.0
-                    cosine > 0.72 -> score -= 3.0
-                }
-                if (leftTags.isNotEmpty() && rightTags.isNotEmpty()) {
-                    val rightOneHop = rightTags.flatMapTo(HashSet()) { coNeighbors[it].orEmpty() }
-                    val bridgeExists = leftOneHop.any { tagId ->
-                        tagId in rightOneHop && tagId !in leftTags && tagId !in rightTags
+                    var score = 0.0
+                    if (leftTags.intersect(rightTags).isEmpty()) {
+                        score += 2.2
                     }
-                    if (bridgeExists) {
-                        score += 1.4
-                    }
-                }
-                val rightInstant = poolInstants[j]
-                if (leftInstant != null && rightInstant != null) {
-                    val days = abs(ChronoUnit.DAYS.between(leftInstant, rightInstant))
-                    if (days >= 7L) {
+                    if (key !in linkedPairs) {
                         score += 0.6
                     }
-                }
+                    val cosine = cosineSimilarity(leftVec, poolVecs[j])
+                    when {
+                        cosine in 0.04..0.55 -> score += cosine * 8.0
+                        cosine > 0.72 -> score -= 3.0
+                    }
+                    if (leftTags.isNotEmpty() && rightTags.isNotEmpty()) {
+                        val rightOneHop = rightTags.flatMapTo(HashSet()) { coNeighbors[it].orEmpty() }
+                        val bridgeExists = leftOneHop.any { tagId ->
+                            tagId in rightOneHop && tagId !in leftTags && tagId !in rightTags
+                        }
+                        if (bridgeExists) {
+                            score += 1.4
+                        }
+                    }
+                    val rightInstant = poolInstants[j]
+                    if (leftInstant != null && rightInstant != null) {
+                        val days = abs(ChronoUnit.DAYS.between(leftInstant, rightInstant))
+                        if (days >= 7L) {
+                            score += 0.6
+                        }
+                    }
 
-                val item = ScoredPair(left = left, right = right, pairKey = key, score = score)
-                allCandidates.add(item)
-                if (key !in excludePairKeys) {
-                    unseenCandidates.add(item)
+                    val item = ScoredPair(left = left, right = right, pairKey = key, score = score)
+                    all.add(item)
+                    if (key !in excludePairKeys) {
+                        unseen.add(item)
+                    }
                 }
+            }
+            return unseen to all
+        }
+
+        val initialPool = if (eligibleNotes.size > 70) eligibleNotes.shuffled(random).take(60) else eligibleNotes
+        var (unseenCandidates, allCandidates) = scorePool(initialPool)
+        if (unseenCandidates.isEmpty() && eligibleNotes.size > 70 && excludePairKeys.isNotEmpty()) {
+            val widerPool = eligibleNotes.shuffled(random).take(minOf(120, eligibleNotes.size))
+            val (widerUnseen, widerAll) = scorePool(widerPool)
+            if (widerUnseen.isNotEmpty()) {
+                unseenCandidates = widerUnseen
+                allCandidates = widerAll
             }
         }
 
@@ -289,9 +299,11 @@ internal object LocalTagAndGraphEngine {
         noteTagIdsByNote: Map<String, Set<String>>,
         tagsById: Map<String, TagEntity>,
     ): Triple<List<String>, List<String>, Double> {
-        val corpusNotes = (allNotes.filter { it.deletedAt == null } + listOf(left, right))
+        // Put left/right first so distinctBy strictly preserves the exact card revisions being inspected.
+        val corpusNotes = (listOf(left, right) + allNotes.filter { it.deletedAt == null && it.aiPolicy != "exclude" })
             .distinctBy { it.id }
-        val deletedIds = allNotes.filter { it.deletedAt != null }.mapTo(HashSet()) { it.id }
+        val excludedCorpusIds = allNotes.filter { it.deletedAt != null || it.aiPolicy == "exclude" }
+            .mapTo(HashSet()) { it.id }
 
         val df = HashMap<String, Int>()
         val tokensById = HashMap<String, Set<String>>(corpusNotes.size)
@@ -332,7 +344,7 @@ internal object LocalTagAndGraphEngine {
 
         val coCounts = HashMap<String, HashMap<String, Int>>()
         for ((noteId, tagSet) in noteTagIdsByNote) {
-            if (noteId in deletedIds || tagSet.size < 2) continue
+            if (noteId in excludedCorpusIds || tagSet.size < 2) continue
             for (a in tagSet) {
                 val inner = coCounts.getOrPut(a) { HashMap() }
                 for (b in tagSet) {

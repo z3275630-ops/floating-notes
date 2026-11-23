@@ -46,7 +46,8 @@ internal object LocalTextIntelligence {
 
     private val LINE_SPLIT_REGEX = Regex("\\r?\\n+")
     private val URL_LINE_REGEX = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE)
-    private val SENTENCE_CHUNK_REGEX = Regex("[^。！？!?;；]+[。！？!?;；]*")
+    private val CJK_TERMINATORS = setOf('。', '！', '？', '!', '?', ';', '；')
+    private val ABBREVIATIONS = setOf("e.g", "i.e", "dr", "mr", "mrs", "ms", "vs", "etc", "st", "no", "u.s", "a.m", "p.m")
 
     private val IGNORED_SOURCE_TYPES = setOf(
         "agent_local",
@@ -71,14 +72,53 @@ internal object LocalTextIntelligence {
                 sentences.add(line)
                 continue
             }
-            for (match in SENTENCE_CHUNK_REGEX.findAll(line)) {
-                val sentence = match.value.trim()
-                if (sentence.isNotEmpty()) {
-                    sentences.add(sentence)
-                }
-            }
+            splitLineIntoSentences(line, sentences)
         }
         return sentences
+    }
+
+    private fun splitLineIntoSentences(line: String, out: MutableList<String>) {
+        var start = 0
+        var i = 0
+        while (i < line.length) {
+            val ch = line[i]
+            val isSentenceBreak = when {
+                ch in CJK_TERMINATORS -> true
+                ch == '.' -> isAsciiSentencePeriod(line, i)
+                else -> false
+            }
+            if (isSentenceBreak) {
+                var end = i + 1
+                while (end < line.length && line[end] in CJK_TERMINATORS) {
+                    end++
+                }
+                val chunk = line.substring(start, end).trim()
+                if (chunk.isNotEmpty()) out.add(chunk)
+                start = end
+                i = end
+            } else {
+                i++
+            }
+        }
+        if (start < line.length) {
+            val tail = line.substring(start).trim()
+            if (tail.isNotEmpty()) out.add(tail)
+        }
+    }
+
+    private fun isAsciiSentencePeriod(line: String, dotIndex: Int): Boolean {
+        val atBoundary = dotIndex == line.length - 1 || line[dotIndex + 1].isWhitespace()
+        if (!atBoundary || dotIndex == 0) return false
+        val prev = line[dotIndex - 1]
+        if (prev.isDigit()) return false
+        var wordStart = dotIndex - 1
+        while (wordStart >= 0 && (line[wordStart].isLetterOrDigit() || line[wordStart] == '.')) {
+            wordStart--
+        }
+        val prevToken = line.substring(wordStart + 1, dotIndex).lowercase(Locale.ROOT)
+        if (prevToken in ABBREVIATIONS) return false
+        if (prevToken.length == 1 && prev.isUpperCase()) return false
+        return true
     }
 
     fun extractKeySentences(
@@ -94,8 +134,9 @@ internal object LocalTextIntelligence {
         }
         val trimmedText = text.trim()
         if (sentences.size <= targetCount && trimmedText.length <= charLimit) {
-            val joined = safeUtf16Slice(sentences.joinToString(" "), 0, charLimit)
-            return TextRankSummary(sentences = sentences, joined = joined, isSummarized = false)
+            val budgeted = enforceSentenceCharBudget(sentences, charLimit)
+            val joined = safeUtf16Slice(budgeted.joinToString(" "), 0, charLimit)
+            return TextRankSummary(sentences = budgeted, joined = joined, isSummarized = false)
         }
 
         val candidates = if (sentences.size > 80) sentences.take(80) else sentences
@@ -171,9 +212,26 @@ internal object LocalTextIntelligence {
             .take(targetCount)
             .sorted()
 
-        val picked = chosenIndices.map { candidates[it] }
+        val picked = enforceSentenceCharBudget(chosenIndices.map { candidates[it] }, charLimit)
         val joined = safeUtf16Slice(picked.joinToString(" "), 0, charLimit)
         return TextRankSummary(sentences = picked, joined = joined, isSummarized = true)
+    }
+
+    private fun enforceSentenceCharBudget(sentences: List<String>, maxChars: Int): List<String> {
+        var remaining = maxChars
+        val out = ArrayList<String>(sentences.size)
+        for (sentence in sentences) {
+            if (remaining <= 0) break
+            val sepCost = if (out.isEmpty()) 0 else 1
+            val avail = remaining - sepCost
+            if (avail <= 0) break
+            val clipped = if (sentence.length <= avail) sentence else safeUtf16Slice(sentence, 0, avail)
+            if (clipped.isNotEmpty()) {
+                out.add(clipped)
+                remaining -= sepCost + clipped.length
+            }
+        }
+        return out
     }
 
     fun computeSimHash64(
@@ -211,11 +269,13 @@ internal object LocalTextIntelligence {
         allChunks: List<NoteChunkEntity> = emptyList(),
         minSimilarityPercent: Int = 65,
         maxGroups: Int = 10,
+        checkCancelled: () -> Unit = {},
     ): List<DuplicateNoteGroup> {
         val chunksByNote = allChunks.groupBy { it.noteId }
         val eligible = ArrayList<NoteFeature>()
         for (note in notes) {
-            if (note.deletedAt != null || note.archivedAt != null) continue
+            checkCancelled()
+            if (note.deletedAt != null || note.archivedAt != null || note.aiPolicy == "exclude") continue
             if (note.sourceType in IGNORED_SOURCE_TYPES) continue
             val rawText = noteCombinedText(note)
             val normalized = normalizeForComparison(rawText)
@@ -262,6 +322,7 @@ internal object LocalTextIntelligence {
         val simHashes = LongArray(docCount)
         val totalWeights = DoubleArray(docCount)
         for (i in 0 until docCount) {
+            if ((i and 63) == 0) checkCancelled()
             val toks = eligible[i].tokens
             simHashes[i] = computeSimHash64(toks, idf)
             var sum = 0.0
@@ -269,64 +330,104 @@ internal object LocalTextIntelligence {
             totalWeights[i] = sum
         }
 
-        val uf = UnionFind(docCount)
-        val edges = ArrayList<PairEdge>()
-        for (i in 0 until docCount) {
-            val left = eligible[i]
-            for (j in i + 1 until docCount) {
-                val right = eligible[j]
-                val match = evaluateDuplicatePair(
-                    left = left,
-                    right = right,
-                    leftSimHash = simHashes[i],
-                    rightSimHash = simHashes[j],
-                    leftWeightSum = totalWeights[i],
-                    rightWeightSum = totalWeights[j],
-                    idf = idf,
-                ) ?: continue
+        val adj = Array(docCount) { ArrayList<PairEdge>() }
+        var pairChecks = 0
 
-                if (match.similarityPercent >= minSimilarityPercent) {
-                    uf.union(i, j)
-                    edges.add(PairEdge(i, j, match.similarityPercent, match.reason))
+        fun evaluateAndRecord(i: Int, j: Int) {
+            if ((pairChecks++ and 63) == 0) checkCancelled()
+            val match = evaluateDuplicatePair(
+                left = eligible[i],
+                right = eligible[j],
+                leftSimHash = simHashes[i],
+                rightSimHash = simHashes[j],
+                leftWeightSum = totalWeights[i],
+                rightWeightSum = totalWeights[j],
+                idf = idf,
+            ) ?: return
+            if (match.similarityPercent >= minSimilarityPercent) {
+                val edge = PairEdge(i, j, match.similarityPercent, match.reason)
+                adj[i].add(edge)
+                adj[j].add(PairEdge(j, i, match.similarityPercent, match.reason))
+            }
+        }
+
+        if (docCount <= 200) {
+            for (i in 0 until docCount) {
+                for (j in i + 1 until docCount) {
+                    evaluateAndRecord(i, j)
+                }
+            }
+        } else {
+            val buckets = HashMap<Long, MutableList<Int>>()
+            val seenPairs = HashSet<Long>()
+            for (i in 0 until docCount) {
+                if ((i and 63) == 0) checkCancelled()
+                val h = simHashes[i]
+                for (band in 0 until 4) {
+                    val bandKey = (band.toLong() shl 48) or ((h ushr (band * 16)) and 0xFFFFL)
+                    buckets.getOrPut(bandKey) { ArrayList() }.add(i)
+                }
+                val topTokens = eligible[i].tokens
+                    .sortedByDescending { idf[it] ?: 0.0 }
+                    .take(8)
+                for (tok in topTokens) {
+                    val tokKey = (1L shl 56) or (fnv1a64(tok) and 0x00FF_FFFF_FFFF_FFFFL)
+                    buckets.getOrPut(tokKey) { ArrayList() }.add(i)
+                }
+            }
+            for (members in buckets.values) {
+                if (members.size < 2 || members.size > 256) continue
+                for (aIdx in members.indices) {
+                    val u = members[aIdx]
+                    for (bIdx in aIdx + 1 until members.size) {
+                        val v = members[bIdx]
+                        if (u == v) continue
+                        val lo = minOf(u, v)
+                        val hi = maxOf(u, v)
+                        val pairKey = (lo.toLong() shl 32) or (hi.toLong() and 0xFFFF_FFFFL)
+                        if (seenPairs.add(pairKey)) {
+                            evaluateAndRecord(lo, hi)
+                        }
+                    }
                 }
             }
         }
 
-        if (edges.isEmpty()) return emptyList()
-
-        val components = HashMap<Int, MutableList<Int>>()
-        for (i in 0 until docCount) {
-            val root = uf.find(i)
-            components.getOrPut(root) { ArrayList() }.add(i)
-        }
-
-        val edgesByRoot = HashMap<Int, MutableList<PairEdge>>()
-        for (edge in edges) {
-            val root = uf.find(edge.leftIdx)
-            edgesByRoot.getOrPut(root) { ArrayList() }.add(edge)
-        }
-
-        val groups = ArrayList<DuplicateNoteGroup>()
-        for ((root, memberIndices) in components) {
-            if (memberIndices.size < 2) continue
-            val rankedMembers = memberIndices.sortedWith(
-                compareByDescending<Int> { eligible[it].normalized.length }
+        // Greedy star clustering: every duplicate directly clears minSimilarityPercent against its primary seed.
+        val candidateSeeds = (0 until docCount)
+            .filter { adj[it].isNotEmpty() }
+            .sortedWith(
+                compareByDescending<Int> { adj[it].size }
+                    .thenByDescending { eligible[it].normalized.length }
                     .thenByDescending { eligible[it].note.updatedAt }
                     .thenBy { eligible[it].note.id },
             )
-            val primaryNote = eligible[rankedMembers.first()].note
-            val duplicateNotes = rankedMembers.drop(1)
-                .map { eligible[it].note }
-                .sortedWith(compareByDescending<NoteEntity> { it.updatedAt }.thenBy { it.id })
+        val assigned = BooleanArray(docCount)
+        val groups = ArrayList<DuplicateNoteGroup>()
 
-            val sortedIds = memberIndices.map { eligible[it].note.id }.sorted()
+        for (seedIdx in candidateSeeds) {
+            checkCancelled()
+            if (assigned[seedIdx]) continue
+            val directEdges = adj[seedIdx].filter { !assigned[it.rightIdx] }
+            if (directEdges.isEmpty()) continue
+
+            assigned[seedIdx] = true
+            val sortedEdges = directEdges.sortedWith(
+                compareByDescending<PairEdge> { it.similarityPercent }
+                    .thenByDescending { reasonPriority(it.reason) }
+                    .thenByDescending { eligible[it.rightIdx].note.updatedAt }
+                    .thenBy { eligible[it.rightIdx].note.id },
+            )
+            for (e in sortedEdges) {
+                assigned[e.rightIdx] = true
+            }
+
+            val primaryNote = eligible[seedIdx].note
+            val duplicateNotes = sortedEdges.map { eligible[it.rightIdx].note }
+            val sortedIds = (listOf(primaryNote.id) + duplicateNotes.map { it.id }).sorted()
             val groupId = LocalRetrievalEngine.contentDigest(sortedIds.joinToString("|"))
 
-            val bestEdge = edgesByRoot[root].orEmpty().maxWithOrNull(
-                compareBy<PairEdge> { it.similarityPercent }
-                    .thenBy { reasonPriority(it.reason) },
-            ) ?: continue
-
+            val bestEdge = sortedEdges.first()
             val rawPreview = LocalRetrievalEngine.bodyExcludingTitle(primaryNote)
                 .ifBlank { primaryNote.searchText.ifBlank { primaryNote.title.orEmpty() } }
             val previewText = safeUtf16Slice(rawPreview.trim(), 0, 140)
@@ -664,32 +765,4 @@ internal object LocalTextIntelligence {
         val similarityPercent: Int,
         val reason: String,
     )
-
-    private class UnionFind(size: Int) {
-        private val parent = IntArray(size) { it }
-        private val rank = IntArray(size)
-
-        fun find(x: Int): Int {
-            var cur = x
-            while (parent[cur] != cur) {
-                parent[cur] = parent[parent[cur]]
-                cur = parent[cur]
-            }
-            return cur
-        }
-
-        fun union(a: Int, b: Int) {
-            val ra = find(a)
-            val rb = find(b)
-            if (ra == rb) return
-            when {
-                rank[ra] < rank[rb] -> parent[ra] = rb
-                rank[ra] > rank[rb] -> parent[rb] = ra
-                else -> {
-                    parent[rb] = ra
-                    rank[ra] += 1
-                }
-            }
-        }
-    }
 }

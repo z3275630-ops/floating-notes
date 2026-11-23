@@ -74,6 +74,7 @@ internal object DiscoveryEngines {
         round: Int,
         now: Instant,
         zoneId: ZoneId,
+        alreadyShownNoteIds: Set<String> = emptySet(),
     ): List<String> {
         val suppressedNoteIds = suppressedNoteIdsAt(events, now)
 
@@ -102,6 +103,39 @@ internal object DiscoveryEngines {
         }
 
         if (eligible.isEmpty()) return emptyList()
+
+        if (alreadyShownNoteIds.isNotEmpty()) {
+            val (alreadyShown, unseen) = eligible.partition { it.id in alreadyShownNoteIds }
+            if (unseen.isNotEmpty()) {
+                val primaryPick = FsrsReviewScheduler.rankForDailyReview(
+                    eligibleNotes = unseen,
+                    events = events,
+                    localDate = localDate,
+                    profileKey = profileKey,
+                    configHash = config.configHash(),
+                    round = round,
+                    now = now,
+                    zoneId = zoneId,
+                    dailyCount = config.dailyCount,
+                ).map { it.noteId }
+                if (primaryPick.size >= config.dailyCount || alreadyShown.isEmpty()) {
+                    return primaryPick
+                }
+                val remaining = (config.dailyCount - primaryPick.size).coerceAtLeast(1)
+                val fillPick = FsrsReviewScheduler.rankForDailyReview(
+                    eligibleNotes = alreadyShown,
+                    events = events,
+                    localDate = localDate,
+                    profileKey = profileKey,
+                    configHash = config.configHash(),
+                    round = round,
+                    now = now,
+                    zoneId = zoneId,
+                    dailyCount = remaining,
+                ).map { it.noteId }
+                return (primaryPick + fillPick).distinct().take(config.dailyCount)
+            }
+        }
 
         return FsrsReviewScheduler.rankForDailyReview(
             eligibleNotes = eligible,
@@ -376,10 +410,13 @@ internal object DiscoveryEngines {
         random: Random = Random.Default,
         allChunks: List<NoteChunkEntity> = emptyList(),
         links: List<NoteLinkEntity> = emptyList(),
+        excludedNoteIds: Set<String> = emptySet(),
     ): Pair<DualCollisionPair?, Int> {
         val eligible = notes.filter { n ->
             n.deletedAt == null &&
                 n.archivedAt == null &&
+                n.aiPolicy != "exclude" &&
+                n.id !in excludedNoteIds &&
                 (n.searchText.isNotBlank() || !n.title.isNullOrBlank())
         }
         if (eligible.size < 2) return null to eligible.size

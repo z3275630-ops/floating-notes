@@ -2,12 +2,14 @@ package io.github.z3275630ops.floatingnotes.data.backup
 
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Locale
@@ -129,19 +131,57 @@ internal object BackupCodec {
                 writeBytesEntry(path, text.toByteArray(StandardCharsets.UTF_8))
             }
 
+            fun writeJsonlStreamed(path: String, writer: (writeLine: (String) -> Unit) -> Unit) {
+                val clean = validateArchiveEntryPath(path)
+                if (entryCount + 1 > BackupConstants.MAX_ARCHIVE_ENTRIES) {
+                    throw BackupValidationException("备份条目数量超过上限（最多 ${BackupConstants.MAX_ARCHIVE_ENTRIES} 个）")
+                }
+                val digest = MessageDigest.getInstance("SHA-256")
+                var entryBytes = 0L
+                var wroteFirstLine = false
+                val newlineBytes = "\n".toByteArray(StandardCharsets.UTF_8)
+                zos.putNextEntry(ZipEntry(clean))
+                writer { jsonLine ->
+                    val prefixBytes = if (wroteFirstLine) newlineBytes else null
+                    val lineBytes = jsonLine.toByteArray(StandardCharsets.UTF_8)
+                    val delta = (prefixBytes?.size ?: 0).toLong() + lineBytes.size.toLong()
+                    if (entryBytes + delta > BackupConstants.MAX_ENTRY_BYTES) {
+                        throw BackupValidationException("单个备份条目超过大小上限（128 MB），无法安全还原")
+                    }
+                    if (totalUncompressedBytes + entryBytes + delta > BackupConstants.MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                        throw BackupValidationException("备份内容总大小超过可恢复上限（512 MB），请精简超大附件后重试")
+                    }
+                    if (prefixBytes != null) {
+                        zos.write(prefixBytes)
+                        digest.update(prefixBytes)
+                    }
+                    zos.write(lineBytes)
+                    digest.update(lineBytes)
+                    entryBytes += delta
+                    wroteFirstLine = true
+                }
+                zos.closeEntry()
+                entryCount++
+                totalUncompressedBytes += entryBytes
+                val sha = digest.digest().joinToString("") { "%02x".format(it) }
+                filesMap[clean] = BackupFileChecksum(bytes = entryBytes, sha256 = sha)
+            }
+
             for (note in snapshot.notes.sortedBy { it.id }) {
                 writeTextEntry("notes/${note.id}.json", MiniJson.encode(noteToJsonMap(note)))
             }
 
-            val versionsJsonl = snapshot.versions
-                .sortedWith(compareBy<BackupVersionRecord> { it.noteId }.thenBy { it.revision })
-                .joinToString("\n") { MiniJson.encode(versionToJsonMap(it)) }
-            writeTextEntry("metadata/versions.jsonl", versionsJsonl)
+            writeJsonlStreamed("metadata/versions.jsonl") { writeLine ->
+                snapshot.versions
+                    .sortedWith(compareBy<BackupVersionRecord> { it.noteId }.thenBy { it.revision })
+                    .forEach { writeLine(MiniJson.encode(versionToJsonMap(it))) }
+            }
 
-            val draftsJsonl = snapshot.drafts
-                .sortedBy { it.id }
-                .joinToString("\n") { MiniJson.encode(draftToJsonMap(it)) }
-            writeTextEntry("metadata/drafts.jsonl", draftsJsonl)
+            writeJsonlStreamed("metadata/drafts.jsonl") { writeLine ->
+                snapshot.drafts
+                    .sortedBy { it.id }
+                    .forEach { writeLine(MiniJson.encode(draftToJsonMap(it))) }
+            }
 
             writeTextEntry("metadata/organization.json", MiniJson.encode(organizationToJsonMap(snapshot)))
             writeTextEntry("metadata/tasks.json", MiniJson.encode(tasksToJsonMap(snapshot)))
@@ -295,23 +335,17 @@ internal object BackupCodec {
                     ?: throw BackupValidationException("备份包缺少 metadata/versions.jsonl")
                 val versionsExpected = manifest.files["metadata/versions.jsonl"]
                     ?: throw BackupValidationException("版本记录未列入清单校验")
-                val versionsText = String(
-                    readAndVerifyEntry(zf, versionsEntry, versionsExpected, totalCounter),
-                    StandardCharsets.UTF_8,
-                )
-                val versions = parseJsonLines(versionsText) { parseVersionRecord(it) }
-                versions.forEach { VersionDiff.parseBlocks(it.documentJson) }
+                val versions = readAndVerifyJsonLines(zf, versionsEntry, versionsExpected, totalCounter) { obj ->
+                    parseVersionRecord(obj).also { VersionDiff.parseBlocks(it.documentJson) }
+                }
 
                 val draftsEntry = entriesByPath["metadata/drafts.jsonl"]
                     ?: throw BackupValidationException("备份包缺少 metadata/drafts.jsonl")
                 val draftsExpected = manifest.files["metadata/drafts.jsonl"]
                     ?: throw BackupValidationException("草稿记录未列入清单校验")
-                val draftsText = String(
-                    readAndVerifyEntry(zf, draftsEntry, draftsExpected, totalCounter),
-                    StandardCharsets.UTF_8,
-                )
-                val drafts = parseJsonLines(draftsText) { parseDraftRecord(it) }
-                drafts.forEach { VersionDiff.parseBlocks(it.documentJson) }
+                val drafts = readAndVerifyJsonLines(zf, draftsEntry, draftsExpected, totalCounter) { obj ->
+                    parseDraftRecord(obj).also { VersionDiff.parseBlocks(it.documentJson) }
+                }
 
                 val orgEntry = entriesByPath["metadata/organization.json"]
                     ?: throw BackupValidationException("备份包缺少 metadata/organization.json")
@@ -772,12 +806,54 @@ internal object BackupCodec {
 
     private class LongCounter(var value: Long = 0L)
 
-    private fun <T> parseJsonLines(text: String, mapper: (Map<String, Any?>) -> T): List<T> {
-        if (text.isBlank()) return emptyList()
-        return text.lineSequence()
-            .filter { it.isNotBlank() }
-            .map { line -> mapper(MiniJson.parseObject(line)) }
-            .toList()
+    private fun <T> readAndVerifyJsonLines(
+        zipFile: ZipFile,
+        entry: ZipEntry,
+        expected: BackupFileChecksum,
+        totalCounter: LongCounter,
+        mapper: (Map<String, Any?>) -> T,
+    ): List<T> {
+        val digest = MessageDigest.getInstance("SHA-256")
+        var entryBytes = 0L
+        val checkedStream = object : InputStream() {
+            private val delegate = zipFile.getInputStream(entry)
+            override fun read(): Int {
+                val b = delegate.read()
+                if (b >= 0) {
+                    entryBytes++
+                    totalCounter.value++
+                    checkBombs(entry, entryBytes, BackupConstants.MAX_ENTRY_BYTES, totalCounter.value)
+                    digest.update(b.toByte())
+                }
+                return b
+            }
+
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                val count = delegate.read(b, off, len)
+                if (count > 0) {
+                    entryBytes += count
+                    totalCounter.value += count
+                    checkBombs(entry, entryBytes, BackupConstants.MAX_ENTRY_BYTES, totalCounter.value)
+                    digest.update(b, off, count)
+                }
+                return count
+            }
+
+            override fun close() = delegate.close()
+        }
+        val records = ArrayList<T>()
+        BufferedReader(InputStreamReader(checkedStream, StandardCharsets.UTF_8)).use { reader ->
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.isBlank()) continue
+                records.add(mapper(MiniJson.parseObject(line)))
+            }
+        }
+        val sha = digest.digest().joinToString("") { "%02x".format(it) }
+        if (entryBytes != expected.bytes || !sha.equals(expected.sha256, ignoreCase = true)) {
+            throw BackupValidationException("备份条目校验失败: ${entry.name}")
+        }
+        return records
     }
 
     private fun resolveTagPath(byId: Map<String, BackupTagRecord>, tag: BackupTagRecord): String {

@@ -6,55 +6,255 @@ internal data class PinyinProjection(
     val syllables: List<String>,
 )
 
+internal data class IndexedSyllable(
+    val syllable: String,
+    val startOffset: Int,
+    val endOffset: Int,
+)
+
 /**
- * Offline GB2312 + common CJK Hanzi -> lowercase ASCII pinyin lookup table.
- * Generated from pypinyin (Style.NORMAL, heteronym = false).
+ * Offline GB2312 + common CJK Hanzi -> lowercase ASCII pinyin lookup table,
+ * augmented with a high-frequency polyphone phrase lexicon.
  */
 internal object ChinesePinyinTable {
     private val PINYIN_MAP: Map<Char, String> = buildPinyinMap()
+    private val COMMON_POLYPHONE_PHRASES: Map<String, List<String>> = buildPolyphonePhrases()
 
     fun pinyinOf(ch: Char): String? = PINYIN_MAP[ch]
 
-    fun toPinyinParts(text: String): PinyinProjection {
-        if (text.isEmpty()) {
-            return PinyinProjection(full = "", initials = "", syllables = emptyList())
-        }
-        val syllables = ArrayList<String>()
-        val fullSb = StringBuilder()
-        val initialsSb = StringBuilder()
+    fun indexSyllables(text: String): List<IndexedSyllable> {
+        if (text.isEmpty()) return emptyList()
+        val result = ArrayList<IndexedSyllable>()
         val asciiBuf = StringBuilder()
+        var asciiStart = -1
 
-        fun flushAscii() {
+        fun flushAscii(endIdx: Int) {
             if (asciiBuf.isEmpty()) return
-            val token = asciiBuf.toString()
+            result.add(
+                IndexedSyllable(
+                    syllable = asciiBuf.toString(),
+                    startOffset = asciiStart,
+                    endOffset = endIdx,
+                ),
+            )
             asciiBuf.setLength(0)
-            syllables.add(token)
-            fullSb.append(token)
-            initialsSb.append(token[0])
+            asciiStart = -1
         }
 
-        for (ch in text) {
+        var i = 0
+        while (i < text.length) {
+            val ch = text[i]
             when {
-                ch in 'a'..'z' || ch in '0'..'9' -> asciiBuf.append(ch)
-                ch in 'A'..'Z' -> asciiBuf.append((ch.code + 32).toChar())
+                ch in 'a'..'z' || ch in '0'..'9' -> {
+                    if (asciiStart < 0) asciiStart = i
+                    asciiBuf.append(ch)
+                    i++
+                }
+                ch in 'A'..'Z' -> {
+                    if (asciiStart < 0) asciiStart = i
+                    asciiBuf.append((ch.code + 32).toChar())
+                    i++
+                }
                 else -> {
-                    flushAscii()
-                    val syl = PINYIN_MAP[ch]
-                    if (syl != null && syl.isNotEmpty()) {
-                        syllables.add(syl)
-                        fullSb.append(syl)
-                        initialsSb.append(syl[0])
+                    flushAscii(i)
+                    var phraseMatched = false
+                    val maxLen = minOf(4, text.length - i)
+                    for (len in maxLen downTo 2) {
+                        val phrase = text.substring(i, i + len)
+                        val syls = COMMON_POLYPHONE_PHRASES[phrase]
+                        if (syls != null && syls.size == len) {
+                            for (k in 0 until len) {
+                                result.add(
+                                    IndexedSyllable(
+                                        syllable = syls[k],
+                                        startOffset = i + k,
+                                        endOffset = i + k + 1,
+                                    ),
+                                )
+                            }
+                            i += len
+                            phraseMatched = true
+                            break
+                        }
+                    }
+                    if (!phraseMatched) {
+                        val syl = PINYIN_MAP[ch]
+                        if (!syl.isNullOrEmpty()) {
+                            result.add(
+                                IndexedSyllable(
+                                    syllable = syl,
+                                    startOffset = i,
+                                    endOffset = i + 1,
+                                ),
+                            )
+                        }
+                        i++
                     }
                 }
             }
         }
-        flushAscii()
+        flushAscii(text.length)
+        return result
+    }
+
+    fun toPinyinParts(text: String): PinyinProjection {
+        val indexed = indexSyllables(text)
+        if (indexed.isEmpty()) {
+            return PinyinProjection(full = "", initials = "", syllables = emptyList())
+        }
+        val syllables = ArrayList<String>(indexed.size)
+        val fullSb = StringBuilder()
+        val initialsSb = StringBuilder(indexed.size)
+        for (item in indexed) {
+            syllables.add(item.syllable)
+            fullSb.append(item.syllable)
+            initialsSb.append(item.syllable[0])
+        }
         return PinyinProjection(
             full = fullSb.toString(),
             initials = initialsSb.toString(),
             syllables = syllables,
         )
     }
+
+    private fun buildPolyphonePhrases(): Map<String, List<String>> = hashMapOf(
+        "银行" to listOf("yin", "hang"),
+        "行业" to listOf("hang", "ye"),
+        "排行" to listOf("pai", "hang"),
+        "同行" to listOf("tong", "hang"),
+        "分行" to listOf("fen", "hang"),
+        "支行" to listOf("zhi", "hang"),
+        "央行" to listOf("yang", "hang"),
+        "发行" to listOf("fa", "xing"),
+        "重要" to listOf("zhong", "yao"),
+        "重点" to listOf("zhong", "dian"),
+        "重量" to listOf("zhong", "liang"),
+        "重庆" to listOf("chong", "qing"),
+        "重新" to listOf("chong", "xin"),
+        "重复" to listOf("chong", "fu"),
+        "音乐" to listOf("yin", "yue"),
+        "乐器" to listOf("yue", "qi"),
+        "乐队" to listOf("yue", "dui"),
+        "快乐" to listOf("kuai", "le"),
+        "乐观" to listOf("le", "guan"),
+        "会计" to listOf("kuai", "ji"),
+        "会议" to listOf("hui", "yi"),
+        "生长" to listOf("sheng", "zhang"),
+        "成长" to listOf("cheng", "zhang"),
+        "校长" to listOf("xiao", "zhang"),
+        "组长" to listOf("zu", "zhang"),
+        "长度" to listOf("chang", "du"),
+        "长期" to listOf("chang", "qi"),
+        "长处" to listOf("chang", "chu"),
+        "长短" to listOf("chang", "duan"),
+        "处理" to listOf("chu", "li"),
+        "相处" to listOf("xiang", "chu"),
+        "到处" to listOf("dao", "chu"),
+        "好处" to listOf("hao", "chu"),
+        "调整" to listOf("tiao", "zheng"),
+        "调动" to listOf("diao", "dong"),
+        "调查" to listOf("diao", "cha"),
+        "空调" to listOf("kong", "tiao"),
+        "参加" to listOf("can", "jia"),
+        "参考" to listOf("can", "kao"),
+        "参数" to listOf("can", "shu"),
+        "朝阳" to listOf("zhao", "yang"),
+        "朝代" to listOf("chao", "dai"),
+        "便宜" to listOf("pian", "yi"),
+        "方便" to listOf("fang", "bian"),
+        "便利" to listOf("bian", "li"),
+        "觉得" to listOf("jue", "de"),
+        "发觉" to listOf("fa", "jue"),
+        "觉察" to listOf("jue", "cha"),
+        "睡觉" to listOf("shui", "jiao"),
+        "午觉" to listOf("wu", "jiao"),
+        "传记" to listOf("zhuan", "ji"),
+        "传统" to listOf("chuan", "tong"),
+        "传递" to listOf("chuan", "di"),
+        "下载" to listOf("xia", "zai"),
+        "加载" to listOf("jia", "zai"),
+        "记载" to listOf("ji", "zai"),
+        "出差" to listOf("chu", "chai"),
+        "差距" to listOf("cha", "ju"),
+        "差错" to listOf("cha", "cuo"),
+        "差不多" to listOf("cha", "bu", "duo"),
+        "应该" to listOf("ying", "gai"),
+        "应当" to listOf("ying", "dang"),
+        "答应" to listOf("da", "ying"),
+        "反应" to listOf("fan", "ying"),
+        "供应" to listOf("gong", "ying"),
+        "数量" to listOf("shu", "liang"),
+        "数据" to listOf("shu", "ju"),
+        "数学" to listOf("shu", "xue"),
+        "数一数" to listOf("shu", "yi", "shu"),
+        "着急" to listOf("zhao", "ji"),
+        "着迷" to listOf("zhao", "mi"),
+        "穿着" to listOf("chuan", "zhuo"),
+        "着落" to listOf("zhuo", "luo"),
+        "背包" to listOf("bei", "bao"),
+        "背诵" to listOf("bei", "song"),
+        "背后" to listOf("bei", "hou"),
+        "单薄" to listOf("dan", "bo"),
+        "薄弱" to listOf("bo", "ruo"),
+        "薄荷" to listOf("bo", "he"),
+        "角色" to listOf("jue", "se"),
+        "主角" to listOf("zhu", "jue"),
+        "角度" to listOf("jiao", "du"),
+        "供给" to listOf("gong", "ji"),
+        "给予" to listOf("ji", "yu"),
+        "还是" to listOf("hai", "shi"),
+        "还有" to listOf("hai", "you"),
+        "归还" to listOf("gui", "huan"),
+        "还款" to listOf("huan", "kuan"),
+        "关系" to listOf("guan", "xi"),
+        "系统" to listOf("xi", "tong"),
+        "系数" to listOf("xi", "shu"),
+        "系鞋带" to listOf("ji", "xie", "dai"),
+        "校对" to listOf("jiao", "dui"),
+        "校正" to listOf("jiao", "zheng"),
+        "学校" to listOf("xue", "xiao"),
+        "积累" to listOf("ji", "lei"),
+        "劳累" to listOf("lao", "lei"),
+        "模型" to listOf("mo", "xing"),
+        "模样" to listOf("mu", "yang"),
+        "宁静" to listOf("ning", "jing"),
+        "宁可" to listOf("ning", "ke"),
+        "强迫" to listOf("qiang", "po"),
+        "强大" to listOf("qiang", "da"),
+        "勉强" to listOf("mian", "qiang"),
+        "倔强" to listOf("jue", "jiang"),
+        "散步" to listOf("san", "bu"),
+        "分散" to listOf("fen", "san"),
+        "零散" to listOf("ling", "san"),
+        "宿舍" to listOf("su", "she"),
+        "提防" to listOf("di", "fang"),
+        "提高" to listOf("ti", "gao"),
+        "提醒" to listOf("ti", "xing"),
+        "收藏" to listOf("shou", "cang"),
+        "隐藏" to listOf("yin", "cang"),
+        "宝藏" to listOf("bao", "zang"),
+        "西藏" to listOf("xi", "zang"),
+        "挣扎" to listOf("zheng", "zha"),
+        "挣钱" to listOf("zheng", "qian"),
+        "转弯" to listOf("zhuan", "wan"),
+        "旋转" to listOf("xuan", "zhuan"),
+        "转发" to listOf("zhuan", "fa"),
+        "灾难" to listOf("zai", "nan"),
+        "难过" to listOf("nan", "guo"),
+        "难题" to listOf("nan", "ti"),
+        "暖和" to listOf("nuan", "huo"),
+        "附和" to listOf("fu", "he"),
+        "干活" to listOf("gan", "huo"),
+        "干净" to listOf("gan", "jing"),
+        "好奇" to listOf("hao", "qi"),
+        "爱好" to listOf("ai", "hao"),
+        "看守" to listOf("kan", "shou"),
+        "看见" to listOf("kan", "jian"),
+        "空间" to listOf("kong", "jian"),
+        "空地" to listOf("kong", "di"),
+        "空气" to listOf("kong", "qi"),
+        "有空" to listOf("you", "kong"),
+    )
 
     private fun buildPinyinMap(): Map<Char, String> {
         val map = HashMap<Char, String>(8192)

@@ -10,7 +10,9 @@ import io.github.z3275630ops.floatingnotes.data.backup.TrashPurgeImpact
 import io.github.z3275630ops.floatingnotes.data.backup.VersionDiff
 import io.github.z3275630ops.floatingnotes.data.backup.VersionDiffPreview
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskRecurrence
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -19,6 +21,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatterBuilder
+import java.time.temporal.ChronoUnit
 
 internal class StaleDraftException : IllegalStateException("The draft was superseded")
 internal class EmptyNoteException : IllegalArgumentException("The note is blank")
@@ -50,8 +53,11 @@ internal class NotesRepository(private val database: NotesDatabase) {
     val captureDrafts = dao.observeCaptureDrafts()
 
     fun observeTaskItems(): Flow<List<TaskItemProjection>> = taskDao.observeTaskRows().map { rows ->
+        val decodedDocs = HashMap<String, NoteDocument?>()
         rows.mapNotNull { row ->
-            val doc = runCatching { NoteDocument.decode(row.noteDocumentJson) }.getOrNull() ?: return@mapNotNull null
+            val doc = decodedDocs.getOrPut(row.noteId) {
+                runCatching { NoteDocument.decode(row.noteDocumentJson) }.getOrNull()
+            } ?: return@mapNotNull null
             val block = doc.findBlock(row.blockId)?.takeIf { it.type == "checkbox" } ?: return@mapNotNull null
             val activeReminder = row.reminderStatus != ReminderStatus.CANCELLED.name
             TaskItemProjection(
@@ -77,7 +83,7 @@ internal class NotesRepository(private val database: NotesDatabase) {
                 missedSummarized = if (activeReminder) row.missedSummarized ?: false else false,
             )
         }
-    }
+    }.flowOn(Dispatchers.Default)
 
     fun observeCompletedOccurrences(): Flow<List<TaskOccurrenceEntity>> = taskDao.observeCompletedOccurrences()
 
@@ -1064,6 +1070,25 @@ internal class NotesRepository(private val database: NotesDatabase) {
         permanentlyDeleteNotesLocked(trashedIds)
     }
 
+    suspend fun purgeExpiredTrash(
+        now: Instant = Instant.now(),
+        retentionDays: Long = TRASH_RETENTION_DAYS,
+        excludeNoteIds: Set<String> = emptySet(),
+    ): PermanentDeleteResult = database.withTransaction {
+        val cutoff = now.minus(retentionDays.coerceAtLeast(1L), ChronoUnit.DAYS)
+        val expiredIds = dao.trashedNotes().mapNotNull { note ->
+            if (note.id in excludeNoteIds) return@mapNotNull null
+            val deletedAt = note.deletedAt ?: return@mapNotNull null
+            val parsed = runCatching { Instant.parse(deletedAt) }.getOrNull() ?: return@mapNotNull null
+            if (parsed.isBefore(cutoff)) note.id else null
+        }
+        if (expiredIds.isEmpty()) {
+            PermanentDeleteResult(emptyList(), emptyList())
+        } else {
+            permanentlyDeleteNotesLocked(expiredIds)
+        }
+    }
+
     private suspend fun permanentlyDeleteNotesLocked(noteIds: Collection<String>): PermanentDeleteResult {
         val deleted = mutableListOf<String>()
         val cancelledReminders = mutableListOf<String>()
@@ -1260,4 +1285,8 @@ internal class NotesRepository(private val database: NotesDatabase) {
 
     private fun hash(document: String): String =
         MessageDigest.getInstance("SHA-256").digest(document.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    companion object {
+        const val TRASH_RETENTION_DAYS = 30L
+    }
 }

@@ -27,6 +27,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +43,9 @@ import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalTextIntelligence
 import io.github.z3275630ops.floatingnotes.data.discovery.RelatedNoteMatch
+import io.github.z3275630ops.floatingnotes.data.discovery.TextRankSummary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintActivityIndicator
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintBottomSheet
@@ -238,17 +243,20 @@ internal fun EditorRelatedNotesSheet(
     sourceBodyText: String = "",
 ) {
     val scheme = MaterialTheme.colorScheme
-    val keySummary = remember(sourceBodyText) {
-        if (sourceBodyText.length > 220) {
-            LocalTextIntelligence.extractKeySentences(
-                sourceBodyText,
-                maxSentences = 2,
-                maxChars = 160,
-            )
+    val keySummary by produceState<TextRankSummary?>(initialValue = null, sourceBodyText) {
+        value = if (sourceBodyText.length > 220) {
+            withContext(Dispatchers.Default) {
+                LocalTextIntelligence.extractKeySentences(
+                    sourceBodyText,
+                    maxSentences = 2,
+                    maxChars = 160,
+                )
+            }
         } else {
             null
         }
     }
+    val summary = keySummary
     MintBottomSheet(
         onDismissRequest = onDismiss,
         dark = dark,
@@ -267,7 +275,7 @@ internal fun EditorRelatedNotesSheet(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (keySummary != null && keySummary.sentences.isNotEmpty()) {
+            if (summary != null && summary.sentences.isNotEmpty()) {
                 MintGroupedSection(
                     dark = dark,
                     containerColor = mintSecondaryFill(dark),
@@ -293,7 +301,7 @@ internal fun EditorRelatedNotesSheet(
                                 color = scheme.primary,
                             )
                         }
-                        keySummary.sentences.forEach { sentence ->
+                        summary.sentences.forEach { sentence ->
                             Text(
                                 text = sentence,
                                 style = MaterialTheme.typography.bodySmall,

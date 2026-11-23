@@ -173,13 +173,15 @@ internal object LocalRetrievalEngine {
         if (note.deletedAt != null) return emptyList()
         val doc = runCatching { NoteDocument.decode(note.documentJson) }.getOrNull()
         val rawSegments = if (doc != null && doc.blocks.isNotEmpty()) {
-            doc.blocks.mapNotNull { block ->
+            doc.blocks.flatMap { block ->
                 val text = block.text.trim()
-                if (text.isEmpty()) null else block.id to text
+                if (text.isEmpty()) emptyList()
+                else splitLongSegment(text, 220).map { part -> block.id to part }
             }
         } else {
             val fallback = note.searchText.trim()
-            if (fallback.isEmpty()) emptyList() else listOf("body" to fallback)
+            if (fallback.isEmpty()) emptyList()
+            else splitLongSegment(fallback, 220).map { part -> "body" to part }
         }
 
         val title = note.title?.trim().orEmpty()
@@ -232,6 +234,50 @@ internal object LocalRetrievalEngine {
             flushChunk(includeTitle = order == 0)
         }
         return result
+    }
+
+    private fun splitLongSegment(text: String, maxChars: Int = 220): List<String> {
+        if (text.length <= maxChars) return listOf(text)
+        val parts = ArrayList<String>()
+        var start = 0
+        val minSplitSpan = maxOf(maxChars / 2, 1)
+        while (start < text.length) {
+            val rawEnd = (start + maxChars).coerceAtMost(text.length)
+            var candidateEnd = rawEnd
+            if (rawEnd < text.length) {
+                val searchFrom = (start + minSplitSpan).coerceAtMost(rawEnd)
+                for (pos in rawEnd - 1 downTo searchFrom) {
+                    val c = text[pos]
+                    if (c.isWhitespace() || c in "。！？；.!?;，,、\n") {
+                        candidateEnd = pos + 1
+                        break
+                    }
+                }
+            }
+            var slice = safeUtf16Slice(text, start, candidateEnd)
+            if (slice.isEmpty() && start < text.length) {
+                slice = safeUtf16Slice(text, start, (start + 2).coerceAtMost(text.length))
+                if (slice.isEmpty()) break
+            }
+            val nextStart = maxOf(start + slice.length, start + 1)
+            val cleaned = slice.trim()
+            if (cleaned.isNotEmpty()) {
+                parts.add(cleaned)
+            }
+            start = nextStart
+        }
+        return parts
+    }
+
+    private fun freshChunksFor(
+        note: NoteEntity,
+        chunksByNote: Map<String, List<NoteChunkEntity>>,
+    ): List<NoteChunkEntity> {
+        val cached = chunksByNote[note.id]
+        if (!cached.isNullOrEmpty() && cached.all { it.noteRevision == note.revision && it.contentHash == note.contentHash }) {
+            return cached
+        }
+        return buildChunks(note)
     }
 
     fun isScopeEligible(
@@ -373,9 +419,7 @@ internal object LocalRetrievalEngine {
         val docFreq = HashMap<String, Int>()
         val eligibleChunksByNote = HashMap<String, List<NoteChunkEntity>>(eligibleNotes.size)
         for (note in eligibleNotes) {
-            val chunks = chunksByNote[note.id]
-                ?.takeIf { it.isNotEmpty() }
-                ?: buildChunks(note)
+            val chunks = freshChunksFor(note, chunksByNote)
             eligibleChunksByNote[note.id] = chunks
             val seenInNote = HashSet<String>()
             for (chunk in chunks) {
@@ -620,7 +664,7 @@ internal object LocalRetrievalEngine {
         val tokensByNote = HashMap<String, Set<String>>(activeCorpus.size)
         val df = HashMap<String, Int>()
         for (note in activeCorpus) {
-            val tokens = tokensForNote(note, chunksByNote[note.id])
+            val tokens = tokensForNote(note, freshChunksFor(note, chunksByNote))
             tokensByNote[note.id] = tokens
             for (tok in tokens) {
                 df[tok] = (df[tok] ?: 0) + 1
@@ -642,7 +686,7 @@ internal object LocalRetrievalEngine {
             if (candidate.id in excludedNoteIds) continue
             if (!includeArchived && candidate.archivedAt != null) continue
 
-            val candidateChunks = chunksByNote[candidate.id].orEmpty()
+            val candidateChunks = freshChunksFor(candidate, chunksByNote)
             val candidateTokens = tokensByNote[candidate.id] ?: tokensForNote(candidate, candidateChunks)
             val candidateTagIds = noteTagIdsByNote[candidate.id].orEmpty()
             val candidateAncestors = ancestorTagIds(candidateTagIds, tagsById)
@@ -732,7 +776,7 @@ internal object LocalRetrievalEngine {
     ): EvidenceHit? {
         val trimmed = draftText.trim()
         if (trimmed.length < 4) return null
-        val scope = NoteScope(archived = false)
+        val scope = NoteScope(archived = false, aiOnly = true)
         val selfExcluded = if (currentNoteId != null) excludedNoteIds + currentNoteId else excludedNoteIds
         val res = searchEvidence(
             query = trimmed,

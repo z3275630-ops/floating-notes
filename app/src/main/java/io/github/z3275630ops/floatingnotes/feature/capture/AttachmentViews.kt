@@ -78,7 +78,7 @@ internal fun AttachmentRow(
     store: AttachmentStore,
     id: String,
     enabled: Boolean,
-    insertTranscript: (String) -> Unit,
+    insertTranscript: (String) -> Boolean,
     remove: () -> Unit,
 ) {
     val context = LocalContext.current
