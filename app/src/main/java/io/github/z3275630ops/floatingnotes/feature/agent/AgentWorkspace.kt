@@ -788,8 +788,14 @@ internal fun AgentWorkspace(
 
     previewDuplicateGroup?.let { group ->
         var moveToTrash by remember(group.groupId) { mutableStateOf(false) }
-        val mergedParagraphs = remember(group.groupId) {
-            LocalTextIntelligence.buildMergedParagraphs(group.primaryNote, group.duplicateNotes)
+        val mergedContent = remember(group.groupId, moveToTrash) {
+            LocalTextIntelligence.buildMergedContent(group.primaryNote, group.duplicateNotes, moveToTrash)
+        }
+        val mergedLines = mergedContent.previewLines
+        val preservedParts = buildList {
+            if (mergedContent.preservedCheckboxCount > 0) add("${mergedContent.preservedCheckboxCount} 项待办")
+            if (mergedContent.preservedAttachmentCount > 0) add("${mergedContent.preservedAttachmentCount} 个附件")
+            if (mergedContent.preservedReferenceCount > 0) add("${mergedContent.preservedReferenceCount} 条引用")
         }
         MintBottomSheet(
             onDismissRequest = { previewDuplicateGroup = null },
@@ -815,18 +821,26 @@ internal fun AgentWorkspace(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = "合并后段落预览",
+                            text = "合并后内容预览",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = scheme.primary,
                         )
-                        if (mergedParagraphs.isEmpty()) {
+                        if (preservedParts.isNotEmpty()) {
+                            Text(
+                                text = "已保留原格式：${preservedParts.joinToString(" · ")}" +
+                                    if (mergedContent.hadRemindersInSources) "（原定时闹钟仍留在原笔记）" else "",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = scheme.primary,
+                            )
+                        }
+                        if (mergedLines.isEmpty()) {
                             Text(
                                 text = group.previewText.ifBlank { "（无正文段落）" },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = scheme.onSurfaceVariant,
                             )
                         } else {
-                            mergedParagraphs.forEach { para ->
+                            mergedLines.forEach { para ->
                                 Text(
                                     text = para,
                                     style = MaterialTheme.typography.bodyMedium,

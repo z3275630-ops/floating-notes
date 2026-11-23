@@ -169,35 +169,35 @@ internal class AgentRepository(
         actionId: String = "agent_save_note:${run.id}",
         now: Instant = Instant.now(),
     ): AgentActionCommitResult = withContext(Dispatchers.IO) {
-        val existing = agentDao.actionById(actionId)
-        if (existing != null && existing.status == "committed") {
-            return@withContext AgentActionCommitResult.AlreadyApplied(
-                existingNoteId = existing.targetNoteId,
-                summary = existing.summary,
-            )
-        }
+        val (outcome, createdNote) = database.withTransaction {
+            val existing = agentDao.actionById(actionId)
+            if (existing != null && existing.status == "committed") {
+                return@withTransaction AgentActionCommitResult.AlreadyApplied(
+                    existingNoteId = existing.targetNoteId,
+                    summary = existing.summary,
+                ) to null
+            }
 
-        val currentNotes = notesDao.allNotes().associateBy { it.id }
-        val changedTitles = detectSourceConflicts(result.evidence, currentNotes)
-        val revJson = encodeRevisions(result.evidence)
-        val ts = isoFormatter.format(now)
-        if (changedTitles.isNotEmpty()) {
-            agentDao.insertAction(
-                AgentActionEntity(
-                    actionId = "${actionId}:conflict:${now.toEpochMilli()}",
-                    runId = run.id,
-                    actionType = "save_note",
-                    targetNoteId = null,
-                    sourceRevisionsJson = revJson,
-                    status = "conflict_refused",
-                    summary = "来源笔记已修订或移除：${changedTitles.joinToString("、")}",
-                    createdAt = ts,
-                ),
-            )
-            return@withContext AgentActionCommitResult.ConflictDetected(changedTitles)
-        }
+            val currentNotes = notesDao.allNotes().associateBy { it.id }
+            val changedTitles = detectSourceConflicts(result.evidence, currentNotes)
+            val revJson = encodeRevisions(result.evidence)
+            val ts = isoFormatter.format(now)
+            if (changedTitles.isNotEmpty()) {
+                agentDao.insertAction(
+                    AgentActionEntity(
+                        actionId = "${actionId}:conflict:${now.toEpochMilli()}",
+                        runId = run.id,
+                        actionType = "save_note",
+                        targetNoteId = null,
+                        sourceRevisionsJson = revJson,
+                        status = "conflict_refused",
+                        summary = "来源笔记已修订或移除：${changedTitles.joinToString("、")}",
+                        createdAt = ts,
+                    ),
+                )
+                return@withTransaction AgentActionCommitResult.ConflictDetected(changedTitles) to null
+            }
 
-        val created = database.withTransaction {
             val skillTitle = AgentSkill.fromId(run.skillId).title
             val blocks = mutableListOf<NoteBlock>()
             blocks.add(NoteBlock.paragraph("【$skillTitle · 本机整理笔记】${result.headline}"))
@@ -227,6 +227,7 @@ internal class AgentRepository(
             )
             val saved = notesRepository.commit(draft)
             attachProvenanceTag(saved.id, "本机整理")
+            val summary = "已存入笔记《${LocalRetrievalEngine.displayNoteTitle(saved)}》"
             agentDao.insertAction(
                 AgentActionEntity(
                     actionId = actionId,
@@ -235,14 +236,16 @@ internal class AgentRepository(
                     targetNoteId = saved.id,
                     sourceRevisionsJson = revJson,
                     status = "committed",
-                    summary = "已存入笔记《${LocalRetrievalEngine.displayNoteTitle(saved)}》",
+                    summary = summary,
                     createdAt = ts,
                 ),
             )
-            saved
+            AgentActionCommitResult.Committed(saved.id, summary) to saved
         }
-        discoveryRepository.syncChunksForNote(created)
-        AgentActionCommitResult.Committed(created.id, "已存入笔记《${LocalRetrievalEngine.displayNoteTitle(created)}》")
+        if (createdNote != null) {
+            discoveryRepository.syncChunksForNote(createdNote)
+        }
+        outcome
     }
 
     /** Idempotent commit of extracted suggested todos into a checklist note. */
@@ -257,23 +260,23 @@ internal class AgentRepository(
         if (cleanTodos.isEmpty()) {
             return@withContext AgentActionCommitResult.ConflictDetected(listOf("没有可提取的待办条目"))
         }
-        val existing = agentDao.actionById(actionId)
-        if (existing != null && existing.status == "committed") {
-            return@withContext AgentActionCommitResult.AlreadyApplied(
-                existingNoteId = existing.targetNoteId,
-                summary = existing.summary,
-            )
-        }
+        val (outcome, createdNote) = database.withTransaction {
+            val existing = agentDao.actionById(actionId)
+            if (existing != null && existing.status == "committed") {
+                return@withTransaction AgentActionCommitResult.AlreadyApplied(
+                    existingNoteId = existing.targetNoteId,
+                    summary = existing.summary,
+                ) to null
+            }
 
-        val currentNotes = notesDao.allNotes().associateBy { it.id }
-        val changedTitles = detectSourceConflicts(result.evidence, currentNotes)
-        val revJson = encodeRevisions(result.evidence)
-        val ts = isoFormatter.format(now)
-        if (changedTitles.isNotEmpty()) {
-            return@withContext AgentActionCommitResult.ConflictDetected(changedTitles)
-        }
+            val currentNotes = notesDao.allNotes().associateBy { it.id }
+            val changedTitles = detectSourceConflicts(result.evidence, currentNotes)
+            val revJson = encodeRevisions(result.evidence)
+            val ts = isoFormatter.format(now)
+            if (changedTitles.isNotEmpty()) {
+                return@withTransaction AgentActionCommitResult.ConflictDetected(changedTitles) to null
+            }
 
-        val created = database.withTransaction {
             val skillTitle = AgentSkill.fromId(run.skillId).title
             val blocks = mutableListOf<NoteBlock>()
             blocks.add(NoteBlock.paragraph("【$skillTitle · 提取待办】${run.prompt}"))
@@ -298,6 +301,7 @@ internal class AgentRepository(
             )
             val saved = notesRepository.commit(draft)
             attachProvenanceTag(saved.id, "本机整理")
+            val summary = "已生成含 ${cleanTodos.size} 项待办的新笔记"
             agentDao.insertAction(
                 AgentActionEntity(
                     actionId = actionId,
@@ -306,14 +310,16 @@ internal class AgentRepository(
                     targetNoteId = saved.id,
                     sourceRevisionsJson = revJson,
                     status = "committed",
-                    summary = "已生成含 ${cleanTodos.size} 项待办的新笔记",
+                    summary = summary,
                     createdAt = ts,
                 ),
             )
-            saved
+            AgentActionCommitResult.Committed(saved.id, summary) to saved
         }
-        discoveryRepository.syncChunksForNote(created)
-        AgentActionCommitResult.Committed(created.id, "已生成含 ${cleanTodos.size} 项待办的新笔记")
+        if (createdNote != null) {
+            discoveryRepository.syncChunksForNote(createdNote)
+        }
+        outcome
     }
 
     suspend fun findScopedDuplicateGroups(
@@ -347,67 +353,89 @@ internal class AgentRepository(
         )
     }
 
+    fun defaultMergeActionId(
+        group: DuplicateNoteGroup,
+        moveDuplicatesToTrash: Boolean,
+    ): String {
+        val revSig = (listOf(group.primaryNote) + group.duplicateNotes)
+            .sortedBy { it.id }
+            .joinToString(",") { "${it.id}@${it.revision}" }
+        val revHex = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(revSig.toByteArray(Charsets.UTF_8))
+            .take(6)
+            .joinToString("") { "%02x".format(it) }
+        val modeTag = if (moveDuplicatesToTrash) "trash" else "keep"
+        return "merge_dup:${group.groupId}:$revHex:$modeTag"
+    }
+
     suspend fun commitMergeDuplicateGroup(
         group: DuplicateNoteGroup,
         moveDuplicatesToTrash: Boolean,
-        actionId: String = "merge_dup:${group.groupId}",
+        actionId: String = defaultMergeActionId(group, moveDuplicatesToTrash),
         now: Instant = Instant.now(),
     ): AgentActionCommitResult = withContext(Dispatchers.IO) {
-        val existing = agentDao.actionById(actionId)
-        if (existing != null && existing.status == "committed") {
-            return@withContext AgentActionCommitResult.AlreadyApplied(
-                existingNoteId = existing.targetNoteId,
-                summary = existing.summary,
-            )
-        }
-
         val sourceNotes = listOf(group.primaryNote) + group.duplicateNotes
-        val currentNotes = notesDao.allNotes().associateBy { it.id }
-        val conflictTitles = mutableListOf<String>()
-        val freshSources = ArrayList<NoteEntity>(sourceNotes.size)
-        for (src in sourceNotes) {
-            val fresh = currentNotes[src.id]
-            if (fresh == null || fresh.deletedAt != null || fresh.revision != src.revision) {
-                conflictTitles.add(LocalRetrievalEngine.displayNoteTitle(src))
-            } else {
-                freshSources.add(fresh)
-            }
-        }
-
         val revJson = JSONObject().apply {
             for (src in sourceNotes) {
                 put(src.id, src.revision)
             }
         }.toString()
         val ts = isoFormatter.format(now)
-        if (conflictTitles.isNotEmpty()) {
-            val distinctConflicts = conflictTitles.distinct()
-            agentDao.insertAction(
-                AgentActionEntity(
-                    actionId = "${actionId}:conflict:${now.toEpochMilli()}",
-                    runId = group.groupId,
-                    actionType = "merge_duplicates",
-                    targetNoteId = null,
-                    sourceRevisionsJson = revJson,
-                    status = "conflict_refused",
-                    summary = "来源笔记已修订或移除：${distinctConflicts.joinToString("、")}",
-                    createdAt = ts,
-                ),
-            )
-            return@withContext AgentActionCommitResult.ConflictDetected(distinctConflicts)
-        }
 
-        val (saved, summary) = database.withTransaction {
+        val (outcome, committedExtras) = database.withTransaction {
+            val existing = agentDao.actionById(actionId)
+            if (existing != null && existing.status == "committed") {
+                return@withTransaction AgentActionCommitResult.AlreadyApplied(
+                    existingNoteId = existing.targetNoteId,
+                    summary = existing.summary,
+                ) to null
+            }
+
+            val currentNotes = notesDao.allNotes().associateBy { it.id }
+            val conflictTitles = mutableListOf<String>()
+            val freshSources = ArrayList<NoteEntity>(sourceNotes.size)
+            for (src in sourceNotes) {
+                val fresh = currentNotes[src.id]
+                if (fresh == null ||
+                    fresh.deletedAt != null ||
+                    fresh.revision != src.revision ||
+                    fresh.aiPolicy !in ALLOWED_AI_POLICIES
+                ) {
+                    conflictTitles.add(LocalRetrievalEngine.displayNoteTitle(src))
+                } else {
+                    freshSources.add(fresh)
+                }
+            }
+
+            if (conflictTitles.isNotEmpty()) {
+                val distinctConflicts = conflictTitles.distinct()
+                agentDao.insertAction(
+                    AgentActionEntity(
+                        actionId = "${actionId}:conflict:${now.toEpochMilli()}",
+                        runId = group.groupId,
+                        actionType = "merge_duplicates",
+                        targetNoteId = null,
+                        sourceRevisionsJson = revJson,
+                        status = "conflict_refused",
+                        summary = "来源笔记已修订、移出或受隐私限制：${distinctConflicts.joinToString("、")}",
+                        createdAt = ts,
+                    ),
+                )
+                return@withTransaction AgentActionCommitResult.ConflictDetected(distinctConflicts) to null
+            }
+
             val freshPrimary = freshSources.first()
             val freshDuplicates = freshSources.drop(1)
-            val mergedParagraphs = LocalTextIntelligence.buildMergedParagraphs(freshPrimary, freshDuplicates)
+            val mergedContent = LocalTextIntelligence.buildMergedContent(
+                primary = freshPrimary,
+                duplicates = freshDuplicates,
+                moveDuplicatesToTrash = moveDuplicatesToTrash,
+            )
             val primaryTitle = LocalRetrievalEngine.displayNoteTitle(freshPrimary)
 
             val blocks = mutableListOf<NoteBlock>()
-            if (mergedParagraphs.isNotEmpty()) {
-                for (para in mergedParagraphs) {
-                    blocks.add(NoteBlock.paragraph(para))
-                }
+            if (mergedContent.blocks.isNotEmpty()) {
+                blocks.addAll(mergedContent.blocks)
             } else {
                 blocks.add(NoteBlock.paragraph("【合并整理】$primaryTitle"))
             }
@@ -468,14 +496,17 @@ internal class AgentRepository(
                 }
             }
 
-            createdNote to commitSummary
+            AgentActionCommitResult.Committed(createdNote.id, commitSummary) to (createdNote to sourceIds.toList())
         }
 
-        discoveryRepository.syncChunksForNote(saved)
-        if (moveDuplicatesToTrash) {
-            discoveryRepository.removeChunksForNoteIds(freshSources.map { it.id })
+        if (committedExtras != null) {
+            val (saved, trashedSourceIds) = committedExtras
+            discoveryRepository.syncChunksForNote(saved)
+            if (moveDuplicatesToTrash) {
+                discoveryRepository.removeChunksForNoteIds(trashedSourceIds)
+            }
         }
-        AgentActionCommitResult.Committed(saved.id, summary)
+        outcome
     }
 
     private suspend fun attachProvenanceTag(noteId: String, tagName: String) {
@@ -492,7 +523,11 @@ internal class AgentRepository(
         val conflicts = mutableListOf<String>()
         for (item in evidence) {
             val fresh = currentNotes[item.noteId]
-            if (fresh == null || fresh.deletedAt != null || fresh.revision != item.noteRevision) {
+            if (fresh == null ||
+                fresh.deletedAt != null ||
+                fresh.revision != item.noteRevision ||
+                fresh.aiPolicy !in ALLOWED_AI_POLICIES
+            ) {
                 conflicts.add(item.noteTitle)
             }
         }
@@ -505,5 +540,9 @@ internal class AgentRepository(
             obj.put(item.noteId, item.noteRevision)
         }
         return obj.toString()
+    }
+
+    private companion object {
+        val ALLOWED_AI_POLICIES = setOf("inherit", "allow")
     }
 }

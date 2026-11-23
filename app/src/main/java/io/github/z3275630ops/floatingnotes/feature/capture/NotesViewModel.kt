@@ -21,6 +21,7 @@ import io.github.z3275630ops.floatingnotes.data.agent.AgentTimeRange
 import io.github.z3275630ops.floatingnotes.data.backup.BackupManager
 import io.github.z3275630ops.floatingnotes.data.backup.BackupUiState
 import io.github.z3275630ops.floatingnotes.data.backup.HistoryUiState
+import io.github.z3275630ops.floatingnotes.data.backup.MiniJson
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreMode
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.TrashPurgeImpact
@@ -32,6 +33,7 @@ import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.ExplorePreferences
 import io.github.z3275630ops.floatingnotes.data.discovery.ReviewConfig
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
+import io.github.z3275630ops.floatingnotes.data.local.StaleDraftException
 import io.github.z3275630ops.floatingnotes.feature.agent.AgentUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorDiscoveryState
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreUiState
@@ -86,6 +88,11 @@ internal class EditorBlock(private val original: NoteBlock) {
     var dueDate by mutableStateOf(original.dueDate)
     var reminderId by mutableStateOf(original.reminderId)
     var occurrenceId by mutableStateOf(original.occurrenceId)
+    var syncedText: String = original.text
+    var syncedChecked: Boolean = original.checked
+    var syncedDueDate: String? = original.dueDate
+    var syncedReminderId: String? = original.reminderId
+    var syncedOccurrenceId: String? = original.occurrenceId
     var reminderLocalTime by mutableStateOf<String?>(null)
     var recurrenceRule by mutableStateOf(RecurrenceRule.NONE)
     var reminderPolicy by mutableStateOf(ReminderPolicy.FOLLOW_LOCAL)
@@ -98,6 +105,14 @@ internal class EditorBlock(private val original: NoteBlock) {
     val referenceTargetBlockId get() = original.referenceTargetBlockId
     val referenceStart get() = original.referenceStart
     val referenceEnd get() = original.referenceEnd
+
+    fun markSyncedWith(block: NoteBlock? = null) {
+        syncedText = block?.text ?: text.text.toString()
+        syncedChecked = block?.checked ?: checked
+        syncedDueDate = block?.dueDate ?: dueDate
+        syncedReminderId = block?.reminderId ?: reminderId
+        syncedOccurrenceId = block?.occurrenceId ?: occurrenceId
+    }
 
     fun documentBlock(): NoteBlock = when {
         type == "checkbox" -> {
@@ -133,6 +148,7 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
     var importFailed by mutableStateOf(false)
     var checkpointSeq = initialDraft.editSeq
     var committedSeq = if (existingNote && initialDraft.editSeq > 0) -1 else initialDraft.editSeq
+    internal var onPendingExtrasChanged: (() -> Unit)? = null
     private var sequence = initialDraft.editSeq
     private var trackedDocument = document
 
@@ -151,6 +167,9 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         trackedDocument = document()
         checkpointSeq = sequence
         committedSeq = sequence
+        blocks.forEach { block ->
+            block.markSyncedWith()
+        }
     }
 
     fun replaceDocument(note: NoteEntity) {
@@ -167,6 +186,8 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         )
         blocks.clear()
         blocks.addAll(restoredDoc.blocks.map(::EditorBlock))
+        pendingTagIds.clear()
+        onPendingExtrasChanged?.invoke()
         trackedDocument = restoredDoc
         sequence = 0L
         checkpointSeq = 0L
@@ -176,11 +197,16 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
     }
 
     fun addPendingTag(tagId: String) {
-        if (tagId !in pendingTagIds) pendingTagIds.add(tagId)
+        if (tagId !in pendingTagIds) {
+            pendingTagIds.add(tagId)
+            onPendingExtrasChanged?.invoke()
+        }
     }
 
     fun removePendingTag(tagId: String) {
-        pendingTagIds.remove(tagId)
+        if (pendingTagIds.remove(tagId)) {
+            onPendingExtrasChanged?.invoke()
+        }
     }
 
     fun addReference(
@@ -308,6 +334,8 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     private var edgeEchoJob: Job? = null
     private var tagRecJob: Job? = null
+    private var findSearchJob: Job? = null
+    private var findSearchSeq = 0L
 
     val captureDrafts = repository.captureDrafts.catch {
         error = "无法读取跨应用草稿"
@@ -474,13 +502,33 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     private fun voiceDirectory(session: EditorSession) =
+        File(getApplication<Application>().filesDir, "recordings/note_${session.draft.noteId}")
+
+    private fun legacyVoiceDirectory(session: EditorSession) =
         File(getApplication<Application>().filesDir, "recordings/${session.draft.id}")
 
     private fun pendingRecording(session: EditorSession): File? =
         voiceDirectory(session).listFiles()?.firstOrNull { it.extension == "m4a" && it.isFile }
+            ?: legacyVoiceDirectory(session).listFiles()?.firstOrNull { it.extension == "m4a" && it.isFile }
+
+    private fun stopActiveRecorderBeforeClose(session: EditorSession) {
+        val recorder = voiceRecorder ?: return
+        voiceRecorder = null
+        voiceClock?.cancel()
+        voiceClock = null
+        session.recording = false
+        session.recordingPaused = false
+        val hasAudio = runCatching { recorder.stop() }.getOrDefault(false)
+        if (!hasAudio && recorder.file.length() == 0L) {
+            recorder.file.delete()
+        } else if (recorder.file.isFile && recorder.file.length() > 0L) {
+            session.voicePending = true
+        }
+    }
 
     override fun onCleared() {
-        voiceRecorder?.stop()
+        runCatching { voiceRecorder?.stop() }
+        voiceRecorder = null
         super.onCleared()
     }
 
@@ -557,26 +605,28 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         if (editor === session) importJob?.cancel()
     }
 
-    private suspend fun addImportedBlock(session: EditorSession, block: NoteBlock) = withContext(NonCancellable) {
+    private suspend fun addImportedBlock(session: EditorSession, block: NoteBlock) {
         persistenceMutex.withLock {
-            session.writing = true
-            try {
-                watcher?.cancelAndJoin()
-                stopCheckpoint?.cancelAndJoin()
-                val document = NoteDocument(session.document().blocks + block)
-                val sequence = session.sequenceFor(document)
+            withContext(NonCancellable) {
+                session.writing = true
                 try {
-                    repository.checkpoint(encode(session, document, sequence))
-                } catch (_: Exception) {
-                    throw AttachmentImportException(
-                        "无法保存附件到草稿，请检查本机空间后重试",
-                    )
+                    watcher?.cancelAndJoin()
+                    stopCheckpoint?.cancelAndJoin()
+                    val document = NoteDocument(session.document().blocks + block)
+                    val sequence = session.sequenceFor(document)
+                    try {
+                        repository.checkpoint(encode(session, document, sequence))
+                    } catch (_: Exception) {
+                        throw AttachmentImportException(
+                            "无法保存附件到草稿，请检查本机空间后重试",
+                        )
+                    }
+                    session.blocks.add(EditorBlock(block))
+                    session.checkpointSeq = sequence
+                } finally {
+                    session.writing = session.closing
+                    if (!session.closing && editor === session) watch(session)
                 }
-                session.blocks.add(EditorBlock(block))
-                session.checkpointSeq = sequence
-            } finally {
-                session.writing = session.closing
-                if (!session.closing && editor === session) watch(session)
             }
         }
     }
@@ -676,6 +726,70 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
+    private fun draftExtrasFile(draftId: String): File =
+        File(getApplication<Application>().filesDir, "draft_extras/$draftId.json")
+
+    private fun saveDraftExtras(session: EditorSession) {
+        runCatching {
+            val pendingTags = session.pendingTagIds.toList()
+            val pendingSchedules = session.blocks.filter { it.type == "checkbox" && it.pendingScheduleChanged }
+            val file = draftExtrasFile(session.draft.id)
+            if (pendingTags.isEmpty() && pendingSchedules.isEmpty()) {
+                file.delete()
+                return
+            }
+            val payload = linkedMapOf<String, Any?>(
+                "pending_tag_ids" to pendingTags,
+                "pending_schedules" to pendingSchedules.map { block ->
+                    linkedMapOf<String, Any?>(
+                        "block_id" to block.id,
+                        "due_date" to block.dueDate,
+                        "pending_reminder_time" to block.pendingReminderTime,
+                        "recurrence" to block.recurrenceRule.name,
+                        "policy" to block.reminderPolicy.name,
+                    )
+                },
+            )
+            file.parentFile?.mkdirs()
+            file.writeText(MiniJson.encode(payload), Charsets.UTF_8)
+        }
+    }
+
+    private fun restoreDraftExtras(session: EditorSession) {
+        val file = draftExtrasFile(session.draft.id)
+        if (!file.isFile) return
+        runCatching {
+            val obj = MiniJson.parseObject(file.readText(Charsets.UTF_8))
+            val tags = obj["pending_tag_ids"] as? List<*>
+            tags?.mapNotNull { it as? String }?.forEach { tagId ->
+                if (tagId.isNotBlank() && tagId !in session.pendingTagIds) {
+                    session.pendingTagIds.add(tagId)
+                }
+            }
+            val schedules = obj["pending_schedules"] as? List<*>
+            val byId = session.blocks.associateBy(EditorBlock::id)
+            schedules?.forEach { entry ->
+                @Suppress("UNCHECKED_CAST")
+                val map = entry as? Map<String, Any?> ?: return@forEach
+                val blockId = map["block_id"] as? String ?: return@forEach
+                val block = byId[blockId]?.takeIf { it.type == "checkbox" } ?: return@forEach
+                block.dueDate = (map["due_date"] as? String)?.takeIf { it.isNotBlank() }
+                val remTime = (map["pending_reminder_time"] as? String)?.takeIf { it.isNotBlank() }
+                block.pendingReminderTime = remTime
+                block.reminderLocalTime = remTime
+                block.recurrenceRule = (map["recurrence"] as? String)
+                    ?.let { RecurrenceRule.fromStored(it) } ?: RecurrenceRule.NONE
+                block.reminderPolicy = (map["policy"] as? String)
+                    ?.let { ReminderPolicy.fromStored(it) } ?: ReminderPolicy.FOLLOW_LOCAL
+                block.pendingScheduleChanged = true
+            }
+        }
+    }
+
+    private fun deleteDraftExtras(draftId: String) {
+        runCatching { draftExtrasFile(draftId).delete() }
+    }
+
     private fun startEditor(
         draft: DraftEntity,
         existingNote: Boolean,
@@ -684,9 +798,11 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     ) {
         val session = EditorSession(draft, NoteDocument.decode(draft.documentJson), existingNote).apply {
             this.focusBlockId = focusBlockId
+            this.onPendingExtrasChanged = { saveDraftExtras(this) }
         }
         val sourceItems = if (preloadedTasks.isNotEmpty()) preloadedTasks else taskItems.value
         applyTaskMetadataToSession(session, sourceItems)
+        restoreDraftExtras(session)
         val pending = pendingRecording(session)
         if (pending != null && session.blocks.any { it.attachmentId == pending.nameWithoutExtension }) pending.delete()
         session.voicePending = pendingRecording(session) != null
@@ -714,8 +830,76 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     block.reminderPolicy = item.policy
                     block.reminderStatus = item.reminderStatus
                 }
+                block.markSyncedWith()
             }
         }
+    }
+
+    private suspend fun tryMergeExternalUpdateAndRetryCommitLocked(
+        session: EditorSession,
+    ): NoteEntity? {
+        val fresh = repository.loadNote(session.draft.noteId)?.takeIf { it.deletedAt == null } ?: return null
+        val freshDoc = runCatching { NoteDocument.decode(fresh.documentJson) }.getOrNull() ?: return null
+        val freshById = freshDoc.blocks.associateBy(NoteBlock::id)
+        val sessionById = session.blocks.associateBy(EditorBlock::id)
+
+        for (freshBlock in freshDoc.blocks) {
+            val local = sessionById[freshBlock.id] ?: return null
+            val localText = local.text.text.toString()
+            val extTextChanged = freshBlock.text != local.syncedText
+            val localTextChanged = localText != local.syncedText
+            if (extTextChanged && localTextChanged) return null
+            if (local.type == "checkbox") {
+                val extTaskChanged = freshBlock.checked != local.syncedChecked ||
+                    freshBlock.dueDate != local.syncedDueDate ||
+                    freshBlock.reminderId != local.syncedReminderId ||
+                    freshBlock.occurrenceId != local.syncedOccurrenceId
+                val localTaskChanged = local.checked != local.syncedChecked ||
+                    local.pendingScheduleChanged ||
+                    local.dueDate != local.syncedDueDate
+                if (extTaskChanged && localTaskChanged) return null
+            }
+        }
+        for (local in session.blocks) {
+            if (local.id !in freshById && local.syncedText.isNotEmpty()) {
+                return null
+            }
+        }
+
+        for (freshBlock in freshDoc.blocks) {
+            val local = sessionById[freshBlock.id] ?: continue
+            val localText = local.text.text.toString()
+            if (freshBlock.text != local.syncedText && localText == local.syncedText) {
+                local.text.edit { replace(0, length, freshBlock.text) }
+            }
+            if (local.type == "checkbox") {
+                val extTaskChanged = freshBlock.checked != local.syncedChecked ||
+                    freshBlock.dueDate != local.syncedDueDate ||
+                    freshBlock.reminderId != local.syncedReminderId ||
+                    freshBlock.occurrenceId != local.syncedOccurrenceId
+                val localTaskChanged = local.checked != local.syncedChecked ||
+                    local.pendingScheduleChanged ||
+                    local.dueDate != local.syncedDueDate
+                if (extTaskChanged && !localTaskChanged) {
+                    local.checked = freshBlock.checked
+                    local.dueDate = freshBlock.dueDate
+                    local.reminderId = freshBlock.reminderId
+                    local.occurrenceId = freshBlock.occurrenceId
+                }
+            }
+            local.markSyncedWith(freshBlock)
+        }
+        val sourceItems = runCatching { repository.observeTaskItems().first() }.getOrDefault(taskItems.value)
+        applyTaskMetadataToSession(session, sourceItems)
+        session.draft = session.draft.copy(baseRevision = fresh.revision)
+        val mergedDoc = session.document()
+        val mergedSeq = session.sequenceFor(mergedDoc)
+        val committed = repository.commit(encode(session, mergedDoc, mergedSeq))
+        session.draft = session.draft.copy(baseRevision = committed.revision)
+        session.committedSeq = maxOf(session.committedSeq, mergedSeq)
+        commitSessionExtras(session)
+        session.syncAfterExternalCommit(committed.revision)
+        return committed
     }
 
     private fun watch(session: EditorSession) {
@@ -728,16 +912,28 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 session.status = "等待写入"
                 delay(180)
                 try {
+                    var resolvedByExternalMerge = false
                     persistenceMutex.withLock {
                         if (session.closing || editor !== session) return@withLock
                         if (sequence > session.checkpointSeq) {
                             val checkpointDraft = encode(session, document, sequence)
-                            repository.checkpoint(checkpointDraft)
-                            session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
-                            session.status = "草稿已存到本机"
+                            try {
+                                repository.checkpoint(checkpointDraft)
+                                session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
+                                saveDraftExtras(session)
+                                session.status = "草稿已存到本机"
+                            } catch (stale: StaleDraftException) {
+                                val merged = tryMergeExternalUpdateAndRetryCommitLocked(session)
+                                if (merged != null) {
+                                    resolvedByExternalMerge = true
+                                    session.status = "已保存到本机"
+                                } else {
+                                    throw stale
+                                }
+                            }
                         }
                     }
-                    if (needsCommit) {
+                    if (!resolvedByExternalMerge && needsCommit) {
                         delay(350)
                         persistenceMutex.withLock {
                             if (session.closing || editor !== session || sequence <= session.committedSeq) {
@@ -746,16 +942,28 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             withContext(NonCancellable) {
                                 session.status = "正在保存"
                                 val commitDraft = encode(session, document, sequence)
-                                val committed = repository.commit(commitDraft)
-                                session.draft = session.draft.copy(baseRevision = committed.revision)
-                                session.committedSeq = maxOf(session.committedSeq, sequence)
-                                commitSessionExtras(session)
-                                session.status = "已保存到本机"
+                                try {
+                                    val committed = repository.commit(commitDraft)
+                                    session.draft = session.draft.copy(baseRevision = committed.revision)
+                                    session.committedSeq = maxOf(session.committedSeq, sequence)
+                                    commitSessionExtras(session)
+                                    session.syncAfterExternalCommit(committed.revision)
+                                    session.status = "已保存到本机"
+                                } catch (stale: StaleDraftException) {
+                                    val merged = tryMergeExternalUpdateAndRetryCommitLocked(session)
+                                    if (merged != null) {
+                                        session.status = "已保存到本机"
+                                    } else {
+                                        throw stale
+                                    }
+                                }
                             }
                         }
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
+                } catch (_: StaleDraftException) {
+                    session.status = "检测到外部修改，已保留草稿，请核对后重存"
                 } catch (_: Exception) {
                     session.status = "保存失败，正文仍保留"
                 }
@@ -800,22 +1008,45 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             var didCommit = false
             persistenceMutex.withLock {
                 when {
-                    discard -> repository.discard(draft)
+                    discard -> {
+                        repository.discard(draft)
+                        deleteDraftExtras(draft.id)
+                    }
                     save || (session.existingNote && document.hasContent && sequence > session.committedSeq) -> {
                         session.status = "正在保存"
-                        val committed = repository.commit(draft)
+                        val committed = try {
+                            repository.commit(draft)
+                        } catch (stale: StaleDraftException) {
+                            tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
+                        }
                         runCatching { discovery.syncChunksForNote(committed) }
-                        session.draft = session.draft.copy(baseRevision = committed.revision)
+                        session.draft = session.draft.copy(baseRevision = maxOf(session.draft.baseRevision, committed.revision))
                         session.committedSeq = maxOf(session.committedSeq, sequence)
                         didCommit = true
                     }
                     sequence > session.checkpointSeq -> {
-                        repository.checkpoint(draft)
-                        session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
+                        try {
+                            repository.checkpoint(draft)
+                            session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
+                            saveDraftExtras(session)
+                        } catch (stale: StaleDraftException) {
+                            if (session.existingNote) {
+                                val merged = tryMergeExternalUpdateAndRetryCommitLocked(session)
+                                if (merged != null) {
+                                    runCatching { discovery.syncChunksForNote(merged) }
+                                    didCommit = true
+                                } else {
+                                    throw stale
+                                }
+                            } else {
+                                throw stale
+                            }
+                        }
                     }
                 }
                 if (!discard && didCommit) {
                     commitSessionExtras(session)
+                    session.syncAfterExternalCommit(session.draft.baseRevision)
                     WidgetUpdater.requestRefreshAll(getApplication())
                 }
             }
@@ -830,6 +1061,10 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         } catch (cancelled: CancellationException) {
             if (editor == session) watch(session)
             throw cancelled
+        } catch (_: StaleDraftException) {
+            session.status = "检测到外部修改，已保留草稿，请核对后重存"
+            if (editor == session) watch(session)
+            false
         } catch (_: Exception) {
             session.status = "保存失败，正文仍保留。可重试。"
             if (editor == session) watch(session)
@@ -844,8 +1079,10 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         val pendingTags = session.pendingTagIds.toList()
         if (pendingTags.isNotEmpty()) {
             for (tagId in pendingTags) {
-                runCatching { organization.tagNote(session.draft.noteId, tagId, attach = true) }
-                session.pendingTagIds.remove(tagId)
+                val res = runCatching { organization.tagNote(session.draft.noteId, tagId, attach = true) }
+                if (res.isSuccess) {
+                    session.pendingTagIds.remove(tagId)
+                }
             }
         }
         val app = getApplication<Application>()
@@ -869,6 +1106,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             applyScheduleResultToBlock(block, result)
             session.syncAfterExternalCommit(result.note.revision)
         }
+        saveDraftExtras(session)
     }
 
     fun checkpointOnStop() {
@@ -883,9 +1121,13 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     if (editor !== session || session.writing || session.closing) return@withLock
                     val document = session.document()
                     val sequence = session.sequenceFor(document)
-                    if (sequence <= session.checkpointSeq) return@withLock
+                    if (sequence <= session.checkpointSeq) {
+                        saveDraftExtras(session)
+                        return@withLock
+                    }
                     repository.checkpoint(encode(session, document, sequence))
                     session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
+                    saveDraftExtras(session)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -982,7 +1224,11 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         if (existingNoteRow != null && doc.hasContent) {
                             val sequence = session.sequenceFor(doc)
                             if (sequence > session.committedSeq) {
-                                val committed = repository.commit(encode(session, doc, sequence))
+                                val committed = try {
+                                    repository.commit(encode(session, doc, sequence))
+                                } catch (stale: StaleDraftException) {
+                                    tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
+                                }
                                 session.draft = session.draft.copy(baseRevision = committed.revision)
                                 session.committedSeq = maxOf(session.committedSeq, sequence)
                             }
@@ -1002,6 +1248,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             )
                             applyScheduleResultToBlock(block, result)
                             session.syncAfterExternalCommit(result.note.revision)
+                            saveDraftExtras(session)
                             session.status = when {
                                 reminderTime != null && !ReminderScheduler.capability(app).notificationsEnabled ->
                                     "已保存排期，但提醒未开启"
@@ -1016,6 +1263,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             block.recurrenceRule = if (reminderTime != null) recurrence else RecurrenceRule.NONE
                             block.reminderPolicy = policy
                             block.pendingScheduleChanged = true
+                            saveDraftExtras(session)
                             session.status = if (reminderTime != null && !ReminderScheduler.capability(app).notificationsEnabled) {
                                 "已暂存排期，但提醒未开启"
                             } else {
@@ -1045,6 +1293,20 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     try {
                         watcher?.cancelAndJoin()
                         stopCheckpoint?.cancelAndJoin()
+                        val existingNoteRow = repository.loadNote(session.draft.noteId)
+                        val doc = session.document()
+                        if (existingNoteRow != null && doc.hasContent) {
+                            val sequence = session.sequenceFor(doc)
+                            if (sequence > session.committedSeq) {
+                                val committed = try {
+                                    repository.commit(encode(session, doc, sequence))
+                                } catch (stale: StaleDraftException) {
+                                    tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
+                                }
+                                session.draft = session.draft.copy(baseRevision = committed.revision)
+                                session.committedSeq = maxOf(session.committedSeq, sequence)
+                            }
+                        }
                         val noteRow = repository.loadNote(session.draft.noteId)
                         val blockPersisted = noteRow?.let {
                             runCatching { NoteDocument.decode(it.documentJson).findBlock(block.id) }.getOrNull()
@@ -1063,6 +1325,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             block.reminderStatus = null
                             block.pendingScheduleChanged = false
                         }
+                        saveDraftExtras(session)
                         session.status = "已清除日期与提醒"
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -1165,11 +1428,13 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         reminderId: String,
         snoozeMinutes: Long = 15L,
         expectedOccurrenceId: String? = null,
+        expectedRevision: Long? = null,
     ): ReminderEntity? {
         val snoozed = repository.snoozeReminder(
             reminderId = reminderId,
             snoozeMinutes = snoozeMinutes,
             expectedOccurrenceId = expectedOccurrenceId,
+            expectedRevision = expectedRevision,
         )
         if (snoozed != null) {
             ReminderScheduler.scheduleReminder(getApplication(), snoozed)
@@ -1182,12 +1447,14 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         blockId: String,
         expectedReminderId: String? = null,
         expectedOccurrenceId: String? = null,
+        expectedRevision: Long? = null,
     ): TaskToggleResult {
         val result = repository.completeFromNotification(
             noteId = noteId,
             blockId = blockId,
             expectedReminderId = expectedReminderId,
             expectedOccurrenceId = expectedOccurrenceId,
+            expectedRevision = expectedRevision,
         )
         if (result is TaskToggleResult.Updated) {
             ReminderScheduler.syncToggleResult(getApplication(), result)
@@ -1215,6 +1482,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         block.reminderStatus = result.reminder?.statusEnum
         block.pendingReminderTime = null
         block.pendingScheduleChanged = false
+        block.markSyncedWith(synced)
     }
 
     fun pin(note: NoteEntity) = changeMetadata { repository.setPinned(note.id, !note.pinned) }
@@ -1225,6 +1493,12 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             withContext(NonCancellable) {
                 persistenceMutex.withLock {
                     try {
+                        val activeSession = editor
+                        if (activeSession != null && activeSession.draft.noteId == note.id) {
+                            stopActiveRecorderBeforeClose(activeSession)
+                            flushOpenEditorLocked()
+                            deleteDraftExtras(activeSession.draft.id)
+                        }
                         closeEditorIfMatchingLocked(setOf(note.id))
                         val reminderIds = repository.moveToTrash(note.id)
                         runCatching { discovery.removeChunksForNoteIds(listOf(note.id)) }
@@ -1647,7 +1921,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             withContext(NonCancellable) {
                 persistenceMutex.withLock {
                     try {
-                        flushOpenEditorLocked()
+                        flushOpenEditorLocked(throwOnFailure = true)
                         val mode = _backupState.value.preflightMode
                         val autoBackup = _backupState.value.autoBackupBeforeRestore
                         val exec = backupManager.executeRestore(
@@ -1656,13 +1930,16 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             zoneId = ZoneId.systemDefault(),
                         )
                         val app = getApplication<Application>()
-                        exec.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
-                        exec.activeRemindersToSchedule.forEach { ReminderScheduler.scheduleReminder(app, it) }
+                        runCatching {
+                            exec.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
+                            exec.activeRemindersToSchedule.forEach { ReminderScheduler.scheduleReminder(app, it) }
+                        }
 
                         if (exec.outcome is RestoreOutcome.Success) {
                             runCatching { discovery.ensureIndexFresh(forceRebuild = true) }
                             val openSession = editor
                             if (openSession != null && (mode == RestoreMode.REPLACE_ALL || repository.loadNote(openSession.draft.noteId) == null)) {
+                                deleteDraftExtras(openSession.draft.id)
                                 closeEditorIfMatchingLocked(setOf(openSession.draft.noteId))
                             }
                             _historyState.value = HistoryUiState()
@@ -1931,16 +2208,20 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         query: String = _exploreState.value.findQuery,
         scope: NoteScope = _exploreState.value.findScope,
     ) {
+        val seq = ++findSearchSeq
+        findSearchJob?.cancel()
         _exploreState.update { it.copy(findQuery = query, findScope = scope, indexing = true, errorMessage = null) }
-        viewModelScope.launch {
+        findSearchJob = viewModelScope.launch {
             try {
                 val res = discovery.searchFind(query, scope)
+                if (seq != findSearchSeq) return@launch
                 _exploreState.update {
                     it.copy(indexing = false, findResult = res, coverage = res.coverage)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
+                if (seq != findSearchSeq) return@launch
                 _exploreState.update {
                     it.copy(indexing = false, errorMessage = "检索失败，请重试")
                 }
@@ -2368,14 +2649,22 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch {
             try {
                 val commitRes = persistenceMutex.withLock {
+                    val srcIds = buildSet {
+                        add(group.primaryNote.id)
+                        group.duplicateNotes.forEach { add(it.id) }
+                    }
+                    val activeSession = editor
+                    if (moveDuplicatesToTrash && activeSession != null && activeSession.draft.noteId in srcIds) {
+                        stopActiveRecorderBeforeClose(activeSession)
+                        flushOpenEditorLocked()
+                    }
                     val result = agentRepository.commitMergeDuplicateGroup(
                         group = group,
                         moveDuplicatesToTrash = moveDuplicatesToTrash,
                     )
                     if (result is AgentActionCommitResult.Committed && moveDuplicatesToTrash) {
-                        val srcIds = buildSet {
-                            add(group.primaryNote.id)
-                            group.duplicateNotes.forEach { add(it.id) }
+                        if (activeSession != null && activeSession.draft.noteId in srcIds) {
+                            deleteDraftExtras(activeSession.draft.id)
                         }
                         closeEditorIfMatchingLocked(srcIds)
                     }
@@ -2699,7 +2988,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
-    private suspend fun flushOpenEditorLocked() {
+    private suspend fun flushOpenEditorLocked(throwOnFailure: Boolean = false) {
         val session = editor ?: return
         if (session.closing || session.writing) return
         session.writing = true
@@ -2709,16 +2998,24 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             val document = session.document()
             val sequence = session.sequenceFor(document)
             if (session.existingNote && document.hasContent && sequence > session.committedSeq) {
-                val committed = repository.commit(encode(session, document, sequence))
+                val committed = try {
+                    repository.commit(encode(session, document, sequence))
+                } catch (stale: StaleDraftException) {
+                    tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
+                }
                 runCatching { discovery.syncChunksForNote(committed) }
                 commitSessionExtras(session)
                 session.syncAfterExternalCommit(committed.revision)
             } else if (sequence > session.checkpointSeq && document.hasContent) {
                 repository.checkpoint(encode(session, document, sequence))
                 session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
+                saveDraftExtras(session)
             }
-        } catch (_: Exception) {
-            // Keep existing persisted DB state intact when flushing dirty draft fails.
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (err: Exception) {
+            if (throwOnFailure) throw err
+            // Keep existing persisted DB state intact when flushing dirty draft fails outside mandatory gates.
         } finally {
             session.writing = session.closing
             if (!session.closing && editor === session) watch(session)
@@ -2731,6 +3028,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         session.closing = true
         session.writing = true
         try {
+            stopActiveRecorderBeforeClose(session)
             importJob?.cancelAndJoin()
             watcher?.cancelAndJoin()
             stopCheckpoint?.cancelAndJoin()

@@ -95,10 +95,27 @@ internal object BackupCodec {
         val filesMap = LinkedHashMap<String, BackupFileChecksum>()
         val writtenAttachmentEntries = ArrayList<BackupAttachmentEntry>(snapshot.attachments.size)
         val sortedAttachments = snapshot.attachments.sortedBy { it.id }
+        var entryCount = 0
+        var totalUncompressedBytes = 0L
+
+        fun recordEntryLimits(bytesCount: Long) {
+            entryCount++
+            if (entryCount > BackupConstants.MAX_ARCHIVE_ENTRIES) {
+                throw BackupValidationException("备份条目数量超过上限（最多 ${BackupConstants.MAX_ARCHIVE_ENTRIES} 个）")
+            }
+            if (bytesCount > BackupConstants.MAX_ENTRY_BYTES) {
+                throw BackupValidationException("单个备份条目超过大小上限（128 MB），无法安全还原")
+            }
+            totalUncompressedBytes += bytesCount
+            if (totalUncompressedBytes > BackupConstants.MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                throw BackupValidationException("备份内容总大小超过可恢复上限（512 MB），请精简超大附件后重试")
+            }
+        }
 
         ZipOutputStream(BufferedOutputStream(FileOutputStream(targetZipFile))).use { zos ->
             fun writeBytesEntry(path: String, bytes: ByteArray) {
                 val clean = validateArchiveEntryPath(path)
+                recordEntryLimits(bytes.size.toLong())
                 zos.putNextEntry(ZipEntry(clean))
                 zos.write(bytes)
                 zos.closeEntry()
@@ -140,6 +157,7 @@ internal object BackupCodec {
                     throw BackupValidationException("附件校验和与本地记录不一致: ${att.originalName}")
                 }
                 val archivePath = validateArchiveEntryPath(att.archivePath)
+                recordEntryLimits(actualBytes)
                 zos.putNextEntry(ZipEntry(archivePath))
                 val buffer = ByteArray(BUFFER_SIZE)
                 FileInputStream(sourceFile).use { input ->
@@ -188,8 +206,10 @@ internal object BackupCodec {
                 files = filesMap,
                 exclusions = BackupConstants.DEFAULT_EXCLUSIONS,
             )
+            val manifestBytes = MiniJson.encode(manifestToJsonMap(manifest)).toByteArray(StandardCharsets.UTF_8)
+            recordEntryLimits(manifestBytes.size.toLong())
             zos.putNextEntry(ZipEntry("manifest.json"))
-            zos.write(MiniJson.encode(manifestToJsonMap(manifest)).toByteArray(StandardCharsets.UTF_8))
+            zos.write(manifestBytes)
             zos.closeEntry()
             return manifest
         }

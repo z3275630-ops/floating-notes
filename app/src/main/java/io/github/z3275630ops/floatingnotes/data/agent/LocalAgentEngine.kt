@@ -257,6 +257,7 @@ internal object LocalAgentEngine {
 
         val tagsById = tags.associateBy { it.id }
         val expandedInclude = LocalRetrievalEngine.expandTagSelection(normalizedScope.includeTags, tags, normalizedScope.descendants)
+        val expandedIncludeGroups = LocalRetrievalEngine.expandTagGroups(normalizedScope.includeTags, tags, normalizedScope.descendants)
         val expandedExclude = LocalRetrievalEngine.expandTagSelection(normalizedScope.excludeTags, tags, normalizedScope.descendants)
         val noteTagIds = noteTags.groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
         val noteNotebookIds = notebookNotes.groupBy({ it.noteId }, { it.notebookId }).mapValues { it.value.toSet() }
@@ -270,6 +271,7 @@ internal object LocalAgentEngine {
                     expandedIncludeTags = expandedInclude,
                     expandedExcludeTags = expandedExclude,
                     excludedNoteIds = emptySet(),
+                    expandedIncludeTagGroups = expandedIncludeGroups,
                 )
             ) {
                 return@filter false

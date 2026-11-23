@@ -1,5 +1,6 @@
 package io.github.z3275630ops.floatingnotes.data.discovery
 
+import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.safeUtf16Slice
 import io.github.z3275630ops.floatingnotes.data.backup.MiniJson
@@ -21,6 +22,15 @@ internal data class DuplicateNoteGroup(
     val similarityPercent: Int,
     val reason: String,
     val previewText: String,
+)
+
+internal data class MergedDuplicateContent(
+    val blocks: List<NoteBlock>,
+    val previewLines: List<String>,
+    val preservedCheckboxCount: Int,
+    val preservedAttachmentCount: Int,
+    val preservedReferenceCount: Int,
+    val hadRemindersInSources: Boolean,
 )
 
 /**
@@ -365,6 +375,150 @@ internal object LocalTextIntelligence {
         }
         return merged
     }
+
+    /** Preserves checkboxes (checked state + dueDate), media attachments, and non-trashed references when merging duplicates. */
+    fun buildMergedContent(
+        primary: NoteEntity,
+        duplicates: List<NoteEntity>,
+        moveDuplicatesToTrash: Boolean = false,
+    ): MergedDuplicateContent {
+        val orderedNotes = listOf(primary) + duplicates
+        val sourceNoteIds = orderedNotes.mapTo(HashSet()) { it.id }
+        val blocks = ArrayList<NoteBlock>()
+        val seenParagraphKeys = HashSet<String>()
+        val seenCheckboxIndex = HashMap<String, Int>()
+        val seenAttachmentIds = HashSet<String>()
+        val seenRefKeys = HashSet<String>()
+        val blockRefLabels = HashMap<String, String>()
+
+        var preservedCheckboxes = 0
+        var preservedAttachments = 0
+        var preservedReferences = 0
+        var hadReminders = false
+
+        for (note in orderedNotes) {
+            val labelsByBlockId = extractReferenceLabels(note.documentJson)
+            val decodedBlocks = runCatching { NoteDocument.decode(note.documentJson).blocks }.getOrNull()
+            if (decodedBlocks == null) {
+                for (rawLine in extractNoteParagraphLines(note)) {
+                    val trimmed = rawLine.trim()
+                    if (trimmed.isEmpty()) continue
+                    val key = normalizeForComparison(trimmed).ifEmpty { trimmed.lowercase(Locale.ROOT) }
+                    if (seenParagraphKeys.add(key)) {
+                        blocks.add(NoteBlock.paragraph(trimmed))
+                    }
+                }
+                continue
+            }
+
+            for (raw in decodedBlocks) {
+                when (raw.type) {
+                    "paragraph" -> {
+                        for (rawLine in raw.text.lines()) {
+                            val trimmed = rawLine.trim()
+                            if (trimmed.isEmpty()) continue
+                            val key = normalizeForComparison(trimmed).ifEmpty { trimmed.lowercase(Locale.ROOT) }
+                            if (seenParagraphKeys.add(key)) {
+                                blocks.add(NoteBlock.paragraph(trimmed))
+                            }
+                        }
+                    }
+                    "checkbox" -> {
+                        val trimmed = raw.text.trim().ifEmpty { "未命名待办" }
+                        val key = normalizeForComparison(trimmed).ifEmpty { trimmed.lowercase(Locale.ROOT) }
+                        if (raw.reminderId != null) hadReminders = true
+                        val existingIdx = seenCheckboxIndex[key]
+                        if (existingIdx == null) {
+                            val fresh = NoteBlock.checkbox(
+                                text = trimmed,
+                                checked = raw.checked,
+                                dueDate = raw.dueDate,
+                                reminderId = null,
+                                occurrenceId = null,
+                            )
+                            seenCheckboxIndex[key] = blocks.size
+                            blocks.add(fresh)
+                            preservedCheckboxes++
+                        } else {
+                            val existing = blocks[existingIdx]
+                            val mergedChecked = existing.checked || raw.checked
+                            val mergedDue = existing.dueDate ?: raw.dueDate
+                            var updated = if (existing.checked != mergedChecked) existing.withChecked(mergedChecked) else existing
+                            if (updated.dueDate != mergedDue) {
+                                updated = updated.withTaskSchedule(dueDate = mergedDue, reminderId = null, occurrenceId = null)
+                            }
+                            blocks[existingIdx] = updated
+                        }
+                    }
+                    "image", "audio", "video" -> {
+                        val attId = raw.attachmentId ?: continue
+                        if (seenAttachmentIds.add(attId)) {
+                            blocks.add(NoteBlock.attachment(raw.type, attId))
+                            preservedAttachments++
+                        }
+                    }
+                    "reference" -> {
+                        val targetId = raw.referenceTarget ?: continue
+                        if (moveDuplicatesToTrash && targetId in sourceNoteIds) continue
+                        val refKey = "$targetId|${raw.referenceTargetBlockId.orEmpty()}|${raw.referenceStart ?: -1}|${raw.referenceEnd ?: -1}"
+                        if (seenRefKeys.add(refKey)) {
+                            val label = labelsByBlockId[raw.id]?.takeIf { it.isNotBlank() } ?: "关联笔记"
+                            val freshRef = NoteBlock.reference(
+                                noteId = targetId,
+                                revision = raw.referenceRevision ?: 1L,
+                                label = label,
+                                targetBlockId = raw.referenceTargetBlockId,
+                                start = raw.referenceStart,
+                                end = raw.referenceEnd,
+                            )
+                            blockRefLabels[freshRef.id] = label
+                            blocks.add(freshRef)
+                            preservedReferences++
+                        }
+                    }
+                }
+            }
+        }
+
+        val previewLines = blocks.map { block ->
+            when (block.type) {
+                "checkbox" -> buildString {
+                    append(if (block.checked) "☑ " else "☐ ")
+                    append(block.text)
+                    block.dueDate?.let { append(" · $it") }
+                }
+                "image" -> "[图片附件]"
+                "audio" -> "[语音附件]"
+                "video" -> "[视频附件]"
+                "reference" -> "@ ${blockRefLabels[block.id] ?: "关联笔记"}"
+                else -> block.text
+            }
+        }
+
+        return MergedDuplicateContent(
+            blocks = blocks,
+            previewLines = previewLines,
+            preservedCheckboxCount = preservedCheckboxes,
+            preservedAttachmentCount = preservedAttachments,
+            preservedReferenceCount = preservedReferences,
+            hadRemindersInSources = hadReminders,
+        )
+    }
+
+    private fun extractReferenceLabels(documentJson: String): Map<String, String> = runCatching {
+        val root = MiniJson.parseObject(documentJson)
+        val rawBlocks = root["blocks"] as? List<*> ?: return@runCatching emptyMap()
+        val labels = HashMap<String, String>()
+        for (entry in rawBlocks) {
+            @Suppress("UNCHECKED_CAST")
+            val obj = entry as? Map<String, Any?> ?: continue
+            if (obj["type"]?.toString() != "reference") continue
+            val id = obj["id"]?.toString() ?: continue
+            val label = obj["label"]?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+            labels[id] = label
+        }
+        labels
+    }.getOrDefault(emptyMap())
 
     private fun extractNoteParagraphLines(note: NoteEntity): List<String> {
         val fromDocument = runCatching {

@@ -242,6 +242,7 @@ internal object LocalRetrievalEngine {
         expandedIncludeTags: Set<String>,
         expandedExcludeTags: Set<String>,
         excludedNoteIds: Set<String>,
+        expandedIncludeTagGroups: List<Set<String>> = emptyList(),
     ): Boolean {
         if (note.deletedAt != null) return false
         if (note.id in excludedNoteIds) return false
@@ -257,7 +258,11 @@ internal object LocalRetrievalEngine {
         if (scope.untagged && noteTagIds.isNotEmpty()) return false
         if (scope.includeTags.isNotEmpty()) {
             if (scope.matchAll) {
-                if (!scope.includeTags.all { it in noteTagIds }) return false
+                if (expandedIncludeTagGroups.isNotEmpty()) {
+                    if (!expandedIncludeTagGroups.all { group -> noteTagIds.any { it in group } }) return false
+                } else if (!scope.includeTags.all { it in noteTagIds }) {
+                    return false
+                }
             } else {
                 if (noteTagIds.none { it in expandedIncludeTags }) return false
             }
@@ -268,6 +273,13 @@ internal object LocalRetrievalEngine {
         if (scope.from != null && (axisInstant == null || axisInstant < scope.from)) return false
         if (scope.until != null && (axisInstant == null || axisInstant >= scope.until)) return false
         return true
+    }
+
+    fun expandTagGroups(ids: Set<String>, allTags: List<TagEntity>, descendants: Boolean): List<Set<String>> {
+        if (ids.isEmpty()) return emptyList()
+        return ids.map { id ->
+            if (descendants) tagSubtree(allTags, id) else setOf(id)
+        }
     }
 
     fun expandTagSelection(ids: Set<String>, allTags: List<TagEntity>, descendants: Boolean): Set<String> {
@@ -331,6 +343,7 @@ internal object LocalRetrievalEngine {
     ): FindSearchResult {
         val tagsById = tags.associateBy { it.id }
         val expandedInclude = expandTagSelection(scope.includeTags, tags, scope.descendants)
+        val expandedIncludeGroups = expandTagGroups(scope.includeTags, tags, scope.descendants)
         val expandedExclude = expandTagSelection(scope.excludeTags, tags, scope.descendants)
         val eligibleNotes = allNotes.filter { note ->
             isScopeEligible(
@@ -341,6 +354,7 @@ internal object LocalRetrievalEngine {
                 expandedIncludeTags = expandedInclude,
                 expandedExcludeTags = expandedExclude,
                 excludedNoteIds = excludedNoteIds,
+                expandedIncludeTagGroups = expandedIncludeGroups,
             )
         }
         val chunksByNote = allChunks.groupBy { it.noteId }

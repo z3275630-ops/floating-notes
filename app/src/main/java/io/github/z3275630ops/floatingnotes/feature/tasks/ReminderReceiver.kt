@@ -42,9 +42,12 @@ internal class ReminderReceiver : BroadcastReceiver() {
                 ReminderScheduler.ACTION_FIRE_REMINDER -> {
                     val reminderId = intent.getStringExtra(ReminderScheduler.EXTRA_REMINDER_ID) ?: return
                     val expectedOccurrenceId = intent.getStringExtra(ReminderScheduler.EXTRA_OCCURRENCE_ID)
+                    val expectedRevision = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_REVISION, -1L)
+                        .takeIf { it > 0L }
                     val payload = repository.prepareReminderDelivery(
                         reminderId = reminderId,
                         expectedOccurrenceId = expectedOccurrenceId,
+                        expectedRevision = expectedRevision,
                         now = now,
                     ) ?: run {
                         ReminderScheduler.cancelNotification(appContext, reminderId)
@@ -66,12 +69,15 @@ internal class ReminderReceiver : BroadcastReceiver() {
                     val blockId = intent.getStringExtra(ReminderScheduler.EXTRA_BLOCK_ID) ?: return
                     val reminderId = intent.getStringExtra(ReminderScheduler.EXTRA_REMINDER_ID)
                     val occurrenceId = intent.getStringExtra(ReminderScheduler.EXTRA_OCCURRENCE_ID)
+                    val expectedRevision = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_REVISION, -1L)
+                        .takeIf { it > 0L }
                     reminderId?.let { ReminderScheduler.cancelNotification(appContext, it) }
                     val result = repository.completeFromNotification(
                         noteId = noteId,
                         blockId = blockId,
                         expectedReminderId = reminderId,
                         expectedOccurrenceId = occurrenceId,
+                        expectedRevision = expectedRevision,
                         zoneId = zoneId,
                         now = now,
                     )
@@ -83,12 +89,15 @@ internal class ReminderReceiver : BroadcastReceiver() {
                 ReminderScheduler.ACTION_SNOOZE_TASK -> {
                     val reminderId = intent.getStringExtra(ReminderScheduler.EXTRA_REMINDER_ID) ?: return
                     val occurrenceId = intent.getStringExtra(ReminderScheduler.EXTRA_OCCURRENCE_ID)
+                    val expectedRevision = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_REVISION, -1L)
+                        .takeIf { it > 0L }
                     ReminderScheduler.cancelNotification(appContext, reminderId)
                     val snoozed = repository.snoozeReminder(
                         reminderId = reminderId,
                         snoozeMinutes = 15L,
                         now = now,
                         expectedOccurrenceId = occurrenceId,
+                        expectedRevision = expectedRevision,
                     )
                     if (snoozed != null) {
                         ReminderScheduler.scheduleReminder(appContext, snoozed)

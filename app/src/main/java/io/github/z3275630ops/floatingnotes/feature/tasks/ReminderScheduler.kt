@@ -48,6 +48,7 @@ internal object ReminderScheduler {
     const val EXTRA_OPEN_TASKS = "extra_open_tasks"
     const val EXTRA_REMINDER_ID = "extra_reminder_id"
     const val EXTRA_OCCURRENCE_ID = "extra_occurrence_id"
+    const val EXTRA_REMINDER_REVISION = "extra_reminder_revision"
 
     fun capability(context: Context): ReminderCapability = ReminderCapability(
         notificationsEnabled = notificationsGranted(context),
@@ -307,6 +308,7 @@ internal object ReminderScheduler {
                 noteId = reminder.noteId,
                 blockId = reminder.blockId,
                 occurrenceId = reminder.occurrenceId,
+                revision = reminder.revision,
             ),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -317,6 +319,7 @@ internal object ReminderScheduler {
         noteId: String,
         blockId: String,
         occurrenceId: String?,
+        revision: Long = -1L,
     ): Intent = Intent(context, ReminderReceiver::class.java).apply {
         action = ACTION_FIRE_REMINDER
         data = "floatingnotes://reminder/$reminderId/fire".toUri()
@@ -324,6 +327,7 @@ internal object ReminderScheduler {
         putExtra(EXTRA_NOTE_ID, noteId)
         putExtra(EXTRA_BLOCK_ID, blockId)
         occurrenceId?.let { putExtra(EXTRA_OCCURRENCE_ID, it) }
+        if (revision > 0L) putExtra(EXTRA_REMINDER_REVISION, revision)
     }
 
     private fun actionIntent(
@@ -337,6 +341,7 @@ internal object ReminderScheduler {
         putExtra(EXTRA_NOTE_ID, reminder.noteId)
         putExtra(EXTRA_BLOCK_ID, reminder.blockId)
         reminder.occurrenceId?.let { putExtra(EXTRA_OCCURRENCE_ID, it) }
+        if (reminder.revision > 0L) putExtra(EXTRA_REMINDER_REVISION, reminder.revision)
     }
 
     private fun requestCodeFor(reminderId: String, kind: Int): Int =

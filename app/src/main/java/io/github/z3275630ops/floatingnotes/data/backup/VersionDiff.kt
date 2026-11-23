@@ -77,15 +77,19 @@ internal object VersionDiff {
     }
 
     /**
-     * Rewrites embedded reference targets and attachment IDs inside schema-v1 document JSON
-     * while preserving unknown fields/marks, returning the updated JSON and whether any block changed.
+     * Rewrites embedded reference targets, attachment IDs, and task reminder/occurrence IDs
+     * inside schema-v1 document JSON while preserving unknown fields/marks.
      */
     fun rewriteDocumentIds(
         documentJson: String,
         noteIdMap: Map<String, String>,
         attachmentIdMap: Map<String, String>,
+        reminderIdMap: Map<String, String> = emptyMap(),
+        occurrenceIdMap: Map<String, String> = emptyMap(),
     ): Pair<String, Boolean> {
-        if (noteIdMap.isEmpty() && attachmentIdMap.isEmpty()) return documentJson to false
+        if (noteIdMap.isEmpty() && attachmentIdMap.isEmpty() && reminderIdMap.isEmpty() && occurrenceIdMap.isEmpty()) {
+            return documentJson to false
+        }
         val root = MiniJson.parseObject(documentJson)
         val blocks = root.reqArray("blocks")
         var changed = false
@@ -113,6 +117,19 @@ internal object VersionDiff {
                 if (mappedAttachmentId != null && mappedAttachmentId != attachmentId) {
                     updated = LinkedHashMap(obj)
                     updated["attachment_id"] = mappedAttachmentId
+                    changed = true
+                }
+            } else if (type == "checkbox") {
+                val remId = obj["reminder_id"] as? String
+                val mappedRemId = remId?.let { reminderIdMap[it] }
+                if (mappedRemId != null && mappedRemId != remId) {
+                    updated = (updated ?: LinkedHashMap(obj)).apply { put("reminder_id", mappedRemId) }
+                    changed = true
+                }
+                val occId = obj["occurrence_id"] as? String
+                val mappedOccId = occId?.let { occurrenceIdMap[it] }
+                if (mappedOccId != null && mappedOccId != occId) {
+                    updated = (updated ?: LinkedHashMap(obj)).apply { put("occurrence_id", mappedOccId) }
                     changed = true
                 }
             }

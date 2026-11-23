@@ -69,6 +69,9 @@ internal interface AgentDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAction(action: AgentActionEntity): Long
 
+    @Query("DELETE FROM agent_actions WHERE action_id = :actionId")
+    suspend fun deleteAction(actionId: String)
+
     @Query("DELETE FROM agent_actions")
     suspend fun clearAllActions()
 

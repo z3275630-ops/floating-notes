@@ -53,6 +53,7 @@ internal class NotesRepository(private val database: NotesDatabase) {
         rows.mapNotNull { row ->
             val doc = runCatching { NoteDocument.decode(row.noteDocumentJson) }.getOrNull() ?: return@mapNotNull null
             val block = doc.findBlock(row.blockId)?.takeIf { it.type == "checkbox" } ?: return@mapNotNull null
+            val activeReminder = row.reminderStatus != ReminderStatus.CANCELLED.name
             TaskItemProjection(
                 noteId = row.noteId,
                 blockId = row.blockId,
@@ -64,16 +65,16 @@ internal class NotesRepository(private val database: NotesDatabase) {
                 notePreview = notePreview(row.noteTitle, row.noteSearchText),
                 noteArchived = row.noteArchivedAt != null,
                 noteUpdatedAt = row.noteUpdatedAt,
-                reminderId = row.reminderId ?: block.reminderId,
-                reminderZoneId = row.reminderZoneId,
-                reminderLocalDate = row.reminderLocalDate,
-                reminderLocalTime = row.reminderLocalTime,
-                triggerInstantMs = row.triggerInstantMs,
-                policy = ReminderPolicy.fromStored(row.reminderPolicy),
-                reminderStatus = row.reminderStatus?.let { ReminderStatus.fromStored(it) },
-                recurrence = RecurrenceRule.fromStored(row.reminderRecurrence),
-                snoozedUntilMs = row.snoozedUntilMs,
-                missedSummarized = row.missedSummarized ?: false,
+                reminderId = if (activeReminder) row.reminderId ?: block.reminderId else null,
+                reminderZoneId = if (activeReminder) row.reminderZoneId else null,
+                reminderLocalDate = if (activeReminder) row.reminderLocalDate else null,
+                reminderLocalTime = if (activeReminder) row.reminderLocalTime else null,
+                triggerInstantMs = if (activeReminder) row.triggerInstantMs else null,
+                policy = if (activeReminder) ReminderPolicy.fromStored(row.reminderPolicy) else ReminderPolicy.FOLLOW_LOCAL,
+                reminderStatus = if (activeReminder) row.reminderStatus?.let { ReminderStatus.fromStored(it) } else null,
+                recurrence = if (activeReminder) RecurrenceRule.fromStored(row.reminderRecurrence) else RecurrenceRule.NONE,
+                snoozedUntilMs = if (activeReminder) row.snoozedUntilMs else null,
+                missedSummarized = if (activeReminder) row.missedSummarized ?: false else false,
             )
         }
     }
@@ -219,6 +220,7 @@ internal class NotesRepository(private val database: NotesDatabase) {
         blockId: String,
         expectedReminderId: String? = null,
         expectedOccurrenceId: String? = null,
+        expectedRevision: Long? = null,
         zoneId: ZoneId = ZoneId.systemDefault(),
         now: Instant = Instant.now(),
     ): TaskToggleResult = database.withTransaction {
@@ -231,6 +233,9 @@ internal class NotesRepository(private val database: NotesDatabase) {
             return@withTransaction TaskToggleResult.Updated(note, reminder)
         }
         if (expectedOccurrenceId != null && block.occurrenceId != null && block.occurrenceId != expectedOccurrenceId) {
+            return@withTransaction TaskToggleResult.Updated(note, reminder)
+        }
+        if (expectedRevision != null && expectedRevision > 0L && reminder != null && reminder.revision != expectedRevision) {
             return@withTransaction TaskToggleResult.Updated(note, reminder)
         }
         if (block.checked) {
@@ -331,6 +336,8 @@ internal class NotesRepository(private val database: NotesDatabase) {
             updatedAt = timeStr,
             revision = note.revision + 1L,
             contentHash = hash(updatedJson),
+            lastDraftId = newId(),
+            committedSeq = 0L,
         )
         writeRevision(updatedNote, "task")
         replaceNoteTaskIndex(updatedNote.id, updatedDoc)
@@ -361,6 +368,8 @@ internal class NotesRepository(private val database: NotesDatabase) {
                 updatedAt = timeStr,
                 revision = note.revision + 1L,
                 contentHash = hash(updatedJson),
+                lastDraftId = newId(),
+                committedSeq = 0L,
             )
             writeRevision(updatedNote, "task")
             replaceNoteTaskIndex(updatedNote.id, updatedDoc)
@@ -372,10 +381,17 @@ internal class NotesRepository(private val database: NotesDatabase) {
         snoozeMinutes: Long = 15L,
         now: Instant = Instant.now(),
         expectedOccurrenceId: String? = null,
+        expectedRevision: Long? = null,
     ): ReminderEntity? = database.withTransaction {
         require(snoozeMinutes > 0L)
         val reminder = taskDao.reminder(reminderId) ?: return@withTransaction null
+        if (reminder.statusEnum == ReminderStatus.CANCELLED || reminder.statusEnum == ReminderStatus.COMPLETED) {
+            return@withTransaction null
+        }
         if (expectedOccurrenceId != null && reminder.occurrenceId != null && reminder.occurrenceId != expectedOccurrenceId) {
+            return@withTransaction null
+        }
+        if (expectedRevision != null && expectedRevision > 0L && reminder.revision != expectedRevision) {
             return@withTransaction null
         }
         val timeStr = timestamp.format(now)
@@ -604,11 +620,15 @@ internal class NotesRepository(private val database: NotesDatabase) {
     suspend fun prepareReminderDelivery(
         reminderId: String,
         expectedOccurrenceId: String? = null,
+        expectedRevision: Long? = null,
         now: Instant = Instant.now(),
     ): ReminderDeliveryPayload? = database.withTransaction {
         val reminder = taskDao.reminder(reminderId) ?: return@withTransaction null
         if (reminder.statusEnum != ReminderStatus.ACTIVE) return@withTransaction null
         if (expectedOccurrenceId != null && reminder.occurrenceId != null && reminder.occurrenceId != expectedOccurrenceId) {
+            return@withTransaction null
+        }
+        if (expectedRevision != null && expectedRevision > 0L && reminder.revision != expectedRevision) {
             return@withTransaction null
         }
         val rawNote = dao.note(reminder.noteId)
@@ -743,6 +763,8 @@ internal class NotesRepository(private val database: NotesDatabase) {
             updatedAt = timeStr,
             revision = note.revision + 1L,
             contentHash = hash(updatedJson),
+            lastDraftId = newId(),
+            committedSeq = 0L,
         )
         writeRevision(updatedNote, "task")
         replaceNoteTaskIndex(updatedNote.id, updatedDoc)
@@ -1146,7 +1168,35 @@ internal class NotesRepository(private val database: NotesDatabase) {
             zoneId = zoneId,
             now = nowInstant,
         )
-        val reminderSync = reconcileTimeChangeLocked(zoneId, nowInstant)
+        val extraCancelledIds = mutableListOf<String>()
+        val restoredBlocksById = restoredDoc.blocks
+            .filter { it.type == "checkbox" }
+            .associateBy(NoteBlock::id)
+        for (rem in taskDao.remindersForNote(noteId)) {
+            if (rem.statusEnum != ReminderStatus.ACTIVE && rem.statusEnum != ReminderStatus.MISSED) continue
+            val restoredBlock = restoredBlocksById[rem.blockId]
+            val dateMismatch = restoredBlock != null &&
+                rem.localDate != null &&
+                restoredBlock.dueDate != null &&
+                restoredBlock.dueDate != rem.localDate
+            if (restoredBlock == null || restoredBlock.checked || restoredBlock.reminderId == null || dateMismatch) {
+                taskDao.upsertReminder(
+                    rem.copy(
+                        status = ReminderStatus.CANCELLED.name,
+                        snoozedUntilMs = null,
+                        revision = rem.revision + 1L,
+                        updatedAt = ts,
+                    ),
+                )
+                extraCancelledIds.add(rem.id)
+            }
+        }
+        val baseSync = reconcileTimeChangeLocked(zoneId, nowInstant)
+        val reminderSync = if (extraCancelledIds.isEmpty()) {
+            baseSync
+        } else {
+            baseSync.copy(cancelledReminderIds = (baseSync.cancelledReminderIds + extraCancelledIds).distinct())
+        }
         database.organization().clearLinks(restoredNote.id)
         database.organization().insertLinks(restoredDoc.linksFrom(restoredNote.id))
         RestoreVersionResult.Restored(

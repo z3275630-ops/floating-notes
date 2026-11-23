@@ -191,8 +191,11 @@ internal class DiscoveryRepository(
         )
         val cards = cardIds.mapNotNull { id ->
             val note = notesById[id]?.takeIf { it.deletedAt == null } ?: return@mapNotNull null
-            val tIds = noteTagIdsMap[id].orEmpty().toList()
-            val tNames = tIds.mapNotNull { tagsById[it]?.name }.sorted()
+            val sortedTags = noteTagIdsMap[id].orEmpty()
+                .mapNotNull { tid -> tagsById[tid]?.let { tid to it.name } }
+                .sortedBy { it.second }
+            val tIds = sortedTags.map { it.first }
+            val tNames = sortedTags.map { it.second }
             val fullText = note.searchText.ifBlank { note.title.orEmpty() }
             val scheduleReason = fsrsStates[id]?.scheduleReason.orEmpty()
             val keySentences = if (fullText.length > 160) {
@@ -774,30 +777,30 @@ internal class DiscoveryRepository(
         bridge: DualCollisionBridge?,
         userReflection: String,
         farFetched: Boolean,
-        actionId: String = "dual_collision:${pair.pairId}",
+        actionId: String = "dual_collision:${pair.pairId}:${pair.leftRevision}_${pair.rightRevision}",
         now: Instant = Instant.now(),
     ): DualCollisionSaveResult = withContext(Dispatchers.IO) {
         val agentDao = database.agent()
-        val existing = agentDao.actionById(actionId)
-        if (existing != null && existing.status == "committed") {
-            return@withContext DualCollisionSaveResult.AlreadySaved(existing.targetNoteId)
-        }
+        val savedResult = database.withTransaction {
+            val existing = agentDao.actionById(actionId)
+            if (existing != null && existing.status == "committed") {
+                return@withTransaction DualCollisionSaveResult.AlreadySaved(existing.targetNoteId)
+            }
 
-        val leftFresh = notesDao.note(pair.leftNote.id)
-        val rightFresh = notesDao.note(pair.rightNote.id)
-        if (leftFresh == null || rightFresh == null ||
-            leftFresh.deletedAt != null || rightFresh.deletedAt != null ||
-            leftFresh.revision != pair.leftRevision || rightFresh.revision != pair.rightRevision
-        ) {
-            return@withContext DualCollisionSaveResult.SourceChangedOrDeleted
-        }
+            val leftFresh = notesDao.note(pair.leftNote.id)
+            val rightFresh = notesDao.note(pair.rightNote.id)
+            if (leftFresh == null || rightFresh == null ||
+                leftFresh.deletedAt != null || rightFresh.deletedAt != null ||
+                leftFresh.revision != pair.leftRevision || rightFresh.revision != pair.rightRevision
+            ) {
+                return@withTransaction DualCollisionSaveResult.SourceChangedOrDeleted
+            }
 
-        val revJson = JSONObject()
-            .put(leftFresh.id, leftFresh.revision)
-            .put(rightFresh.id, rightFresh.revision)
-            .toString()
+            val revJson = JSONObject()
+                .put(leftFresh.id, leftFresh.revision)
+                .put(rightFresh.id, rightFresh.revision)
+                .toString()
 
-        val saved = database.withTransaction {
             val blocks = mutableListOf<NoteBlock>()
             blocks.add(NoteBlock.paragraph("【双卡对撞】${pair.leftTitle} × ${pair.rightTitle}"))
             val reflection = userReflection.trim()
@@ -836,10 +839,16 @@ internal class DiscoveryRepository(
                     createdAt = isoFormatter.format(now),
                 ),
             )
-            created
+            DualCollisionSaveResult.Saved(created.id, LocalRetrievalEngine.displayNoteTitle(created)) to created
         }
-        syncChunksForNote(saved)
-        DualCollisionSaveResult.Saved(saved.id, LocalRetrievalEngine.displayNoteTitle(saved))
+
+        if (savedResult is DualCollisionSaveResult) {
+            return@withContext savedResult
+        }
+        @Suppress("UNCHECKED_CAST")
+        val savedPair = savedResult as Pair<DualCollisionSaveResult.Saved, NoteEntity>
+        syncChunksForNote(savedPair.second)
+        savedPair.first
     }
 
     private suspend fun attachTagByName(noteId: String, tagName: String) {

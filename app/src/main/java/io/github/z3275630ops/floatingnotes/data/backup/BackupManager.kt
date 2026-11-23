@@ -7,6 +7,7 @@ import androidx.room.withTransaction
 import io.github.z3275630ops.floatingnotes.BuildConfig
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
+import io.github.z3275630ops.floatingnotes.data.agent.AgentActionEntity
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentStore
 import io.github.z3275630ops.floatingnotes.data.local.DraftEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
@@ -88,7 +89,10 @@ internal class BackupManager(
         }
 
         val journal = runCatching { parseRestoreJournal(journalFile.readText(StandardCharsets.UTF_8)) }.getOrNull()
-        val committed = journal?.phase == RestorePhase.DB_COMMITTED
+        val sentinelId = journal?.let { restoreCommitActionId(it.id) }
+        val hasCommitSentinel = sentinelId != null &&
+            runCatching { database.agent().actionById(sentinelId) != null }.getOrDefault(false)
+        val committed = journal?.phase == RestorePhase.DB_COMMITTED || hasCommitSentinel
         if (committed) {
             val stageDir = stagingDirForRestore(journal!!.id)
             if (stageDir.isDirectory) {
@@ -96,6 +100,9 @@ internal class BackupManager(
                     stagingFolder = stageDir,
                     allowOverwrite = journal.mode == RestoreMode.REPLACE_ALL,
                 )
+            }
+            if (sentinelId != null) {
+                runCatching { database.agent().deleteAction(sentinelId) }
             }
         }
         if (journal != null) {
@@ -138,7 +145,7 @@ internal class BackupManager(
         val snapshot = captureSnapshot(now)
         writeLeases(snapshot.attachments.map { it.id })
         try {
-            BackupCodec.writeBackupZip(
+            val manifest = BackupCodec.writeBackupZip(
                 snapshot = snapshot,
                 targetZipFile = targetZipFile,
                 attachmentFileProvider = { id ->
@@ -146,6 +153,8 @@ internal class BackupManager(
                     File(folder, "original").takeIf { it.isFile }
                 },
             )
+            BackupCodec.readAndValidateArchive(targetZipFile, attachmentStagingDir = null)
+            manifest
         } finally {
             leasesFile.delete()
         }
@@ -406,12 +415,14 @@ internal class BackupManager(
             )
 
             val dbOutcome = applySnapshotToDatabase(
+                restoreId = restoreId,
                 snapshot = parsed.snapshot,
                 mode = mode,
                 attachmentIdMap = attachmentIdMap,
                 now = now,
                 zoneId = zoneId,
             )
+            dbCommitted = true
 
             writeJournal(
                 RestoreJournalRecord(
@@ -424,13 +435,13 @@ internal class BackupManager(
                     updatedAt = timestamp.format(now),
                 ),
             )
-            dbCommitted = true
 
             beforePromoteHook?.invoke()
             attachments.promoteStagedAttachments(
                 stagingFolder = stagingDir,
                 allowOverwrite = mode == RestoreMode.REPLACE_ALL,
             )
+            runCatching { database.agent().deleteAction(restoreCommitActionId(restoreId)) }
             stagingDir.deleteRecursively()
             pendingRestoreFile.delete()
             // Remove older rollback snapshots once new restore & rollback finished safely.
@@ -503,6 +514,7 @@ internal class BackupManager(
     )
 
     private suspend fun applySnapshotToDatabase(
+        restoreId: String,
         snapshot: BackupSnapshot,
         mode: RestoreMode,
         attachmentIdMap: Map<String, String>,
@@ -615,6 +627,19 @@ internal class BackupManager(
                 .map { it.toEntity() }
             if (occurrences.isNotEmpty()) taskDao.insertOccurrences(occurrences)
 
+            agentDao.insertAction(
+                AgentActionEntity(
+                    actionId = restoreCommitActionId(restoreId),
+                    runId = RESTORE_COMMIT_RUN_ID,
+                    actionType = "backup_restore_commit",
+                    targetNoteId = null,
+                    sourceRevisionsJson = "{}",
+                    status = "committed",
+                    summary = mode.name,
+                    createdAt = timeStr,
+                ),
+            )
+
             DbRestoreSummary(
                 importedNotes = notes.size,
                 skippedOrRenamedNotes = 0,
@@ -703,7 +728,59 @@ internal class BackupManager(
                 }
             }
 
-            // Pass 2: rewrite embedded reference targets & remapped attachment IDs inside documentJson.
+            // Precompute reminder and occurrence ID remapping before Pass 2 document rewriting.
+            val existingReminderIds = taskDao.allReminders().mapTo(HashSet()) { it.id }
+            val reminderIdMap = HashMap<String, String>()
+            val existingOccIds = taskDao.allOccurrences().mapTo(HashSet()) { it.id }
+            val occIdMap = HashMap<String, String>()
+
+            for (r in snapshot.reminders) {
+                if (r.noteId in skippedNoteIds) continue
+                val mappedNote = noteIdMap[r.noteId] ?: continue
+                val freshReminderId = if (r.id in existingReminderIds || mappedNote != r.noteId) newId() else r.id
+                existingReminderIds.add(freshReminderId)
+                reminderIdMap[r.id] = freshReminderId
+                r.occurrenceId?.takeIf { it.isNotBlank() }?.let { rawOccId ->
+                    if (!occIdMap.containsKey(rawOccId)) {
+                        val mappedOcc = if (rawOccId in existingOccIds || mappedNote != r.noteId) newId() else rawOccId
+                        existingOccIds.add(mappedOcc)
+                        occIdMap[rawOccId] = mappedOcc
+                    }
+                }
+            }
+            for (occ in snapshot.taskOccurrences) {
+                if (occ.noteId in skippedNoteIds) continue
+                val mappedNote = noteIdMap[occ.noteId] ?: continue
+                if (!occIdMap.containsKey(occ.id)) {
+                    val occId = if (occ.id in existingOccIds || mappedNote != occ.noteId) newId() else occ.id
+                    existingOccIds.add(occId)
+                    occIdMap[occ.id] = occId
+                }
+            }
+            for (incoming in snapshot.notes) {
+                if (incoming.id in skippedNoteIds) continue
+                val mappedNote = noteIdMap[incoming.id] ?: continue
+                for (block in VersionDiff.parseBlocks(incoming.documentJson)) {
+                    if (block.type == "checkbox") {
+                        (block.raw["reminder_id"] as? String)?.takeIf { it.isNotBlank() }?.let { rawRemId ->
+                            if (!reminderIdMap.containsKey(rawRemId) && (rawRemId in existingReminderIds || mappedNote != incoming.id)) {
+                                val freshRemId = newId()
+                                existingReminderIds.add(freshRemId)
+                                reminderIdMap[rawRemId] = freshRemId
+                            }
+                        }
+                        (block.raw["occurrence_id"] as? String)?.takeIf { it.isNotBlank() }?.let { rawOccId ->
+                            if (!occIdMap.containsKey(rawOccId) && (rawOccId in existingOccIds || mappedNote != incoming.id)) {
+                                val mappedOcc = newId()
+                                existingOccIds.add(mappedOcc)
+                                occIdMap[rawOccId] = mappedOcc
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pass 2: rewrite embedded reference targets, attachment IDs & task IDs inside documentJson.
             val notesToInsert = ArrayList<NoteEntity>()
             var importedCount = 0
             var skippedOrRenamed = 0
@@ -718,6 +795,8 @@ internal class BackupManager(
                     documentJson = incoming.documentJson,
                     noteIdMap = noteIdMap,
                     attachmentIdMap = attachmentIdMap,
+                    reminderIdMap = reminderIdMap,
+                    occurrenceIdMap = occIdMap,
                 )
                 val normalizedEntity = if (docChanged) {
                     val decoded = NoteDocument.decode(rewrittenDoc)
@@ -761,6 +840,8 @@ internal class BackupManager(
                         documentJson = it.documentJson,
                         noteIdMap = noteIdMap,
                         attachmentIdMap = attachmentIdMap,
+                        reminderIdMap = reminderIdMap,
+                        occurrenceIdMap = occIdMap,
                     )
                     NoteVersionEntity(
                         noteId = noteIdMap.getValue(it.noteId),
@@ -781,18 +862,32 @@ internal class BackupManager(
             val draftsToInsert = ArrayList<DraftEntity>()
             for (d in snapshot.drafts) {
                 if (d.noteId in skippedNoteIds) continue
-                val mappedNoteId = noteIdMap[d.noteId] ?: continue
-                val mappedSlot = if (d.slot == "note:${d.noteId}" && mappedNoteId != d.noteId) {
+                val hasSavedNoteMapping = noteIdMap.containsKey(d.noteId)
+                val mappedNoteId = noteIdMap[d.noteId] ?: if (
+                    d.noteId in existingNotes || d.noteId in noteIdMap.values
+                ) {
+                    newId()
+                } else {
+                    d.noteId
+                }
+                val baseSlot = if (d.slot == "note:${d.noteId}" && mappedNoteId != d.noteId) {
                     "note:$mappedNoteId"
                 } else {
                     d.slot
                 }
-                if (mappedSlot in existingDraftSlots) continue
+                val (mappedSlot, mappedSourceType) = if (baseSlot in existingDraftSlots) {
+                    val shareSlot = "capture:restore-${newId()}"
+                    shareSlot to (if (!hasSavedNoteMapping && d.sourceType == "manual") "share" else d.sourceType)
+                } else {
+                    baseSlot to (if (!hasSavedNoteMapping && baseSlot.startsWith("capture:")) "share" else d.sourceType)
+                }
                 existingDraftSlots.add(mappedSlot)
                 val (rewrittenDraftDoc, _) = VersionDiff.rewriteDocumentIds(
                     documentJson = d.documentJson,
                     noteIdMap = noteIdMap,
                     attachmentIdMap = attachmentIdMap,
+                    reminderIdMap = reminderIdMap,
+                    occurrenceIdMap = occIdMap,
                 )
                 draftsToInsert.add(
                     d.toEntity().copy(
@@ -800,6 +895,7 @@ internal class BackupManager(
                         slot = mappedSlot,
                         noteId = mappedNoteId,
                         documentJson = rewrittenDraftDoc,
+                        sourceType = mappedSourceType,
                     ),
                 )
             }
@@ -845,18 +941,18 @@ internal class BackupManager(
             val tasksToInsert = rebuildTaskIndexForNotes(notesToInsert)
             if (tasksToInsert.isNotEmpty()) taskDao.insertTasks(tasksToInsert)
 
-            val existingReminderIds = taskDao.allReminders().mapTo(HashSet()) { it.id }
-            val reminderIdMap = HashMap<String, String>()
             val remindersToInsert = ArrayList<ReminderEntity>()
             val activeToSchedule = ArrayList<ReminderEntity>()
             var pausedPastDue = 0
             for (r in snapshot.reminders) {
                 if (r.noteId in skippedNoteIds) continue
                 val mappedNote = noteIdMap[r.noteId]?.takeIf { it in insertedNoteIds } ?: continue
-                val freshReminderId = if (r.id in existingReminderIds || mappedNote != r.noteId) newId() else r.id
-                existingReminderIds.add(freshReminderId)
-                reminderIdMap[r.id] = freshReminderId
-                val raw = r.toEntity().copy(id = freshReminderId, noteId = mappedNote)
+                val freshReminderId = reminderIdMap[r.id] ?: continue
+                val raw = r.toEntity().copy(
+                    id = freshReminderId,
+                    noteId = mappedNote,
+                    occurrenceId = r.occurrenceId?.let { occIdMap[it] ?: it },
+                )
                 val (adjusted, paused, isActive) = normalizeRestoredReminder(
                     reminder = raw,
                     isTrashed = mappedNote in deletedInsertedNoteIds,
@@ -870,13 +966,11 @@ internal class BackupManager(
             }
             if (remindersToInsert.isNotEmpty()) taskDao.insertReminders(remindersToInsert)
 
-            val existingOccIds = taskDao.allOccurrences().mapTo(HashSet()) { it.id }
             val occToInsert = snapshot.taskOccurrences
                 .filter { it.noteId !in skippedNoteIds }
                 .mapNotNull { occ ->
                     val mappedNote = noteIdMap[occ.noteId]?.takeIf { it in insertedNoteIds } ?: return@mapNotNull null
-                    val occId = if (occ.id in existingOccIds || mappedNote != occ.noteId) newId() else occ.id
-                    existingOccIds.add(occId)
+                    val occId = occIdMap[occ.id] ?: return@mapNotNull null
                     occ.toEntity().copy(
                         id = occId,
                         noteId = mappedNote,
@@ -884,6 +978,19 @@ internal class BackupManager(
                     )
                 }
             if (occToInsert.isNotEmpty()) taskDao.insertOccurrences(occToInsert)
+
+            agentDao.insertAction(
+                AgentActionEntity(
+                    actionId = restoreCommitActionId(restoreId),
+                    runId = RESTORE_COMMIT_RUN_ID,
+                    actionType = "backup_restore_commit",
+                    targetNoteId = null,
+                    sourceRevisionsJson = "{}",
+                    status = "committed",
+                    summary = mode.name,
+                    createdAt = timeStr,
+                ),
+            )
 
             DbRestoreSummary(
                 importedNotes = importedCount,
@@ -1236,4 +1343,10 @@ internal class BackupManager(
         recurrence = recurrence,
         completedAt = completedAt,
     )
+
+    companion object {
+        private const val RESTORE_COMMIT_RUN_ID = "__system_restore__"
+
+        internal fun restoreCommitActionId(restoreId: String): String = "__restore_commit__:$restoreId"
+    }
 }

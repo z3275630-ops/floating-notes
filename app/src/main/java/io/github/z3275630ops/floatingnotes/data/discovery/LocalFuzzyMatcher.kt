@@ -26,7 +26,7 @@ internal object LocalFuzzyMatcher {
         matchedSnippet = null,
     )
 
-    private val ASCII_WORD_REGEX = Regex("[a-z0-9]{4,}")
+    private val ASCII_WORD_REGEX = Regex("[A-Za-z0-9]{4,}")
     private const val TARGET_WINDOW_CHAR_LIMIT = 600
     private const val MIN_EDIT_SIMILARITY = 0.72
 
@@ -190,20 +190,19 @@ internal object LocalFuzzyMatcher {
             if (pinyinResult.matched) return pinyinResult
         }
 
-        // 3. Bounded edit distance.
+        // 3. Bounded edit distance (operate on original-string indices to avoid Unicode case-expansion out-of-bounds).
         val compactQuery = trimmed.filterNot { it.isWhitespace() }.lowercase(Locale.ROOT)
         val hasCjkInQuery = compactQuery.any { isCjk(it) }
         val boundedTarget = targetText.take(TARGET_WINDOW_CHAR_LIMIT)
-        val boundedLower = boundedTarget.lowercase(Locale.ROOT)
 
         if (hasCjkInQuery && compactQuery.length in 2..10) {
-            val cjkWindowMatch = matchCjkSlidingWindow(compactQuery, boundedTarget, boundedLower)
+            val cjkWindowMatch = matchCjkSlidingWindow(compactQuery, boundedTarget)
             if (cjkWindowMatch.matched) return cjkWindowMatch
         }
 
         // ASCII word token edit distance (only when query has no unmatched CJK characters).
         if (!hasCjkInQuery) {
-            val asciiTokenMatch = matchAsciiTokens(trimmed.lowercase(Locale.ROOT), boundedTarget, boundedLower)
+            val asciiTokenMatch = matchAsciiTokens(trimmed.lowercase(Locale.ROOT), boundedTarget)
             if (asciiTokenMatch.matched) return asciiTokenMatch
         }
 
@@ -220,7 +219,6 @@ internal object LocalFuzzyMatcher {
     private fun matchCjkSlidingWindow(
         compactQuery: String,
         targetOriginal: String,
-        targetLower: String,
     ): FuzzyMatchResult {
         val qLen = compactQuery.length
         val maxAllowedDist = when {
@@ -234,23 +232,24 @@ internal object LocalFuzzyMatcher {
         var bestSnippet: String? = null
 
         for (winLen in minWin..maxWin) {
-            if (winLen > targetLower.length) continue
-            for (start in 0..(targetLower.length - winLen)) {
-                val window = targetLower.substring(start, start + winLen)
-                if (window.first().isWhitespace() || window.last().isWhitespace()) continue
+            if (winLen > targetOriginal.length) continue
+            for (start in 0..(targetOriginal.length - winLen)) {
+                val rawWindow = targetOriginal.substring(start, start + winLen)
+                if (rawWindow.first().isWhitespace() || rawWindow.last().isWhitespace()) continue
+                val window = rawWindow.lowercase(Locale.ROOT)
                 if (qLen == 2 && !hasDirectCharOverlap(compactQuery, window)) continue
 
                 val dist = damerauLevenshtein(compactQuery, window, maxAllowedDist)
                 if (dist > maxAllowedDist) continue
 
-                val maxLen = maxOf(qLen, winLen)
+                val maxLen = maxOf(qLen, window.length)
                 val sim = 1.0 - dist.toDouble() / maxLen
                 if (qLen >= 6 && sim < MIN_EDIT_SIMILARITY) continue
 
                 val score = (0.55 + 0.25 * sim).coerceIn(0.50, 0.80)
                 if (score > bestScore) {
                     bestScore = score
-                    bestSnippet = targetOriginal.substring(start, start + winLen)
+                    bestSnippet = rawWindow
                 }
             }
         }
@@ -270,11 +269,10 @@ internal object LocalFuzzyMatcher {
     private fun matchAsciiTokens(
         queryLower: String,
         targetOriginal: String,
-        targetLower: String,
     ): FuzzyMatchResult {
         val queryTokens = ASCII_WORD_REGEX.findAll(queryLower).map { it.value }.toList()
         if (queryTokens.isEmpty()) return NO_MATCH
-        val targetTokens = ASCII_WORD_REGEX.findAll(targetLower).toList()
+        val targetTokens = ASCII_WORD_REGEX.findAll(targetOriginal).toList()
         if (targetTokens.isEmpty()) return NO_MATCH
 
         var simSum = 0.0
@@ -286,14 +284,15 @@ internal object LocalFuzzyMatcher {
             var tokenSnippet: String? = null
 
             for (tMatch in targetTokens) {
-                val tTok = tMatch.value
+                val rawTok = tMatch.value
+                val tTok = rawTok.lowercase(Locale.ROOT)
                 val dist = damerauLevenshtein(qTok, tTok, maxDist)
                 if (dist > maxDist) continue
                 val maxLen = maxOf(qTok.length, tTok.length)
                 val sim = 1.0 - dist.toDouble() / maxLen
                 if (sim >= MIN_EDIT_SIMILARITY && sim > tokenBestSim) {
                     tokenBestSim = sim
-                    tokenSnippet = targetOriginal.substring(tMatch.range.first, tMatch.range.last + 1)
+                    tokenSnippet = rawTok
                 }
             }
 
