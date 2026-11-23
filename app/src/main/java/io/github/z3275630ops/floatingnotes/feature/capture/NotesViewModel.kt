@@ -274,22 +274,38 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     internal val repository = NotesRepository(database)
     val taskPreferences = TaskPreferences(application)
     val attachments = AttachmentStore(application)
-    internal val backupManager = BackupManager(application, database, attachments)
+    internal val backupManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        BackupManager(application, database, attachments)
+    }
     val organization = OrganizationRepository(database)
-    val search = SearchRepository(database)
+    val search by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SearchRepository(database) }
     val explorePreferences = ExplorePreferences(application)
-    internal val widgetPreferences = WidgetPreferences(application)
-    internal val discovery = DiscoveryRepository(database, repository, explorePreferences)
-    internal val agentRepository = AgentRepository(database, repository, organization, discovery)
+    internal val widgetPreferences by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { WidgetPreferences(application) }
+    internal val discovery by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        DiscoveryRepository(database, repository, explorePreferences)
+    }
+    internal val agentRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AgentRepository(database, repository, organization, discovery)
+    }
     private val _agentState = MutableStateFlow(AgentUiState())
     val agentState: StateFlow<AgentUiState> = _agentState.asStateFlow()
     private var agentJob: Job? = null
+    private var agentRunsObserved = false
 
-    init {
+    fun ensureAgentRunsObserved() {
+        if (agentRunsObserved) return
+        agentRunsObserved = true
         viewModelScope.launch {
             agentRepository.observeRecentRuns(15).collect { runs ->
                 _agentState.update { it.copy(recentRuns = runs) }
             }
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            delay(1_200L)
+            ensureAgentRunsObserved()
         }
     }
     var editor by mutableStateOf<EditorSession?>(null)
@@ -308,14 +324,14 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         emit(emptyList())
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val trashedCount: StateFlow<Int> = trashedNotes
-        .map { it.size }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
-
     val trashedNoteIds: StateFlow<Set<String>> = repository.trashedNoteIds
         .map { it.toSet() }
         .catch { emit(emptySet()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    val trashedCount: StateFlow<Int> = trashedNoteIds
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     private val _historyState = MutableStateFlow(HistoryUiState())
     val historyState: StateFlow<HistoryUiState> = _historyState.asStateFlow()
@@ -370,6 +386,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     private var voiceRecorder: VoiceRecorder? = null
     private var voiceClock: Job? = null
     private var foreground = false
+    private var timeReconciledOnLaunch = false
     private var expiredTrashPurged = false
     private var pendingFocusBlockId: String? = null
 
@@ -379,16 +396,20 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     fun onForeground() {
         foreground = true
-        viewModelScope.launch {
+        val launchDelayMs = if (!timeReconciledOnLaunch) 650L else 0L
+        timeReconciledOnLaunch = true
+        viewModelScope.launch(Dispatchers.IO) {
+            if (launchDelayMs > 0L) delay(launchDelayMs)
             runCatching { reconcileTimeChange() }
         }
-        purgeExpiredTrashIfNeeded()
+        purgeExpiredTrashIfNeeded(initialDelayMs = launchDelayMs)
     }
 
-    private fun purgeExpiredTrashIfNeeded() {
+    private fun purgeExpiredTrashIfNeeded(initialDelayMs: Long = 0L) {
         if (expiredTrashPurged) return
         expiredTrashPurged = true
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (initialDelayMs > 0L) delay(initialDelayMs)
             withContext(NonCancellable) {
                 persistenceMutex.withLock {
                     runCatching {
@@ -2611,6 +2632,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     private fun executeAgentRun(skill: AgentSkill, prompt: String) {
+        ensureAgentRunsObserved()
         agentJob?.cancel()
         val current = _agentState.value
         val scope = NoteScope(
@@ -2667,6 +2689,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun loadPastAgentRun(run: AgentRunEntity) {
+        ensureAgentRunsObserved()
         val decoded = AgentRunResult.decode(run.resultJson) ?: return
         val pastSkill = AgentSkill.fromId(run.skillId)
         val pastScope = runCatching { NoteScope.decode(run.scopeJson) }.getOrDefault(NoteScope(aiOnly = true))

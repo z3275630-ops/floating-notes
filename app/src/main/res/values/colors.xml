@@ -1,3 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="window_mint">#BFEBD4</color>
+    <color name="window_canvas">#F6F4EF</color>
+    <color name="window_mint">#F6F4EF</color>
 </resources>

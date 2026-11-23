@@ -63,11 +63,15 @@ fun rememberGlassBackdrop(): GlassBackdrop {
 
 /** Record the scene beneath glass. Keep all GlassSurface instances outside this subtree. */
 fun Modifier.glassSource(backdrop: GlassBackdrop): Modifier =
-    onGloballyPositioned { backdrop.origin = it.positionInRoot() }
-        .drawWithContent {
-            backdrop.layer.record { this@drawWithContent.drawContent() }
-            drawLayer(backdrop.layer)
-        }
+    if (Build.VERSION.SDK_INT < 31) {
+        this
+    } else {
+        onGloballyPositioned { backdrop.origin = it.positionInRoot() }
+            .drawWithContent {
+                backdrop.layer.record { this@drawWithContent.drawContent() }
+                drawLayer(backdrop.layer)
+            }
+    }
 
 @Composable
 fun GlassSurface(

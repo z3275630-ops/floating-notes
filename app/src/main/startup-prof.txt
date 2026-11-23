@@ -1,0 +1,12 @@
+HSPLio/github/z3275630ops/floatingnotes/MainActivity**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/core/model/NoteDocument**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/data/local/NotesDatabase**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/data/local/NotesRepository**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/data/local/Organization**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/data/local/TaskReminder**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/feature/capture/NotesViewModel**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/feature/home/NotesShell**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/ui/designsystem/MintPalette**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/ui/designsystem/MintControls**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/ui/designsystem/MintIcons**->**(**)**
+HSPLio/github/z3275630ops/floatingnotes/ui/designsystem/GlassSurface**->**(**)**

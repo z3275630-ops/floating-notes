@@ -43,8 +43,8 @@ android {
         applicationId = "io.github.z3275630ops.floatingnotes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 27
-        versionName = "0.2.7-p1-polish.2"
+        versionCode = 28
+        versionName = "0.2.8-splash-startup.1"
         buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

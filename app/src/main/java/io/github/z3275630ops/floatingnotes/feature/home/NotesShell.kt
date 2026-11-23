@@ -148,7 +148,6 @@ internal fun NotesShell(
     var quickCaptureDismissPrompt by remember { mutableStateOf(false) }
     val notes by model.notes.collectAsStateWithLifecycle()
     val captures by model.captureDrafts.collectAsStateWithLifecycle()
-    val trashedNotes by model.trashedNotes.collectAsStateWithLifecycle()
     val trashedCount by model.trashedCount.collectAsStateWithLifecycle()
     val trashedNoteIds by model.trashedNoteIds.collectAsStateWithLifecycle()
     val historyState by model.historyState.collectAsStateWithLifecycle()
@@ -169,12 +168,21 @@ internal fun NotesShell(
     var sharingNoteId by rememberSaveable { mutableStateOf<String?>(null) }
     var exploreSectionIndex by rememberSaveable { mutableStateOf(0) }
     var showDraftsSheet by rememberSaveable { mutableStateOf(false) }
+    val trashedNotes by if (showTrash || showStatsSheet) {
+        model.trashedNotes.collectAsStateWithLifecycle()
+    } else {
+        remember { mutableStateOf(emptyList()) }
+    }
     val organization = model.organization
     val tags by organization.tags.collectAsStateWithLifecycle(emptyList())
     val notebooks by organization.notebooks.collectAsStateWithLifecycle(emptyList())
     val noteTags by organization.tagsByNote.collectAsStateWithLifecycle(emptyList())
     val notebookNotes by organization.notebookNotes.collectAsStateWithLifecycle(emptyList())
-    val links by organization.links.collectAsStateWithLifecycle(emptyList())
+    val links by if (page == Page.Explore || model.editor != null) {
+        organization.links.collectAsStateWithLifecycle(emptyList())
+    } else {
+        remember { mutableStateOf(emptyList()) }
+    }
     var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedNotebook by rememberSaveable { mutableStateOf<String?>(null) }
     var descendants by rememberSaveable { mutableStateOf(true) }
@@ -198,26 +206,32 @@ internal fun NotesShell(
         noteTags.filter { it.noteId in activeNoteIds }.groupingBy { it.tagId }.eachCount()
     }
 
-    val derivedTodoNoteIds = remember(notes) {
+    val activeTodoNoteIds = todoFilterNoteIds ?: remember(notes) {
         notes.filter { note ->
             runCatching {
                 NoteDocument.decode(note.documentJson).blocks.any { it.type == "checkbox" }
             }.getOrDefault(false)
         }.mapTo(hashSetOf()) { it.id }
     }
-    val derivedPendingTodosCount = remember(notes) {
+    val badgeTasksCount = pendingTasksCount ?: remember(notes) {
         notes.sumOf { note ->
             runCatching {
                 NoteDocument.decode(note.documentJson).blocks.count { it.type == "checkbox" && !it.checked }
             }.getOrDefault(0)
         }
     }
-    val activeTodoNoteIds = todoFilterNoteIds ?: derivedTodoNoteIds
-    val badgeTasksCount = pendingTasksCount ?: derivedPendingTodosCount
 
-    val tagScope = selectedTag?.let { if (descendants) tagSubtree(tags, it) else setOf(it) }
-    val tagMatches = noteTags.filter { tagScope != null && it.tagId in tagScope }.mapTo(hashSetOf()) { it.noteId }
-    val notebookMatches = notebookNotes.filter { it.notebookId == selectedNotebook }.mapTo(hashSetOf()) { it.noteId }
+    val tagScope = remember(tags, selectedTag, descendants) {
+        selectedTag?.let { if (descendants) tagSubtree(tags, it) else setOf(it) }
+    }
+    val tagMatches = remember(noteTags, tagScope) {
+        if (tagScope == null) emptySet()
+        else noteTags.filter { it.tagId in tagScope }.mapTo(hashSetOf()) { it.noteId }
+    }
+    val notebookMatches = remember(notebookNotes, selectedNotebook) {
+        if (selectedNotebook == null) emptySet()
+        else notebookNotes.filter { it.notebookId == selectedNotebook }.mapTo(hashSetOf()) { it.noteId }
+    }
     val keyword = rememberTextFieldState()
     var searchScopeJson by rememberSaveable { mutableStateOf(NoteScope().encode()) }
     val searchScope = remember(searchScopeJson) { NoteScope.decode(searchScopeJson) }
@@ -305,6 +319,12 @@ internal fun NotesShell(
             } finally {
                 if (switching) switchingNote = false
             }
+        }
+    }
+
+    LaunchedEffect(page) {
+        if (page == Page.Agent) {
+            model.ensureAgentRunsObserved()
         }
     }
 
@@ -814,11 +834,15 @@ internal fun NotesShell(
                                 }
                             }
                         } else {
-                            val archivedFiltered = notes.filter { (it.archivedAt != null) == showArchive }
-                            val recordNotes = if (!showArchive && recordFilter == RecordFilter.Todos) {
-                                archivedFiltered.filter { it.id in activeTodoNoteIds }
-                            } else {
-                                archivedFiltered
+                            val archivedFiltered = remember(notes, showArchive) {
+                                notes.filter { (it.archivedAt != null) == showArchive }
+                            }
+                            val recordNotes = remember(archivedFiltered, showArchive, recordFilter, activeTodoNoteIds) {
+                                if (!showArchive && recordFilter == RecordFilter.Todos) {
+                                    archivedFiltered.filter { it.id in activeTodoNoteIds }
+                                } else {
+                                    archivedFiltered
+                                }
                             }
                             val recordBuckets = remember(recordNotes, showArchive) {
                                 bucketNotesForAppleGroups(recordNotes, includePinnedBucket = !showArchive)
