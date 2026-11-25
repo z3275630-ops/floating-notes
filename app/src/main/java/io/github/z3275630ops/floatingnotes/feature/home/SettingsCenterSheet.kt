@@ -117,6 +117,8 @@ internal fun SettingsCenterSheet(
     onRestoreDiscoveryExclusions: () -> Unit,
     modifier: Modifier = Modifier,
     onRefreshAlarmHealth: () -> Unit = {},
+    aiSummaryLabel: String = "仅本机离线规则",
+    onOpenAiSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -318,7 +320,23 @@ internal fun SettingsCenterSheet(
                 }
             }
 
-            // 3. 待办与强闹钟
+            // 3. AI 模型与接口 (BYOK)
+            SettingsSectionBlock(title = "AI 模型与接口 (BYOK)", scale = scale) {
+                MintGroupedSection(dark = dark) {
+                    MintGroupedRow(
+                        label = "AI 模型与接口",
+                        subtitle = "配置 DeepSeek / OpenAI / 硅基流动 / 本地 Ollama 等模型；默认仅本机离线",
+                        leadingIcon = MintIcons.Sparkles,
+                        trailingText = aiSummaryLabel,
+                        showChevron = true,
+                        dark = dark,
+                        modifier = Modifier.testTag("settings-open-ai-config"),
+                        onClick = onOpenAiSettings,
+                    )
+                }
+            }
+
+            // 4. 待办与强闹钟
             SettingsSectionBlock(title = "待办与强闹钟", scale = scale) {
                 MintGroupedSection(dark = dark) {
                     MintGroupedRow(

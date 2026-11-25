@@ -251,6 +251,8 @@ internal fun ColumnScope.NoteEditor(
     val availableTags = if (tags.isNotEmpty()) tags else liveTags
     val noteTaskItems by model.taskItems.collectAsStateWithLifecycle()
     val discoveryState by model.editorDiscoveryState.collectAsStateWithLifecycle()
+    val agentUiState by model.agentState.collectAsStateWithLifecycle()
+    val voiceCleanState by model.voiceCleanState.collectAsStateWithLifecycle()
 
     var capability by remember { mutableStateOf(ReminderScheduler.capability(context)) }
     DisposableEffect(lifecycleOwner) {
@@ -1206,16 +1208,49 @@ internal fun ColumnScope.NoteEditor(
                             }
 
                             block.attachmentId != null -> {
+                                val attachmentId = requireNotNull(block.attachmentId)
+                                val activeForAttachment = voiceCleanState.activeAttachmentId == attachmentId
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Box(modifier = Modifier.weight(1f)) {
                                         AttachmentRow(
-                                            model.attachments,
-                                            requireNotNull(block.attachmentId),
-                                            !session.writing && !session.voiceBusy && !isSelectionMode,
+                                            store = model.attachments,
+                                            id = attachmentId,
+                                            enabled = !session.writing && !session.voiceBusy && !isSelectionMode,
                                             insertTranscript = { text -> session.insertTranscript(block, text) },
+                                            aiCleanEnabled = agentUiState.remoteAiEnabled,
+                                            aiCleaning = activeForAttachment && voiceCleanState.cleaning,
+                                            cleanedTranscriptPreview = if (activeForAttachment) {
+                                                voiceCleanState.cleanedTranscriptPreview
+                                            } else {
+                                                null
+                                            },
+                                            extractedTodoPreviews = if (activeForAttachment) {
+                                                voiceCleanState.extractedTodoPreviews
+                                            } else {
+                                                emptyList()
+                                            },
+                                            aiCleanNotice = if (activeForAttachment) voiceCleanState.notice else null,
+                                            onRequestAiClean = { rawText ->
+                                                model.requestVoiceTranscriptClean(attachmentId, rawText)
+                                            },
+                                            onAcceptAiClean = { cleanedText, selectedTodos ->
+                                                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                                                val inserted = model.acceptVoiceTranscriptClean(
+                                                    session = session,
+                                                    block = block,
+                                                    cleanedText = cleanedText,
+                                                    selectedTodos = selectedTodos,
+                                                )
+                                                if (inserted) {
+                                                    engine.undoStack.recordStructuralChange(before)
+                                                    engine.refreshUndoFlags()
+                                                }
+                                                inserted
+                                            },
+                                            onDismissAiCleanPreview = { model.dismissVoiceCleanPreview() },
                                         ) {
                                             val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                                             engine.undoStack.recordStructuralChange(before)

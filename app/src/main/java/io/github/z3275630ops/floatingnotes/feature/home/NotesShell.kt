@@ -168,6 +168,7 @@ internal fun NotesShell(
         var showArchive by rememberSaveable { mutableStateOf(false) }
         var showTrash by rememberSaveable { mutableStateOf(false) }
         var showSettingsSheet by rememberSaveable { mutableStateOf(false) }
+        var showAiSettingsSheet by rememberSaveable { mutableStateOf(false) }
         var showBackupSheet by rememberSaveable { mutableStateOf(false) }
         var quickCaptureDismissPrompt by remember { mutableStateOf(false) }
         var suppressNextAutoFocus by remember { mutableStateOf(false) }
@@ -185,6 +186,7 @@ internal fun NotesShell(
         val backupState by model.backupState.collectAsStateWithLifecycle()
         val exploreState by model.exploreState.collectAsStateWithLifecycle()
         val agentState by model.agentState.collectAsStateWithLifecycle()
+        val aiSettingsState by model.aiSettingsState.collectAsStateWithLifecycle()
         val attachmentStorageBytes by model.attachmentStorageBytes.collectAsStateWithLifecycle()
         var alarmHealth by remember { mutableStateOf(ReminderScheduler.inspectAlarmHealth(context)) }
         DisposableEffect(lifecycleOwner) {
@@ -599,6 +601,32 @@ internal fun NotesShell(
             onRefreshAlarmHealth = {
                 alarmHealth = ReminderScheduler.inspectAlarmHealth(context)
             },
+            aiSummaryLabel = model.formatAiSummaryLabel(aiSettingsState),
+            onOpenAiSettings = {
+                showSettingsSheet = false
+                model.openAiSettings()
+                showAiSettingsSheet = true
+            },
+        )
+    }
+
+    if (showAiSettingsSheet) {
+        AiSettingsSheet(
+            state = aiSettingsState,
+            backdrop = backdrop,
+            dark = dark,
+            onDismiss = {
+                showAiSettingsSheet = false
+                model.resetAiSettingsDraftToSaved()
+            },
+            onSelectPreset = { option -> model.selectAiProviderPreset(option) },
+            onToggleEnabled = { enabled -> model.setAiEnabledDraft(enabled) },
+            onBaseUrlChange = { url -> model.updateAiBaseUrlDraft(url) },
+            onModelChange = { m -> model.updateAiModelDraft(m) },
+            onApiKeyDraftChange = { key -> model.updateAiApiKeyDraft(key) },
+            onClearSavedApiKey = { model.clearSavedAiApiKey() },
+            onTestConnection = { model.testAiConnection() },
+            onSave = { model.saveAiSettings { showAiSettingsSheet = false } },
         )
     }
 
@@ -1115,7 +1143,7 @@ internal fun NotesShell(
                                             else -> "${archivedFiltered.size} 条笔记"
                                         }
                                         Page.Explore -> null
-                                        Page.Agent -> "本机私有"
+                                        Page.Agent -> if (agentState.remoteAiEnabled) "BYOK 协同" else "本机私有"
                                         Page.Library -> null
                                     }
                                     ShellTopHeader(
@@ -1358,6 +1386,34 @@ internal fun NotesShell(
                                                 onMergeDuplicateGroup = { grp, trash ->
                                                     model.commitMergeDuplicateGroup(grp, trash)
                                                 },
+                                                onSelectTab = { idx -> model.selectAgentTab(idx) },
+                                                onOpenAiSettings = {
+                                                    model.openAiSettings()
+                                                    showAiSettingsSheet = true
+                                                },
+                                                onRerunLocally = { model.rerunAgentLocally() },
+                                                onFollowUpDraftChange = { draft -> model.updateAgentFollowUpDraft(draft) },
+                                                onSendFollowUp = { q -> model.sendAgentFollowUp(q) },
+                                                onApplyWriteProposal = { prop -> model.applyWriteProposal(prop) },
+                                                onDismissWriteProposal = { prop -> model.dismissWriteProposal(prop) },
+                                                onRunInsightPreset = { preset -> model.runInsightPreset(preset) },
+                                                onSaveCustomPreset = { id, name, desc, prompt, days ->
+                                                    model.saveCustomInsightPreset(id, name, desc, prompt, days)
+                                                },
+                                                onDeleteCustomPreset = { id -> model.deleteCustomInsightPreset(id) },
+                                                onContinueChatFromInsight = { insight -> model.continueChatFromInsight(insight) },
+                                                onSaveInsightAsNote = { insight -> model.saveInsightAsNote(insight) },
+                                                onToggleMemoryAutoReference = { enabled ->
+                                                    model.toggleMemoryAutoReference(enabled)
+                                                },
+                                                onExtractMemoryUpdates = { model.extractMemoryUpdates() },
+                                                onCommitMemoryCandidates = { chosen -> model.commitMemoryCandidates(chosen) },
+                                                onDismissMemoryCandidates = { model.dismissMemoryCandidates() },
+                                                onToggleMemoryItem = { id, enabled -> model.toggleMemoryItem(id, enabled) },
+                                                onEditMemoryItem = { id, cat, content ->
+                                                    model.editMemoryItem(id, cat, content)
+                                                },
+                                                onDeleteMemoryItem = { id -> model.deleteMemoryItem(id) },
                                             )
                                         }
                                     }

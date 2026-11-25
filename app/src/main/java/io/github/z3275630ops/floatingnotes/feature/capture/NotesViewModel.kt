@@ -13,11 +13,37 @@ import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.data.agent.AgentActionCommitResult
+import io.github.z3275630ops.floatingnotes.data.agent.AgentMemoryItem
+import io.github.z3275630ops.floatingnotes.data.agent.AgentMemorySnapshot
+import io.github.z3275630ops.floatingnotes.data.agent.AgentMemoryStore
+import io.github.z3275630ops.floatingnotes.data.agent.AgentPreset
+import io.github.z3275630ops.floatingnotes.data.agent.AgentPresetStore
 import io.github.z3275630ops.floatingnotes.data.agent.AgentRepository
 import io.github.z3275630ops.floatingnotes.data.agent.AgentRunEntity
 import io.github.z3275630ops.floatingnotes.data.agent.AgentRunResult
 import io.github.z3275630ops.floatingnotes.data.agent.AgentSkill
+import io.github.z3275630ops.floatingnotes.data.agent.AgentStepTrace
 import io.github.z3275630ops.floatingnotes.data.agent.AgentTimeRange
+import io.github.z3275630ops.floatingnotes.data.agent.AgentWriteProposal
+import io.github.z3275630ops.floatingnotes.data.agent.AiProviderPreset
+import io.github.z3275630ops.floatingnotes.data.agent.ByokAiConfigSnapshot
+import io.github.z3275630ops.floatingnotes.data.agent.ByokAiConfigStore
+import io.github.z3275630ops.floatingnotes.data.agent.CitationLink
+import io.github.z3275630ops.floatingnotes.data.agent.HybridAgentRunResult
+import io.github.z3275630ops.floatingnotes.data.agent.HybridChatMessage
+import io.github.z3275630ops.floatingnotes.data.agent.LlmGateway
+import io.github.z3275630ops.floatingnotes.data.agent.LlmToolCallRequest
+import io.github.z3275630ops.floatingnotes.data.agent.LlmToolSchema
+import io.github.z3275630ops.floatingnotes.data.agent.LlmTurnResult
+import io.github.z3275630ops.floatingnotes.data.agent.MemoryCategory
+import io.github.z3275630ops.floatingnotes.data.agent.MemoryProposal
+import io.github.z3275630ops.floatingnotes.data.agent.OpenAiChatMessage
+import io.github.z3275630ops.floatingnotes.data.agent.OpenAiCompatibleClient
+import io.github.z3275630ops.floatingnotes.data.agent.OpenAiToolCall
+import io.github.z3275630ops.floatingnotes.data.agent.OpenAiToolDefinition
+import io.github.z3275630ops.floatingnotes.data.agent.analyzeDualCollisionWithByok
+import io.github.z3275630ops.floatingnotes.data.agent.cleanVoiceTranscriptWithByok
+import io.github.z3275630ops.floatingnotes.data.agent.normalizeChatCompletionsUrl
 import io.github.z3275630ops.floatingnotes.data.backup.BackupManager
 import io.github.z3275630ops.floatingnotes.data.backup.BackupUiState
 import io.github.z3275630ops.floatingnotes.data.backup.HistoryUiState
@@ -27,21 +53,35 @@ import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.TrashPurgeImpact
 import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryEngines
 import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryRepository
+import io.github.z3275630ops.floatingnotes.data.discovery.DualCollisionBridge
 import io.github.z3275630ops.floatingnotes.data.discovery.DuplicateNoteGroup
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceBasketItem
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.ExplorePreferences
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalRetrievalEngine
 import io.github.z3275630ops.floatingnotes.data.discovery.ReviewConfig
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.StaleDraftException
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentChatTurnUi
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentCitationUi
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentInsightResultUi
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentMemoryCandidateUi
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentMemoryItemUi
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentPresetUi
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentProgressStepUi
 import io.github.z3275630ops.floatingnotes.feature.agent.AgentUiState
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentWorkspaceTab
+import io.github.z3275630ops.floatingnotes.feature.agent.AgentWriteProposalUi
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorDiscoveryState
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.WalkMode
+import io.github.z3275630ops.floatingnotes.feature.home.AiProviderPresetOption
+import io.github.z3275630ops.floatingnotes.feature.home.AiSettingsUiState
 import io.github.z3275630ops.floatingnotes.feature.home.AppPreferences
 import io.github.z3275630ops.floatingnotes.feature.home.AppPreferencesSnapshot
 import io.github.z3275630ops.floatingnotes.feature.home.FontScaleTier
 import io.github.z3275630ops.floatingnotes.feature.home.NoteSortOrder
+import io.github.z3275630ops.floatingnotes.feature.home.defaultAiProviderPresets
 import io.github.z3275630ops.floatingnotes.feature.widget.WidgetPreferences
 import io.github.z3275630ops.floatingnotes.feature.widget.WidgetUpdater
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentImportException
@@ -80,8 +120,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 internal class EditorBlock(initialOriginal: NoteBlock) {
     private var original by mutableStateOf(initialOriginal)
@@ -262,6 +304,28 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         return true
     }
 
+    fun insertCleanedTranscriptAndTodos(
+        block: EditorBlock,
+        cleanedText: String,
+        todos: List<String>,
+    ): Boolean {
+        if (writing || closing) return false
+        val position = blocks.indexOf(block)
+        if (position < 0) return false
+        var insertAt = position + 1
+        val cleanText = cleanedText.trim()
+        if (cleanText.isNotEmpty()) {
+            blocks.add(insertAt, EditorBlock(NoteBlock.paragraph(cleanText)))
+            insertAt++
+        }
+        todos.map { it.trim() }.filter { it.isNotEmpty() }.forEach { todo ->
+            blocks.add(insertAt, EditorBlock(NoteBlock.checkbox(text = todo, checked = false)))
+            insertAt++
+        }
+        ensureTailEditableBlock()
+        return true
+    }
+
     fun removeAttachment(block: EditorBlock) {
         if (writing || block.attachmentId == null) return
         blocks.remove(block)
@@ -290,6 +354,14 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
 
 internal enum class IncomingCapture { Opened, AlreadySaved, Failed }
 
+internal data class VoiceCleanUiState(
+    val activeAttachmentId: String? = null,
+    val cleaning: Boolean = false,
+    val cleanedTranscriptPreview: String? = null,
+    val extractedTodoPreviews: List<String> = emptyList(),
+    val notice: String? = null,
+)
+
 internal class NotesViewModel(application: Application) : AndroidViewModel(application) {
     private val database = NotesDatabase.open(application)
     internal val repository = NotesRepository(database)
@@ -312,13 +384,31 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     internal val discovery by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         DiscoveryRepository(database, repository, explorePreferences)
     }
+    internal val byokAiConfigStore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { ByokAiConfigStore(application) }
+    internal val openAiClient by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { OpenAiCompatibleClient() }
+    internal val agentMemoryStore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { AgentMemoryStore(application.filesDir) }
+    internal val agentPresetStore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { AgentPresetStore(application.filesDir) }
     internal val agentRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AgentRepository(database, repository, organization, discovery)
     }
+    private val _aiSettingsState = MutableStateFlow(AiSettingsUiState())
+    val aiSettingsState: StateFlow<AiSettingsUiState> = _aiSettingsState.asStateFlow()
+    private val _voiceCleanState = MutableStateFlow(VoiceCleanUiState())
+    val voiceCleanState: StateFlow<VoiceCleanUiState> = _voiceCleanState.asStateFlow()
     private val _agentState = MutableStateFlow(AgentUiState())
     val agentState: StateFlow<AgentUiState> = _agentState.asStateFlow()
     private var agentJob: Job? = null
+    private var aiConnectionTestJob: Job? = null
+    private var voiceCleanJob: Job? = null
     private var agentRunsObserved = false
+    private var pendingClearAiKey = false
+    private var testedEndpointSnapshot: Pair<String, Boolean?>? = null
+    private var testedEndpointMessage: String? = null
+    private var activeChatHistory: List<HybridChatMessage> = emptyList()
+    private var lastHybridPrompt: String = ""
+    private var lastHybridSkill: AgentSkill = AgentSkill.FreeQuestion
+    private val cachedWriteProposals = LinkedHashMap<String, AgentWriteProposal>()
+    private val cachedMemoryProposals = LinkedHashMap<String, MemoryProposal>()
 
     fun refreshAttachmentStorageBytes() {
         viewModelScope.launch {
@@ -380,6 +470,9 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            loadInitialAiAndAgentStores()
+        }
         viewModelScope.launch {
             delay(1_200L)
             ensureAgentRunsObserved()
@@ -2803,11 +2896,56 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
-    fun analyzeCurrentDualPair() {
-        val pair = _exploreState.value.dualPair ?: return
+    fun analyzeCurrentDualPair(userReflection: String = "") {
+        val current = _exploreState.value
+        val pair = current.dualPair ?: return
+        val wasFarFetched = current.dualBridgeFarFetched
         viewModelScope.launch {
             runCatching {
-                discovery.analyzeDualCollisionRefreshed(pair)
+                val analyzed = discovery.analyzeDualCollisionRefreshed(pair)
+                if (analyzed !is DiscoveryRepository.DualBridgeAnalyzeResult.Ready) {
+                    return@runCatching analyzed
+                }
+                val (snapshot, apiKey) = withContext(Dispatchers.IO) {
+                    byokAiConfigStore.resolveCredentials()
+                }
+                if (!snapshot.isReadyForRemote) {
+                    return@runCatching analyzed
+                }
+                val leftText = listOf(analyzed.pair.leftTitle, analyzed.pair.leftBody)
+                    .filter { it.isNotBlank() }
+                    .joinToString("\n")
+                val rightText = listOf(analyzed.pair.rightTitle, analyzed.pair.rightBody)
+                    .filter { it.isNotBlank() }
+                    .joinToString("\n")
+                val aiRes = analyzeDualCollisionWithByok(
+                    leftText = leftText,
+                    rightText = rightText,
+                    reflection = userReflection,
+                    isFarFetched = wasFarFetched,
+                    client = openAiClient,
+                    snapshot = snapshot,
+                    apiKey = apiKey,
+                )
+                if (aiRes.usedRemoteAi) {
+                    val points = buildList {
+                        if (aiRes.sharedThread.isNotBlank()) add("共通脉络：${aiRes.sharedThread}")
+                        if (aiRes.actionPrompt.isNotBlank()) add("思考追问：${aiRes.actionPrompt}")
+                    }.ifEmpty { analyzed.bridge.points }
+                    val enhancedBridge = DualCollisionBridge(
+                        headline = aiRes.bridgeSummary.ifBlank { analyzed.bridge.headline },
+                        points = points,
+                        engineNotice = aiRes.note ?: "由 ${snapshot.model} 生成双卡对撞洞察",
+                    )
+                    DiscoveryRepository.DualBridgeAnalyzeResult.Ready(analyzed.pair, enhancedBridge)
+                } else {
+                    val fallbackNotice = aiRes.note?.takeIf { it.isNotBlank() }
+                        ?: analyzed.bridge.engineNotice
+                    DiscoveryRepository.DualBridgeAnalyzeResult.Ready(
+                        analyzed.pair,
+                        analyzed.bridge.copy(engineNotice = fallbackNotice),
+                    )
+                }
             }.onSuccess { analyzed ->
                 _exploreState.update {
                     if (it.dualPair?.pairId == pair.pairId) {
@@ -2832,10 +2970,15 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun markDualBridgeFarFetched() {
+        val remoteReady = _agentState.value.remoteAiEnabled
         _exploreState.update {
             it.copy(
                 dualBridgeFarFetched = true,
-                statusMessage = "已标记这组关联偏牵强，可以点“换一组”再试试",
+                statusMessage = if (remoteReady) {
+                    "已标记这组关联偏牵强，可点“重新分析”评估边界或“换一组”"
+                } else {
+                    "已标记这组关联偏牵强，可以点“换一组”再试试"
+                },
             )
         }
     }
@@ -2884,16 +3027,20 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun runAgentSkill(skill: AgentSkill) {
-        executeAgentRun(skill = skill, prompt = skill.defaultPrompt)
+        if (skill == AgentSkill.DuplicateCleanup) {
+            executeDuplicateCleanupRun()
+        } else {
+            executeHybridAgentRun(skill = skill, prompt = skill.defaultPrompt, isFollowUp = false, forceLocal = false)
+        }
     }
 
     fun runAgentQuestion(question: String) {
         val clean = question.trim()
         if (clean.isEmpty()) return
-        executeAgentRun(skill = AgentSkill.FreeQuestion, prompt = clean)
+        executeHybridAgentRun(skill = AgentSkill.FreeQuestion, prompt = clean, isFollowUp = false, forceLocal = false)
     }
 
-    private fun executeAgentRun(skill: AgentSkill, prompt: String) {
+    private fun executeDuplicateCleanupRun() {
         ensureAgentRunsObserved()
         agentJob?.cancel()
         val current = _agentState.value
@@ -2901,11 +3048,17 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             includeTags = setOfNotNull(current.selectedTagId),
             aiOnly = true,
         )
+        activeChatHistory = emptyList()
+        cachedWriteProposals.clear()
         _agentState.update {
             it.copy(
                 running = true,
-                promptDraft = if (skill == AgentSkill.FreeQuestion) prompt else it.promptDraft,
                 duplicateGroups = emptyList(),
+                liveSteps = emptyList(),
+                lastUsedRemoteAi = false,
+                fallbackReason = null,
+                chatTurns = emptyList(),
+                writeProposals = emptyList(),
                 statusMessage = null,
                 errorMessage = null,
             )
@@ -2913,19 +3066,15 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         agentJob = viewModelScope.launch {
             try {
                 val (entity, result) = agentRepository.runAnalysis(
-                    skill = skill,
-                    prompt = prompt,
+                    skill = AgentSkill.DuplicateCleanup,
+                    prompt = AgentSkill.DuplicateCleanup.defaultPrompt,
                     scope = scope,
                     timeRange = current.timeRange,
                 )
                 val actions = agentRepository.actionsForRun(entity.id)
-                val dupGroups = if (skill == AgentSkill.DuplicateCleanup) {
-                    runCatching {
-                        agentRepository.hydrateDuplicateGroups(result.duplicateGroupSnapshots)
-                    }.getOrDefault(emptyList())
-                } else {
-                    emptyList()
-                }
+                val dupGroups = runCatching {
+                    agentRepository.hydrateDuplicateGroups(result.duplicateGroupSnapshots)
+                }.getOrDefault(emptyList())
                 _agentState.update {
                     it.copy(
                         running = false,
@@ -3121,6 +3270,1138 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
 
     fun clearAgentMessage() {
         _agentState.update { it.copy(statusMessage = null, errorMessage = null) }
+    }
+
+    // --- 浮记 2.0 第二块：BYOK AI 设置 / Hybrid Agent / 洞察预设 / 长期记忆 / 语音克制整理 ---
+
+    private suspend fun loadInitialAiAndAgentStores() {
+        val aiSnapshot = runCatching { byokAiConfigStore.loadSnapshot() }.getOrDefault(ByokAiConfigSnapshot())
+        val presets = runCatching { agentPresetStore.loadPresets() }.getOrDefault(AgentPresetStore.BUILT_IN_PRESETS)
+        val memorySnapshot = runCatching { agentMemoryStore.loadSnapshot() }.getOrDefault(AgentMemorySnapshot())
+        val noteTitles = runCatching {
+            database.notes().allNotes().associate { it.id to LocalRetrievalEngine.displayNoteTitle(it) }
+        }.getOrDefault(emptyMap())
+        applyAiSnapshotToStates(aiSnapshot, resetDraftKey = true)
+        _agentState.update {
+            it.copy(
+                insightPresets = presets.map { p -> p.toUi() },
+                memoryAutoReference = memorySnapshot.memoryEnabledInAgent,
+                memoryItems = memorySnapshot.items.map { item -> item.toUi(noteTitles) },
+            )
+        }
+    }
+
+    private fun applyAiSnapshotToStates(snapshot: ByokAiConfigSnapshot, resetDraftKey: Boolean) {
+        _aiSettingsState.update { cur ->
+            cur.copy(
+                presetId = snapshot.preset.id,
+                enabled = snapshot.enabled,
+                baseUrl = snapshot.baseUrl,
+                model = snapshot.model,
+                apiKeyDraft = if (resetDraftKey) "" else cur.apiKeyDraft,
+                hasSavedApiKey = snapshot.hasApiKey,
+                maskedApiKey = snapshot.maskedApiKey,
+                requiresApiKey = snapshot.preset.requiresApiKey,
+                testingConnection = false,
+                lastTestSuccess = snapshot.lastTestSuccess,
+                lastTestMessage = snapshot.lastTestMessage,
+            )
+        }
+        _agentState.update {
+            it.copy(
+                remoteAiEnabled = snapshot.isReadyForRemote,
+                remoteModelName = snapshot.model.takeIf { m -> snapshot.isReadyForRemote && m.isNotBlank() },
+            )
+        }
+    }
+
+    fun openAiSettings() {
+        pendingClearAiKey = false
+        testedEndpointSnapshot = null
+        testedEndpointMessage = null
+        viewModelScope.launch(Dispatchers.IO) {
+            val snapshot = runCatching { byokAiConfigStore.loadSnapshot() }.getOrDefault(ByokAiConfigSnapshot())
+            applyAiSnapshotToStates(snapshot, resetDraftKey = true)
+        }
+    }
+
+    fun resetAiSettingsDraftToSaved() {
+        aiConnectionTestJob?.cancel()
+        pendingClearAiKey = false
+        testedEndpointSnapshot = null
+        testedEndpointMessage = null
+        viewModelScope.launch(Dispatchers.IO) {
+            val snapshot = runCatching { byokAiConfigStore.loadSnapshot() }.getOrDefault(ByokAiConfigSnapshot())
+            applyAiSnapshotToStates(snapshot, resetDraftKey = true)
+        }
+    }
+
+    fun selectAiProviderPreset(option: AiProviderPresetOption) {
+        val preset = AiProviderPreset.fromId(option.id)
+        _aiSettingsState.update {
+            it.copy(
+                presetId = preset.id,
+                baseUrl = preset.defaultBaseUrl,
+                model = preset.defaultModel,
+                requiresApiKey = preset.requiresApiKey,
+                lastTestSuccess = null,
+                lastTestMessage = null,
+                lastLatencyMs = null,
+            )
+        }
+    }
+
+    fun setAiEnabledDraft(enabled: Boolean) {
+        _aiSettingsState.update { it.copy(enabled = enabled) }
+    }
+
+    fun updateAiBaseUrlDraft(url: String) {
+        _aiSettingsState.update {
+            it.copy(
+                baseUrl = url,
+                lastTestSuccess = null,
+                lastTestMessage = null,
+                lastLatencyMs = null,
+            )
+        }
+    }
+
+    fun updateAiModelDraft(model: String) {
+        _aiSettingsState.update {
+            it.copy(
+                model = model,
+                lastTestSuccess = null,
+                lastTestMessage = null,
+                lastLatencyMs = null,
+            )
+        }
+    }
+
+    fun updateAiApiKeyDraft(apiKey: String) {
+        if (apiKey.isNotBlank()) pendingClearAiKey = false
+        _aiSettingsState.update {
+            it.copy(
+                apiKeyDraft = apiKey,
+                lastTestSuccess = null,
+                lastTestMessage = null,
+                lastLatencyMs = null,
+            )
+        }
+    }
+
+    fun clearSavedAiApiKey() {
+        pendingClearAiKey = true
+        _aiSettingsState.update {
+            it.copy(
+                hasSavedApiKey = false,
+                maskedApiKey = "",
+                apiKeyDraft = "",
+                lastTestSuccess = null,
+                lastTestMessage = null,
+                lastLatencyMs = null,
+            )
+        }
+    }
+
+    private fun draftEndpointKey(state: AiSettingsUiState, keyMarker: String): String =
+        "${state.presetId}|${state.baseUrl.trim()}|${state.model.trim()}|$keyMarker"
+
+    fun testAiConnection() {
+        val draft = _aiSettingsState.value
+        aiConnectionTestJob?.cancel()
+        _aiSettingsState.update {
+            it.copy(
+                testingConnection = true,
+                lastTestSuccess = null,
+                lastTestMessage = null,
+                lastLatencyMs = null,
+            )
+        }
+        aiConnectionTestJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val (storedSnap, storedKey) = byokAiConfigStore.resolveCredentials()
+                val newKey = draft.apiKeyDraft.trim()
+                val effectiveKey = when {
+                    newKey.isNotEmpty() -> newKey
+                    pendingClearAiKey -> null
+                    else -> storedKey
+                }
+                val preset = AiProviderPreset.fromId(draft.presetId)
+                val res = openAiClient.testConnection(
+                    baseUrl = draft.baseUrl,
+                    model = draft.model,
+                    apiKey = effectiveKey,
+                    requiresApiKey = preset.requiresApiKey,
+                )
+                val keyMarker = if (newKey.isNotEmpty()) "new:${newKey.hashCode()}" else if (pendingClearAiKey) "cleared" else "saved:${storedSnap.maskedApiKey}"
+                testedEndpointSnapshot = draftEndpointKey(draft, keyMarker) to res.success
+                testedEndpointMessage = res.message
+                if (storedSnap.preset == preset &&
+                    storedSnap.baseUrl == draft.baseUrl.trim() &&
+                    storedSnap.model == draft.model.trim() &&
+                    newKey.isEmpty() &&
+                    !pendingClearAiKey
+                ) {
+                    byokAiConfigStore.recordTestResult(res.success, res.message)
+                }
+                _aiSettingsState.update {
+                    it.copy(
+                        testingConnection = false,
+                        lastTestSuccess = res.success,
+                        lastTestMessage = res.message,
+                        lastLatencyMs = res.latencyMs,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                _aiSettingsState.update { it.copy(testingConnection = false) }
+                throw cancelled
+            } catch (err: Throwable) {
+                _aiSettingsState.update {
+                    it.copy(
+                        testingConnection = false,
+                        lastTestSuccess = false,
+                        lastTestMessage = err.message ?: "连接测试发生未知异常",
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveAiSettings(onSaved: () -> Unit = {}) {
+        val draft = _aiSettingsState.value
+        val preset = AiProviderPreset.fromId(draft.presetId)
+        val cleanBaseUrl = draft.baseUrl.trim()
+        val cleanModel = draft.model.trim()
+        val newKey = draft.apiKeyDraft.trim()
+
+        if (draft.enabled) {
+            val validUrl = cleanBaseUrl.isNotEmpty() && runCatching { normalizeChatCompletionsUrl(cleanBaseUrl) }.isSuccess
+            if (!validUrl) {
+                _aiSettingsState.update {
+                    it.copy(lastTestSuccess = false, lastTestMessage = "启用外部模型前请填写有效的 http(s) 接口地址")
+                }
+                return
+            }
+            if (cleanModel.isEmpty()) {
+                _aiSettingsState.update {
+                    it.copy(lastTestSuccess = false, lastTestMessage = "启用外部模型前请填写模型名称（Model）")
+                }
+                return
+            }
+            val willHaveKey = newKey.isNotEmpty() || (!pendingClearAiKey && draft.hasSavedApiKey)
+            if (preset.requiresApiKey && !willHaveKey) {
+                _aiSettingsState.update {
+                    it.copy(lastTestSuccess = false, lastTestMessage = "该服务商需要填写 API Key 才能启用")
+                }
+                return
+            }
+        }
+
+        viewModelScope.launch {
+            val savedSnapshot = withContext(Dispatchers.IO) {
+                val beforeSnap = byokAiConfigStore.loadSnapshot()
+                var saved = byokAiConfigStore.saveConfig(
+                    preset = preset,
+                    enabled = draft.enabled,
+                    baseUrl = cleanBaseUrl,
+                    model = cleanModel,
+                    newApiKeyOrNull = newKey.ifEmpty { null },
+                    clearApiKey = pendingClearAiKey,
+                )
+                val keyMarker = if (newKey.isNotEmpty()) "new:${newKey.hashCode()}" else if (pendingClearAiKey) "cleared" else "saved:${beforeSnap.maskedApiKey}"
+                val testedPair = testedEndpointSnapshot
+                val testedMsg = testedEndpointMessage
+                if (testedPair != null &&
+                    testedPair.first == draftEndpointKey(draft, keyMarker) &&
+                    testedPair.second != null &&
+                    !testedMsg.isNullOrBlank()
+                ) {
+                    saved = byokAiConfigStore.recordTestResult(testedPair.second!!, testedMsg)
+                }
+                pendingClearAiKey = false
+                testedEndpointSnapshot = null
+                testedEndpointMessage = null
+                saved
+            }
+            applyAiSnapshotToStates(savedSnapshot, resetDraftKey = true)
+            onSaved()
+        }
+    }
+
+    fun formatAiSummaryLabel(state: AiSettingsUiState = _aiSettingsState.value): String {
+        if (!state.enabled) return "仅本机离线规则"
+        val ready = state.baseUrl.isNotBlank() && state.model.isNotBlank() && (!state.requiresApiKey || state.hasSavedApiKey)
+        if (!ready) return "待完善配置"
+        val presetName = state.presets.firstOrNull { it.id == state.presetId }?.displayName ?: "外部模型"
+        return "$presetName · ${state.model}"
+    }
+
+    private fun buildLlmGateway(): LlmGateway? {
+        val (snapshot, apiKey) = byokAiConfigStore.resolveCredentials()
+        if (!snapshot.isReadyForRemote) return null
+        return LlmGateway { messages, tools, temperature, maxTokens ->
+            val result = openAiClient.chatCompletions(
+                baseUrl = snapshot.baseUrl,
+                model = snapshot.model,
+                apiKey = apiKey,
+                messages = messages.map { msg ->
+                    OpenAiChatMessage(
+                        role = msg.role,
+                        content = msg.content,
+                        toolCalls = msg.toolCalls.map { tc ->
+                            OpenAiToolCall(id = tc.id, name = tc.name, argumentsJson = tc.argumentsJson)
+                        },
+                        toolCallId = msg.toolCallId,
+                        name = msg.name,
+                    )
+                },
+                tools = tools.map { tool ->
+                    OpenAiToolDefinition(
+                        name = tool.name,
+                        description = tool.description,
+                        parametersJsonSchema = tool.parametersJsonSchema,
+                    )
+                },
+                temperature = temperature,
+                maxTokens = maxTokens,
+            )
+            LlmTurnResult(
+                content = result.content,
+                toolCalls = result.toolCalls.map { tc ->
+                    LlmToolCallRequest(id = tc.id, name = tc.name, argumentsJson = tc.argumentsJson)
+                },
+                modelUsed = result.model.ifBlank { snapshot.model },
+                errorMessage = result.errorMessage,
+            )
+        }
+    }
+
+    fun selectAgentTab(tabIndex: Int) {
+        _agentState.update {
+            it.copy(activeTabIndex = tabIndex.coerceIn(0, AgentWorkspaceTab.entries.lastIndex))
+        }
+    }
+
+    fun updateAgentFollowUpDraft(draft: String) {
+        _agentState.update { it.copy(followUpDraft = draft) }
+    }
+
+    fun sendAgentFollowUp(question: String) {
+        val clean = question.trim()
+        if (clean.isEmpty()) return
+        _agentState.update { it.copy(followUpDraft = "") }
+        executeHybridAgentRun(
+            skill = AgentSkill.FreeQuestion,
+            prompt = clean,
+            isFollowUp = true,
+            forceLocal = false,
+        )
+    }
+
+    fun rerunAgentLocally() {
+        val current = _agentState.value
+        val prompt = lastHybridPrompt.ifBlank { current.activeRun?.prompt.orEmpty() }.trim()
+        if (prompt.isEmpty()) return
+        executeHybridAgentRun(
+            skill = lastHybridSkill,
+            prompt = prompt,
+            isFollowUp = current.chatTurns.isNotEmpty(),
+            forceLocal = true,
+        )
+    }
+
+    private fun executeHybridAgentRun(
+        skill: AgentSkill,
+        prompt: String,
+        isFollowUp: Boolean,
+        forceLocal: Boolean,
+    ) {
+        ensureAgentRunsObserved()
+        agentJob?.cancel()
+        val current = _agentState.value
+        val scope = NoteScope(
+            includeTags = setOfNotNull(current.selectedTagId),
+            aiOnly = true,
+        )
+        lastHybridPrompt = prompt
+        lastHybridSkill = skill
+        if (!isFollowUp) {
+            activeChatHistory = emptyList()
+            cachedWriteProposals.clear()
+        }
+        val historySnapshot = if (isFollowUp) activeChatHistory else emptyList()
+
+        _agentState.update {
+            it.copy(
+                running = true,
+                promptDraft = if (!isFollowUp && skill == AgentSkill.FreeQuestion) prompt else it.promptDraft,
+                duplicateGroups = emptyList(),
+                liveSteps = emptyList(),
+                lastUsedRemoteAi = false,
+                fallbackReason = null,
+                chatTurns = if (isFollowUp) it.chatTurns else emptyList(),
+                writeProposals = if (isFollowUp) it.writeProposals else emptyList(),
+                statusMessage = null,
+                errorMessage = null,
+            )
+        }
+
+        agentJob = viewModelScope.launch {
+            try {
+                val (gateway, memorySnap) = withContext(Dispatchers.IO) {
+                    val gw = if (forceLocal) null else buildLlmGateway()
+                    val mem = if (_agentState.value.memoryAutoReference) agentMemoryStore.loadSnapshot() else null
+                    gw to mem
+                }
+                val (entity, hybridResult) = agentRepository.runHybridQuery(
+                    prompt = prompt,
+                    scope = scope,
+                    timeRange = current.timeRange,
+                    skill = skill,
+                    conversationHistory = historySnapshot,
+                    memorySnapshot = memorySnap,
+                    llmGateway = gateway,
+                    onStep = { step ->
+                        val maxSteps = _agentState.value.maxSteps
+                        _agentState.update { cur ->
+                            cur.copy(liveSteps = cur.liveSteps + step.toUi(maxSteps))
+                        }
+                    },
+                )
+                val actions = agentRepository.actionsForRun(entity.id)
+                hybridResult.proposals.forEach { proposal ->
+                    cachedWriteProposals[proposal.proposalId] = proposal
+                }
+                val uiProposals = hybridResult.proposals.map { it.toUi() }
+                val uiCitations = hybridResult.citations.map { it.toUi() }
+                val uiSteps = hybridResult.steps.map { it.toUi(_agentState.value.maxSteps) }
+                val answerText = hybridResult.rawAnswerMarkdown.ifBlank { hybridResult.runResult.headline }
+
+                val userMsg = HybridChatMessage(id = newId(), role = "user", text = prompt)
+                val assistantMsg = HybridChatMessage(
+                    id = newId(),
+                    role = "assistant",
+                    text = answerText,
+                    citations = hybridResult.citations,
+                    proposals = hybridResult.proposals,
+                    usedRemoteAi = hybridResult.usedRemoteAi,
+                    modelUsed = hybridResult.modelUsed,
+                    steps = hybridResult.steps,
+                )
+                activeChatHistory = historySnapshot + userMsg + assistantMsg
+
+                val nowLabel = formatEpochLabel(System.currentTimeMillis())
+                val appendedTurns = if (isFollowUp) {
+                    listOf(
+                        AgentChatTurnUi(
+                            id = userMsg.id,
+                            role = "user",
+                            text = prompt,
+                            createdAtLabel = nowLabel,
+                        ),
+                        AgentChatTurnUi(
+                            id = assistantMsg.id,
+                            role = "assistant",
+                            text = answerText,
+                            citations = uiCitations,
+                            proposals = emptyList(),
+                            usedRemoteAi = hybridResult.usedRemoteAi,
+                            modelUsed = hybridResult.modelUsed,
+                            steps = uiSteps,
+                            createdAtLabel = nowLabel,
+                        ),
+                    )
+                } else {
+                    emptyList()
+                }
+
+                val surfaceFallback = if (gateway != null && !hybridResult.usedRemoteAi) {
+                    hybridResult.fallbackReason
+                } else {
+                    null
+                }
+
+                _agentState.update { cur ->
+                    val existingIds = cur.writeProposals.mapTo(HashSet()) { it.proposalId }
+                    val mergedProposals = if (isFollowUp) {
+                        cur.writeProposals + uiProposals.filter { it.proposalId !in existingIds }
+                    } else {
+                        uiProposals
+                    }
+                    cur.copy(
+                        running = false,
+                        activeRun = entity,
+                        activeResult = hybridResult.runResult,
+                        activeActions = actions,
+                        duplicateGroups = emptyList(),
+                        lastUsedRemoteAi = hybridResult.usedRemoteAi,
+                        remoteModelName = hybridResult.modelUsed ?: cur.remoteModelName,
+                        fallbackReason = surfaceFallback,
+                        liveSteps = uiSteps,
+                        chatTurns = if (isFollowUp) cur.chatTurns + appendedTurns else emptyList(),
+                        writeProposals = mergedProposals,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                _agentState.update { it.copy(running = false, statusMessage = "已停止当前研究分析") }
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update {
+                    it.copy(running = false, errorMessage = "分析未能完成，请重试")
+                }
+            }
+        }
+    }
+
+    fun applyWriteProposal(uiProposal: AgentWriteProposalUi) {
+        val domainProposal = cachedWriteProposals[uiProposal.proposalId]
+        val runId = _agentState.value.activeRun?.id
+        if (domainProposal == null) {
+            _agentState.update { it.copy(errorMessage = "该写入提案已失效，请重新发起研究后再应用") }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val commitRes = persistenceMutex.withLock {
+                    if (domainProposal is AgentWriteProposal.PatchNoteProposal) {
+                        val activeSession = editor
+                        if (activeSession != null && activeSession.draft.noteId == domainProposal.targetNoteId) {
+                            stopActiveRecorderBeforeClose(activeSession)
+                            flushOpenEditorLocked()
+                        }
+                    }
+                    val res = when (domainProposal) {
+                        is AgentWriteProposal.NewNoteProposal ->
+                            agentRepository.commitNewNoteProposal(domainProposal, runId = runId)
+                        is AgentWriteProposal.PatchNoteProposal ->
+                            agentRepository.commitNotePatch(domainProposal, runId = runId)
+                        is AgentWriteProposal.ExtractTodosProposal ->
+                            agentRepository.commitTodosProposal(domainProposal, runId = runId)
+                    }
+                    if (res is AgentActionCommitResult.Committed && domainProposal is AgentWriteProposal.PatchNoteProposal) {
+                        val activeSession = editor
+                        if (activeSession != null && activeSession.draft.noteId == domainProposal.targetNoteId) {
+                            database.notes().note(domainProposal.targetNoteId)?.let { refreshed ->
+                                activeSession.replaceDocument(refreshed)
+                            }
+                        }
+                    }
+                    res
+                }
+                val refreshedActions = if (runId != null) {
+                    runCatching { agentRepository.actionsForRun(runId) }.getOrDefault(_agentState.value.activeActions)
+                } else {
+                    _agentState.value.activeActions
+                }
+                if (commitRes is AgentActionCommitResult.Committed) {
+                    WidgetUpdater.requestRefreshAll(getApplication())
+                }
+                _agentState.update { cur ->
+                    when (commitRes) {
+                        is AgentActionCommitResult.Committed -> cur.copy(
+                            activeActions = refreshedActions,
+                            writeProposals = markProposalApplied(cur.writeProposals, uiProposal.proposalId),
+                            chatTurns = cur.chatTurns.map { t ->
+                                t.copy(proposals = markProposalApplied(t.proposals, uiProposal.proposalId))
+                            },
+                            statusMessage = commitRes.summary,
+                            errorMessage = null,
+                        )
+                        is AgentActionCommitResult.AlreadyApplied -> cur.copy(
+                            activeActions = refreshedActions,
+                            writeProposals = markProposalApplied(cur.writeProposals, uiProposal.proposalId),
+                            chatTurns = cur.chatTurns.map { t ->
+                                t.copy(proposals = markProposalApplied(t.proposals, uiProposal.proposalId))
+                            },
+                            statusMessage = "${commitRes.summary}（不重复写入）",
+                            errorMessage = null,
+                        )
+                        is AgentActionCommitResult.ConflictDetected -> cur.copy(
+                            activeActions = refreshedActions,
+                            errorMessage = "检测到冲突，已拒绝覆盖原笔记（${commitRes.changedNoteTitles.joinToString("、")}）。请重新分析后再确认写入。",
+                            statusMessage = null,
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update { it.copy(errorMessage = "应用写入提案失败，请重试") }
+            }
+        }
+    }
+
+    fun dismissWriteProposal(uiProposal: AgentWriteProposalUi) {
+        _agentState.update { cur ->
+            cur.copy(
+                writeProposals = markProposalDismissed(cur.writeProposals, uiProposal.proposalId),
+                chatTurns = cur.chatTurns.map { t ->
+                    t.copy(proposals = markProposalDismissed(t.proposals, uiProposal.proposalId))
+                },
+            )
+        }
+    }
+
+    fun runInsightPreset(presetUi: AgentPresetUi) {
+        ensureAgentRunsObserved()
+        agentJob?.cancel()
+        val current = _agentState.value
+        val scope = NoteScope(
+            includeTags = setOfNotNull(current.selectedTagId),
+            aiOnly = true,
+        )
+        _agentState.update {
+            it.copy(
+                running = true,
+                selectedPresetId = presetUi.id,
+                liveSteps = emptyList(),
+                lastUsedRemoteAi = false,
+                fallbackReason = null,
+                statusMessage = null,
+                errorMessage = null,
+            )
+        }
+        agentJob = viewModelScope.launch {
+            try {
+                val (preset, gateway, memorySnap) = withContext(Dispatchers.IO) {
+                    val resolved = agentPresetStore.getPreset(presetUi.id) ?: AgentPreset(
+                        id = presetUi.id,
+                        name = presetUi.name,
+                        description = presetUi.description,
+                        systemPrompt = presetUi.promptTemplate,
+                        builtIn = presetUi.builtIn,
+                        defaultDays = presetUi.defaultRangeDays,
+                    )
+                    val gw = buildLlmGateway()
+                    val mem = if (_agentState.value.memoryAutoReference) agentMemoryStore.loadSnapshot() else null
+                    Triple(resolved, gw, mem)
+                }
+                val (entity, hybridResult) = agentRepository.runPresetAnalysis(
+                    preset = preset,
+                    scope = scope,
+                    timeRange = null,
+                    memorySnapshot = memorySnap,
+                    llmGateway = gateway,
+                    onStep = { step ->
+                        val maxSteps = _agentState.value.maxSteps
+                        _agentState.update { cur -> cur.copy(liveSteps = cur.liveSteps + step.toUi(maxSteps)) }
+                    },
+                )
+                val uiCitations = hybridResult.citations.map { it.toUi() }
+                val insightUi = AgentInsightResultUi(
+                    presetId = preset.id,
+                    presetName = preset.name,
+                    summaryMarkdown = hybridResult.rawAnswerMarkdown.ifBlank { hybridResult.runResult.headline },
+                    highlights = if (hybridResult.usedRemoteAi) emptyList() else hybridResult.runResult.observations,
+                    citations = uiCitations,
+                    usedRemoteAi = hybridResult.usedRemoteAi,
+                    modelUsed = hybridResult.modelUsed,
+                )
+                val surfaceFallback = if (gateway != null && !hybridResult.usedRemoteAi) {
+                    hybridResult.fallbackReason
+                } else {
+                    null
+                }
+                _agentState.update {
+                    it.copy(
+                        running = false,
+                        activeRun = entity,
+                        activeInsightResult = insightUi,
+                        lastUsedRemoteAi = hybridResult.usedRemoteAi,
+                        remoteModelName = hybridResult.modelUsed ?: it.remoteModelName,
+                        fallbackReason = surfaceFallback,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                _agentState.update { it.copy(running = false, statusMessage = "已停止多视角洞察") }
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update { it.copy(running = false, errorMessage = "多视角洞察未能完成，请重试") }
+            }
+        }
+    }
+
+    fun saveCustomInsightPreset(
+        id: String?,
+        name: String,
+        description: String,
+        promptTemplate: String,
+        defaultRangeDays: Int?,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val saved = agentPresetStore.saveCustomPreset(
+                        name = name,
+                        description = description,
+                        systemPrompt = promptTemplate,
+                        defaultDays = defaultRangeDays,
+                        id = id,
+                    )
+                    saved to agentPresetStore.loadPresets()
+                }
+            }.onSuccess { (saved, allPresets) ->
+                _agentState.update {
+                    it.copy(
+                        insightPresets = allPresets.map { p -> p.toUi() },
+                        statusMessage = "已保存自定义视角「${saved.name}」",
+                        errorMessage = null,
+                    )
+                }
+            }.onFailure { err ->
+                if (err is CancellationException) throw err
+                _agentState.update { it.copy(errorMessage = err.message ?: "保存自定义视角失败") }
+            }
+        }
+    }
+
+    fun deleteCustomInsightPreset(id: String) {
+        viewModelScope.launch {
+            val (deleted, allPresets) = withContext(Dispatchers.IO) {
+                val ok = agentPresetStore.deleteCustomPreset(id)
+                ok to agentPresetStore.loadPresets()
+            }
+            _agentState.update { cur ->
+                cur.copy(
+                    insightPresets = allPresets.map { p -> p.toUi() },
+                    selectedPresetId = if (cur.selectedPresetId == id) null else cur.selectedPresetId,
+                    activeInsightResult = if (cur.activeInsightResult?.presetId == id) null else cur.activeInsightResult,
+                    statusMessage = if (deleted) "已删除自定义视角" else cur.statusMessage,
+                )
+            }
+        }
+    }
+
+    fun continueChatFromInsight(insight: AgentInsightResultUi) {
+        val summary = buildString {
+            appendLine(insight.summaryMarkdown)
+            if (insight.highlights.isNotEmpty()) {
+                appendLine()
+                insight.highlights.forEach { appendLine("- $it") }
+            }
+        }.trim()
+        val seedUser = HybridChatMessage(
+            id = newId(),
+            role = "user",
+            text = "请基于「${insight.presetName}」视角分析我的近期笔记。",
+        )
+        val seedAssistant = HybridChatMessage(
+            id = newId(),
+            role = "assistant",
+            text = summary,
+            usedRemoteAi = insight.usedRemoteAi,
+            modelUsed = insight.modelUsed,
+        )
+        activeChatHistory = listOf(seedUser, seedAssistant)
+        cachedWriteProposals.clear()
+        lastHybridPrompt = seedUser.text
+        lastHybridSkill = AgentSkill.FreeQuestion
+        val nowLabel = formatEpochLabel(System.currentTimeMillis())
+        _agentState.update {
+            it.copy(
+                activeTabIndex = AgentWorkspaceTab.Research.index,
+                activeRun = null,
+                activeResult = null,
+                writeProposals = emptyList(),
+                chatTurns = listOf(
+                    AgentChatTurnUi(
+                        id = seedUser.id,
+                        role = "user",
+                        text = seedUser.text,
+                        createdAtLabel = nowLabel,
+                    ),
+                    AgentChatTurnUi(
+                        id = seedAssistant.id,
+                        role = "assistant",
+                        text = summary,
+                        citations = insight.citations,
+                        usedRemoteAi = insight.usedRemoteAi,
+                        modelUsed = insight.modelUsed,
+                        createdAtLabel = nowLabel,
+                    ),
+                ),
+                statusMessage = "已带入「${insight.presetName}」分析上下文，可在下方继续追问",
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun saveInsightAsNote(insight: AgentInsightResultUi) {
+        viewModelScope.launch {
+            try {
+                val body = buildString {
+                    appendLine(insight.summaryMarkdown.trim())
+                    if (insight.highlights.isNotEmpty()) {
+                        appendLine()
+                        insight.highlights.forEach { appendLine("- $it") }
+                    }
+                    if (insight.citations.isNotEmpty()) {
+                        appendLine()
+                        appendLine("## 引用原笔记")
+                        insight.citations.forEach { appendLine("- ${it.noteTitle}") }
+                    }
+                }.trim()
+                val proposal = AgentWriteProposal.NewNoteProposal(
+                    proposalId = "insight_${insight.presetId}_${newId().take(8)}",
+                    title = "洞察：${insight.presetName}",
+                    markdownBody = body,
+                    suggestedTags = listOf("AI洞察"),
+                    reason = "从「${insight.presetName}」视角分析保存",
+                )
+                val commitRes = persistenceMutex.withLock {
+                    agentRepository.commitNewNoteProposal(proposal, runId = _agentState.value.activeRun?.id)
+                }
+                if (commitRes is AgentActionCommitResult.Committed) {
+                    WidgetUpdater.requestRefreshAll(getApplication())
+                }
+                _agentState.update { cur ->
+                    when (commitRes) {
+                        is AgentActionCommitResult.Committed -> cur.copy(statusMessage = commitRes.summary, errorMessage = null)
+                        is AgentActionCommitResult.AlreadyApplied -> cur.copy(statusMessage = "已存为新笔记", errorMessage = null)
+                        is AgentActionCommitResult.ConflictDetected -> cur.copy(errorMessage = "存为笔记遇到冲突，请重试")
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update { it.copy(errorMessage = "保存洞察笔记失败，请重试") }
+            }
+        }
+    }
+
+    fun toggleMemoryAutoReference(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = agentMemoryStore.setGlobalEnabled(enabled)
+            _agentState.update { it.copy(memoryAutoReference = updated.memoryEnabledInAgent) }
+        }
+    }
+
+    fun extractMemoryUpdates() {
+        if (_agentState.value.memoryExtracting) return
+        _agentState.update { it.copy(memoryExtracting = true, statusMessage = null, errorMessage = null) }
+        viewModelScope.launch {
+            try {
+                val (proposals, noteTitles) = withContext(Dispatchers.IO) {
+                    val currentMem = agentMemoryStore.loadSnapshot()
+                    val gw = buildLlmGateway()
+                    val list = agentRepository.proposeMemoryUpdates(
+                        scope = NoteScope(aiOnly = true),
+                        currentMemory = currentMem,
+                        llmGateway = gw,
+                    )
+                    val titles = database.notes().allNotes().associate { it.id to LocalRetrievalEngine.displayNoteTitle(it) }
+                    list to titles
+                }
+                cachedMemoryProposals.clear()
+                proposals.forEach { cachedMemoryProposals[it.proposalId] = it }
+                val candidateUis = proposals.map { p ->
+                    val srcId = p.sourceNoteIds.firstOrNull()
+                    AgentMemoryCandidateUi(
+                        candidateId = p.proposalId,
+                        category = p.category.displayName,
+                        proposedContent = if (p.title.isNotBlank() && !p.content.startsWith(p.title)) {
+                            "${p.title}：${p.content}"
+                        } else {
+                            p.content
+                        },
+                        existingContent = p.existingContent,
+                        sourceNoteId = srcId,
+                        sourceNoteTitle = srcId?.let(noteTitles::get),
+                        isConflictWithUserEdited = p.conflictsWithUserEdited,
+                        existingMemoryId = p.targetMemoryId,
+                    )
+                }
+                _agentState.update {
+                    it.copy(
+                        memoryExtracting = false,
+                        memoryCandidates = candidateUis,
+                        statusMessage = if (candidateUis.isEmpty()) "近期笔记暂无新的长期记忆更新建议" else null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                _agentState.update { it.copy(memoryExtracting = false) }
+                throw cancelled
+            } catch (_: Exception) {
+                _agentState.update { it.copy(memoryExtracting = false, errorMessage = "提炼长期记忆失败，请重试") }
+            }
+        }
+    }
+
+    fun commitMemoryCandidates(chosen: List<AgentMemoryCandidateUi>) {
+        if (chosen.isEmpty()) return
+        viewModelScope.launch {
+            val (snapshot, noteTitles) = withContext(Dispatchers.IO) {
+                val selectedProposals = chosen.mapNotNull { ui -> cachedMemoryProposals[ui.candidateId] }
+                val allowOverwriteUserEditedIds = chosen
+                    .flatMap { ui ->
+                        listOfNotNull(
+                            ui.existingMemoryId?.takeIf { it.isNotBlank() },
+                            if (ui.isConflictWithUserEdited) ui.candidateId else null,
+                        )
+                    }
+                    .toSet()
+                val updated = agentMemoryStore.applyApprovedProposals(
+                    selectedProposals = selectedProposals,
+                    allowOverwriteUserEditedIds = allowOverwriteUserEditedIds,
+                )
+                val titles = database.notes().allNotes().associate { it.id to LocalRetrievalEngine.displayNoteTitle(it) }
+                updated to titles
+            }
+            cachedMemoryProposals.clear()
+            _agentState.update {
+                it.copy(
+                    memoryAutoReference = snapshot.memoryEnabledInAgent,
+                    memoryItems = snapshot.items.map { item -> item.toUi(noteTitles) },
+                    memoryCandidates = emptyList(),
+                    statusMessage = "已写入 ${chosen.size} 条长期记忆档案",
+                    errorMessage = null,
+                )
+            }
+        }
+    }
+
+    fun dismissMemoryCandidates() {
+        cachedMemoryProposals.clear()
+        _agentState.update { it.copy(memoryCandidates = emptyList()) }
+    }
+
+    fun toggleMemoryItem(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            val (snapshot, noteTitles) = withContext(Dispatchers.IO) {
+                val updated = agentMemoryStore.setItemEnabled(id, enabled)
+                val titles = database.notes().allNotes().associate { it.id to LocalRetrievalEngine.displayNoteTitle(it) }
+                updated to titles
+            }
+            _agentState.update {
+                it.copy(memoryItems = snapshot.items.map { item -> item.toUi(noteTitles) })
+            }
+        }
+    }
+
+    fun editMemoryItem(id: String, categoryRaw: String, content: String) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val cat = MemoryCategory.fromId(categoryRaw)
+                    val trimmed = content.trim()
+                    val splitParts = trimmed.split("：", limit = 2)
+                    val parsedTitle = if (splitParts.size == 2 && splitParts[0].isNotBlank() && splitParts[1].isNotBlank()) {
+                        splitParts[0].trim()
+                    } else {
+                        null
+                    }
+                    val parsedBody = if (parsedTitle != null) splitParts[1].trim() else trimmed
+                    agentMemoryStore.updateMemoryItem(
+                        id = id,
+                        category = cat,
+                        title = parsedTitle,
+                        content = parsedBody,
+                        markUserEdited = true,
+                    )
+                    val updated = agentMemoryStore.loadSnapshot()
+                    val titles = database.notes().allNotes().associate { it.id to LocalRetrievalEngine.displayNoteTitle(it) }
+                    updated to titles
+                }
+            }.onSuccess { (snapshot, noteTitles) ->
+                _agentState.update {
+                    it.copy(
+                        memoryItems = snapshot.items.map { item -> item.toUi(noteTitles) },
+                        statusMessage = "已更新记忆条目（自动提炼不会静默覆盖）",
+                        errorMessage = null,
+                    )
+                }
+            }.onFailure { err ->
+                if (err is CancellationException) throw err
+                _agentState.update { it.copy(errorMessage = err.message ?: "更新记忆失败") }
+            }
+        }
+    }
+
+    fun deleteMemoryItem(id: String) {
+        viewModelScope.launch {
+            val (snapshot, noteTitles) = withContext(Dispatchers.IO) {
+                val updated = agentMemoryStore.deleteMemoryItem(id)
+                val titles = database.notes().allNotes().associate { it.id to LocalRetrievalEngine.displayNoteTitle(it) }
+                updated to titles
+            }
+            _agentState.update {
+                it.copy(
+                    memoryItems = snapshot.items.map { item -> item.toUi(noteTitles) },
+                    statusMessage = "已删除该记忆条目",
+                )
+            }
+        }
+    }
+
+    fun requestVoiceTranscriptClean(attachmentId: String, rawTranscript: String) {
+        voiceCleanJob?.cancel()
+        _voiceCleanState.value = VoiceCleanUiState(
+            activeAttachmentId = attachmentId,
+            cleaning = true,
+            cleanedTranscriptPreview = null,
+            extractedTodoPreviews = emptyList(),
+            notice = null,
+        )
+        voiceCleanJob = viewModelScope.launch {
+            try {
+                val (snapshot, apiKey) = withContext(Dispatchers.IO) {
+                    byokAiConfigStore.resolveCredentials()
+                }
+                val result = cleanVoiceTranscriptWithByok(
+                    rawTranscript = rawTranscript,
+                    client = openAiClient,
+                    snapshot = snapshot,
+                    apiKey = apiKey,
+                )
+                _voiceCleanState.value = VoiceCleanUiState(
+                    activeAttachmentId = attachmentId,
+                    cleaning = false,
+                    cleanedTranscriptPreview = result.cleanedText.takeIf { it.isNotBlank() },
+                    extractedTodoPreviews = result.extractedTodos,
+                    notice = if (!result.usedRemoteAi || result.cleanedText.isBlank()) result.statusNote else null,
+                )
+            } catch (cancelled: CancellationException) {
+                _voiceCleanState.update { it.copy(cleaning = false) }
+                throw cancelled
+            } catch (_: Throwable) {
+                _voiceCleanState.value = VoiceCleanUiState(
+                    activeAttachmentId = attachmentId,
+                    cleaning = false,
+                    cleanedTranscriptPreview = null,
+                    extractedTodoPreviews = emptyList(),
+                    notice = "语音整理失败，可重试或直接插入原文",
+                )
+            }
+        }
+    }
+
+    fun dismissVoiceCleanPreview() {
+        voiceCleanJob?.cancel()
+        _voiceCleanState.value = VoiceCleanUiState()
+    }
+
+    fun acceptVoiceTranscriptClean(
+        session: EditorSession,
+        block: EditorBlock,
+        cleanedText: String,
+        selectedTodos: List<String>,
+    ): Boolean {
+        val inserted = session.insertCleanedTranscriptAndTodos(block, cleanedText, selectedTodos)
+        if (!inserted) return false
+        voiceCleanJob?.cancel()
+        _voiceCleanState.value = VoiceCleanUiState()
+        if (selectedTodos.isNotEmpty()) {
+            session.status = "已插入整理后文本并添加 ${selectedTodos.size} 项待办"
+        }
+        return true
+    }
+
+    private fun AgentStepTrace.toUi(maxSteps: Int): AgentProgressStepUi = AgentProgressStepUi(
+        stepIndex = stepIndex,
+        totalSteps = maxSteps,
+        toolName = toolName,
+        summary = summary,
+        elapsedMs = elapsedMs,
+    )
+
+    private fun CitationLink.toUi(): AgentCitationUi = AgentCitationUi(
+        noteId = noteId,
+        noteTitle = noteTitle,
+        excerpt = excerpt,
+        reason = reason,
+    )
+
+    private fun AgentWriteProposal.toUi(): AgentWriteProposalUi = when (this) {
+        is AgentWriteProposal.NewNoteProposal -> AgentWriteProposalUi.NewNote(
+            proposalId = proposalId,
+            title = title,
+            markdownBody = markdownBody,
+            suggestedTags = suggestedTags,
+            reason = reason,
+        )
+        is AgentWriteProposal.PatchNoteProposal -> AgentWriteProposalUi.PatchNote(
+            proposalId = proposalId,
+            targetNoteId = targetNoteId,
+            targetTitle = targetTitle,
+            beforeExcerpt = beforeExcerpt,
+            afterContent = afterContent,
+            appendMode = appendMode,
+            reason = reason,
+        )
+        is AgentWriteProposal.ExtractTodosProposal -> AgentWriteProposalUi.ExtractTodos(
+            proposalId = proposalId,
+            noteId = noteId,
+            targetTitle = targetTitle,
+            items = items,
+            reason = reason,
+        )
+    }
+
+    private fun AgentPreset.toUi(): AgentPresetUi = AgentPresetUi(
+        id = id,
+        name = name,
+        description = description,
+        promptTemplate = systemPrompt,
+        defaultRangeDays = defaultDays,
+        builtIn = builtIn,
+        iconKey = when (id) {
+            AgentPresetStore.PRESET_BLINDSPOTS -> "explore"
+            AgentPresetStore.PRESET_SHARP_QUESTIONS -> "sparkles"
+            AgentPresetStore.PRESET_STANCE_SHIFT -> "history"
+            AgentPresetStore.PRESET_MEANING_RADAR -> "chart"
+            else -> "sparkles"
+        },
+    )
+
+    private fun AgentMemoryItem.toUi(noteTitles: Map<String, String>): AgentMemoryItemUi {
+        val srcId = sourceNoteIds.firstOrNull()
+        val displayBody = if (title.isNotBlank() && !content.startsWith(title)) {
+            "$title：$content"
+        } else {
+            content
+        }
+        return AgentMemoryItemUi(
+            id = id,
+            category = category.displayName,
+            content = displayBody,
+            sourceNoteId = srcId,
+            sourceNoteTitle = srcId?.let(noteTitles::get),
+            enabled = enabled,
+            userEdited = userEdited,
+            updatedAtLabel = formatEpochLabel(updatedAt),
+        )
+    }
+
+    private fun markProposalApplied(
+        list: List<AgentWriteProposalUi>,
+        proposalId: String,
+    ): List<AgentWriteProposalUi> = list.map { item ->
+        if (item.proposalId != proposalId) item
+        else when (item) {
+            is AgentWriteProposalUi.NewNote -> item.copy(applied = true)
+            is AgentWriteProposalUi.PatchNote -> item.copy(applied = true)
+            is AgentWriteProposalUi.ExtractTodos -> item.copy(applied = true)
+        }
+    }
+
+    private fun markProposalDismissed(
+        list: List<AgentWriteProposalUi>,
+        proposalId: String,
+    ): List<AgentWriteProposalUi> = list.map { item ->
+        if (item.proposalId != proposalId) item
+        else when (item) {
+            is AgentWriteProposalUi.NewNote -> item.copy(dismissed = true)
+            is AgentWriteProposalUi.PatchNote -> item.copy(dismissed = true)
+            is AgentWriteProposalUi.ExtractTodos -> item.copy(dismissed = true)
+        }
+    }
+
+    private fun formatEpochLabel(epochMs: Long): String {
+        if (epochMs <= 0L) return ""
+        return runCatching {
+            val zdt = Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault())
+            DateTimeFormatter.ofPattern("MM/dd HH:mm").format(zdt)
+        }.getOrDefault("")
     }
 
     fun refreshEditorRelatedNotes(noteId: String?) {

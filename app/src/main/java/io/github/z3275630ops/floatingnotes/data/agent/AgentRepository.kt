@@ -538,6 +538,373 @@ internal class AgentRepository(
         outcome
     }
 
+    /** Multi-step Notion x flomo research query with BYOK gateway and graceful local fallback. */
+    suspend fun runHybridQuery(
+        prompt: String,
+        scope: NoteScope = NoteScope(),
+        timeRange: AgentTimeRange = AgentTimeRange.All,
+        skill: AgentSkill = AgentSkill.FreeQuestion,
+        conversationHistory: List<HybridChatMessage> = emptyList(),
+        memorySnapshot: AgentMemorySnapshot? = null,
+        llmGateway: LlmGateway? = null,
+        onStep: (AgentStepTrace) -> Unit = {},
+        runId: String = newId(),
+        now: Instant = Instant.now(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): Pair<AgentRunEntity, HybridAgentRunResult> = withContext(Dispatchers.IO) {
+        val createdAt = isoFormatter.format(now)
+        val effectivePrompt = prompt.trim().ifEmpty { skill.defaultPrompt }
+        val runningEntity = AgentRunEntity(
+            id = runId,
+            skillId = skill.id,
+            prompt = effectivePrompt,
+            scopeJson = scope.encode(),
+            status = "running",
+            resultJson = "",
+            createdAt = createdAt,
+            updatedAt = createdAt,
+        )
+        agentDao.upsertRun(runningEntity)
+
+        try {
+            discoveryRepository.ensureIndexFresh()
+            coroutineContext.ensureActive()
+
+            val allNotes = notesDao.allNotes()
+            val allChunks = discoveryDao.allChunks()
+            val tags = orgDao.tags()
+            val noteTags = orgDao.noteTags()
+            val notebookNotes = orgDao.notebookNotes()
+            val links = orgDao.noteLinks()
+            val allReminders = database.taskReminders().allReminders()
+
+            val hybridResult = HybridAgentEngine.runQuery(
+                prompt = effectivePrompt,
+                notes = allNotes,
+                chunks = allChunks,
+                tags = tags,
+                noteTags = noteTags,
+                notebookNotes = notebookNotes,
+                links = links,
+                scope = scope,
+                timeRange = timeRange,
+                skill = skill,
+                conversationHistory = conversationHistory,
+                memorySnapshot = memorySnapshot,
+                llmGateway = llmGateway,
+                onStep = onStep,
+                now = now,
+                zoneId = zoneId,
+                reminders = allReminders,
+            )
+
+            val doneStatus = if (hybridResult.runResult.evidence.isEmpty() && !hybridResult.usedRemoteAi && hybridResult.runResult.scannedCount == 0) {
+                "insufficient_evidence"
+            } else {
+                "completed"
+            }
+            val completedEntity = runningEntity.copy(
+                status = doneStatus,
+                resultJson = hybridResult.runResult.encode(),
+                updatedAt = isoFormatter.format(Instant.now()),
+            )
+            agentDao.upsertRun(completedEntity)
+            completedEntity to hybridResult
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                val cancelledResult = AgentRunResult(
+                    engineNotice = LocalAgentEngine.ENGINE_NOTICE,
+                    headline = "已停止本次研究分析",
+                    observations = listOf("任务已按你的操作中断，未修改任何笔记。"),
+                    evidence = emptyList(),
+                    alternativeView = "本次中断未写入或修改任何笔记。",
+                    nextQuestions = listOf("重新分析"),
+                    toolSteps = listOf(AgentToolStep("cancelled", "用户主动停止", "cancelled", 0)),
+                    suggestedTodos = emptyList(),
+                    filteredByPolicyCount = 0,
+                    scannedCount = 0,
+                )
+                agentDao.upsertRun(
+                    runningEntity.copy(
+                        status = "cancelled",
+                        resultJson = cancelledResult.encode(),
+                        updatedAt = isoFormatter.format(Instant.now()),
+                    ),
+                )
+            }
+            throw cancelled
+        } catch (t: Throwable) {
+            val failedResult = AgentRunResult(
+                engineNotice = LocalAgentEngine.ENGINE_NOTICE,
+                headline = "研究分析遇到异常，未修改你的笔记",
+                observations = listOf(t.message ?: "读取笔记数据时发生未知错误"),
+                evidence = emptyList(),
+                alternativeView = "可重试或切换本机规则模式。",
+                nextQuestions = emptyList(),
+                toolSteps = listOf(AgentToolStep("error", "研究中断", "failed", 0)),
+                suggestedTodos = emptyList(),
+                filteredByPolicyCount = 0,
+                scannedCount = 0,
+            )
+            val failedEntity = runningEntity.copy(
+                status = "failed",
+                resultJson = failedResult.encode(),
+                updatedAt = isoFormatter.format(Instant.now()),
+            )
+            agentDao.upsertRun(failedEntity)
+            failedEntity to HybridAgentRunResult(
+                runResult = failedResult,
+                usedRemoteAi = false,
+                fallbackReason = t.message ?: "执行失败",
+            )
+        }
+    }
+
+    /** Runs a built-in flomo perspective or user custom [AgentPreset] with optional remote LLM. */
+    suspend fun runPresetAnalysis(
+        preset: AgentPreset,
+        scope: NoteScope = NoteScope(),
+        timeRange: AgentTimeRange? = null,
+        memorySnapshot: AgentMemorySnapshot? = null,
+        llmGateway: LlmGateway? = null,
+        onStep: (AgentStepTrace) -> Unit = {},
+        runId: String = newId(),
+        now: Instant = Instant.now(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): Pair<AgentRunEntity, HybridAgentRunResult> = withContext(Dispatchers.IO) {
+        val createdAt = isoFormatter.format(now)
+        val runningEntity = AgentRunEntity(
+            id = runId,
+            skillId = "preset:${preset.id}",
+            prompt = preset.name,
+            scopeJson = scope.encode(),
+            status = "running",
+            resultJson = "",
+            createdAt = createdAt,
+            updatedAt = createdAt,
+        )
+        agentDao.upsertRun(runningEntity)
+
+        try {
+            discoveryRepository.ensureIndexFresh()
+            coroutineContext.ensureActive()
+
+            val allNotes = notesDao.allNotes()
+            val allChunks = discoveryDao.allChunks()
+            val tags = orgDao.tags()
+            val noteTags = orgDao.noteTags()
+            val notebookNotes = orgDao.notebookNotes()
+            val links = orgDao.noteLinks()
+            val allReminders = database.taskReminders().allReminders()
+
+            val hybridResult = HybridAgentEngine.runPresetAnalysis(
+                preset = preset,
+                notes = allNotes,
+                chunks = allChunks,
+                tags = tags,
+                noteTags = noteTags,
+                notebookNotes = notebookNotes,
+                links = links,
+                scope = scope,
+                timeRange = timeRange,
+                memorySnapshot = memorySnapshot,
+                llmGateway = llmGateway,
+                onStep = onStep,
+                now = now,
+                zoneId = zoneId,
+                reminders = allReminders,
+            )
+
+            val doneStatus = if (hybridResult.runResult.scannedCount == 0 && !hybridResult.usedRemoteAi) {
+                "insufficient_evidence"
+            } else {
+                "completed"
+            }
+            val completedEntity = runningEntity.copy(
+                status = doneStatus,
+                resultJson = hybridResult.runResult.encode(),
+                updatedAt = isoFormatter.format(Instant.now()),
+            )
+            agentDao.upsertRun(completedEntity)
+            completedEntity to hybridResult
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                val cancelledResult = AgentRunResult(
+                    engineNotice = LocalAgentEngine.ENGINE_NOTICE,
+                    headline = "已停止「${preset.name}」洞察",
+                    observations = listOf("任务已按你的操作中断，未修改任何笔记。"),
+                    evidence = emptyList(),
+                    alternativeView = "本次中断未写入或修改任何笔记。",
+                    nextQuestions = emptyList(),
+                    toolSteps = listOf(AgentToolStep("cancelled", "用户主动停止", "cancelled", 0)),
+                    suggestedTodos = emptyList(),
+                    filteredByPolicyCount = 0,
+                    scannedCount = 0,
+                )
+                agentDao.upsertRun(
+                    runningEntity.copy(
+                        status = "cancelled",
+                        resultJson = cancelledResult.encode(),
+                        updatedAt = isoFormatter.format(Instant.now()),
+                    ),
+                )
+            }
+            throw cancelled
+        } catch (t: Throwable) {
+            val failedResult = AgentRunResult(
+                engineNotice = LocalAgentEngine.ENGINE_NOTICE,
+                headline = "「${preset.name}」分析失败，未修改你的笔记",
+                observations = listOf(t.message ?: "读取笔记数据时发生未知错误"),
+                evidence = emptyList(),
+                alternativeView = "可重试或切换本机规则模式。",
+                nextQuestions = emptyList(),
+                toolSteps = listOf(AgentToolStep("error", "洞察失败", "failed", 0)),
+                suggestedTodos = emptyList(),
+                filteredByPolicyCount = 0,
+                scannedCount = 0,
+            )
+            val failedEntity = runningEntity.copy(
+                status = "failed",
+                resultJson = failedResult.encode(),
+                updatedAt = isoFormatter.format(Instant.now()),
+            )
+            agentDao.upsertRun(failedEntity)
+            failedEntity to HybridAgentRunResult(
+                runResult = failedResult,
+                usedRemoteAi = false,
+                fallbackReason = t.message ?: "执行失败",
+            )
+        }
+    }
+
+    /** Proposes memory updates strictly from non-excluded notes without writing to [AgentMemoryStore]. */
+    suspend fun proposeMemoryUpdates(
+        scope: NoteScope = NoteScope(),
+        currentMemory: AgentMemorySnapshot,
+        llmGateway: LlmGateway? = null,
+    ): List<MemoryProposal> = withContext(Dispatchers.IO) {
+        val allNotes = notesDao.allNotes()
+        val tags = orgDao.tags()
+        val noteTags = orgDao.noteTags()
+        val notebookNotes = orgDao.notebookNotes()
+        HybridAgentEngine.proposeMemoryUpdates(
+            notes = allNotes,
+            scope = scope,
+            currentMemory = currentMemory,
+            llmGateway = llmGateway,
+            tags = tags,
+            noteTags = noteTags,
+            notebookNotes = notebookNotes,
+        )
+    }
+
+    /** Safe Mode commit of a [AgentWriteProposal.NewNoteProposal] with idempotent action recording. */
+    suspend fun commitNewNoteProposal(
+        proposal: AgentWriteProposal.NewNoteProposal,
+        runId: String? = null,
+        actionId: String = "agent_new_note:${proposal.proposalId}",
+        now: Instant = Instant.now(),
+    ): AgentActionCommitResult = withContext(Dispatchers.IO) {
+        val (outcome, savedNote) = database.withTransaction {
+            SafeModeCommitCoordinator.commitNewNote(
+                storage = roomSafeModeStorage(),
+                proposal = proposal,
+                runId = runId,
+                actionId = actionId,
+                createdAtIso = isoFormatter.format(now),
+            )
+        }
+        if (savedNote != null) {
+            discoveryRepository.syncChunksForNote(savedNote)
+        }
+        outcome
+    }
+
+    /**
+     * Safe Mode commit of a [AgentWriteProposal.PatchNoteProposal].
+     * Enforces idempotency via [AgentActionEntity] and optimistic concurrency via [proposal.expectedRevision].
+     */
+    suspend fun commitNotePatch(
+        proposal: AgentWriteProposal.PatchNoteProposal,
+        runId: String? = null,
+        actionId: String = "agent_patch_note:${proposal.proposalId}",
+        now: Instant = Instant.now(),
+    ): AgentActionCommitResult = withContext(Dispatchers.IO) {
+        val (outcome, savedNote) = database.withTransaction {
+            SafeModeCommitCoordinator.commitPatch(
+                storage = roomSafeModeStorage(),
+                proposal = proposal,
+                runId = runId,
+                actionId = actionId,
+                createdAtIso = isoFormatter.format(now),
+                conflictTsMillis = now.toEpochMilli(),
+            )
+        }
+        if (savedNote != null) {
+            discoveryRepository.syncChunksForNote(savedNote)
+        }
+        outcome
+    }
+
+    /** Safe Mode commit of an [AgentWriteProposal.ExtractTodosProposal] into a checklist note. */
+    suspend fun commitTodosProposal(
+        proposal: AgentWriteProposal.ExtractTodosProposal,
+        runId: String? = null,
+        selectedItems: List<String> = proposal.items,
+        actionId: String = "agent_todos_proposal:${proposal.proposalId}",
+        now: Instant = Instant.now(),
+    ): AgentActionCommitResult = withContext(Dispatchers.IO) {
+        val (outcome, savedNote) = database.withTransaction {
+            SafeModeCommitCoordinator.commitTodos(
+                storage = roomSafeModeStorage(),
+                proposal = proposal,
+                selectedItems = selectedItems,
+                runId = runId,
+                actionId = actionId,
+                createdAtIso = isoFormatter.format(now),
+            )
+        }
+        if (savedNote != null) {
+            discoveryRepository.syncChunksForNote(savedNote)
+        }
+        outcome
+    }
+
+    private fun roomSafeModeStorage(): SafeModeNoteStorage = object : SafeModeNoteStorage {
+        override suspend fun findAction(actionId: String): AgentActionEntity? = agentDao.actionById(actionId)
+
+        override suspend fun insertAction(action: AgentActionEntity) {
+            agentDao.insertAction(action)
+        }
+
+        override suspend fun findNote(noteId: String): NoteEntity? = notesDao.note(noteId)
+
+        override suspend fun createNote(
+            document: NoteDocument,
+            sourceType: String,
+            tags: List<String>,
+        ): NoteEntity {
+            val draft = notesRepository.newDraft("agent-hybrid-${newId()}").copy(
+                documentJson = document.encode(),
+                editSeq = 1L,
+                sourceType = sourceType,
+            )
+            val saved = notesRepository.commit(draft)
+            for (tag in tags) {
+                attachProvenanceTag(saved.id, tag)
+            }
+            return saved
+        }
+
+        override suspend fun updateNote(note: NoteEntity, updatedDocument: NoteDocument): NoteEntity {
+            val draft = notesRepository.newDraft("agent-patch-${newId()}", note).copy(
+                documentJson = updatedDocument.encode(),
+                editSeq = note.committedSeq + 1L,
+            )
+            return notesRepository.commit(draft)
+        }
+    }
+
     private suspend fun attachProvenanceTag(noteId: String, tagName: String) {
         val key = tagNameKey(tagName)
         val existingTag = orgDao.tags().firstOrNull { it.parentId.isEmpty() && it.nameKey == key }

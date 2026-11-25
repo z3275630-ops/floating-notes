@@ -79,6 +79,14 @@ internal fun AttachmentRow(
     id: String,
     enabled: Boolean,
     insertTranscript: (String) -> Boolean,
+    aiCleanEnabled: Boolean = false,
+    aiCleaning: Boolean = false,
+    cleanedTranscriptPreview: String? = null,
+    extractedTodoPreviews: List<String> = emptyList(),
+    aiCleanNotice: String? = null,
+    onRequestAiClean: (String) -> Unit = {},
+    onAcceptAiClean: (String, List<String>) -> Boolean = { _, _ -> false },
+    onDismissAiCleanPreview: () -> Unit = {},
     remove: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -192,6 +200,26 @@ internal fun AttachmentRow(
         }
     }
     if (showTranscription && item != null) {
-        TranscriptionDialog(store, item, { showTranscription = false }, insertTranscript)
+        TranscriptionDialog(
+            store = store,
+            attachment = item,
+            dismiss = {
+                onDismissAiCleanPreview()
+                showTranscription = false
+            },
+            insert = insertTranscript,
+            aiCleanEnabled = aiCleanEnabled,
+            aiCleaning = aiCleaning,
+            cleanedTranscriptPreview = cleanedTranscriptPreview,
+            extractedTodoPreviews = extractedTodoPreviews,
+            aiCleanNotice = aiCleanNotice,
+            onRequestAiClean = onRequestAiClean,
+            onAcceptAiClean = { cleanedText, selectedTodos ->
+                if (onAcceptAiClean(cleanedText, selectedTodos)) {
+                    showTranscription = false
+                }
+            },
+            onDismissAiCleanPreview = onDismissAiCleanPreview,
+        )
     }
 }

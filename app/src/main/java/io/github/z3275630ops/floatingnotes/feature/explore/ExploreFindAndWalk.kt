@@ -77,6 +77,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSegmentedBar
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintTextField
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAiAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAnimatorsEnabled
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDividerColor
@@ -1175,11 +1176,30 @@ private fun DualWalkContent(
                                 color = scheme.onSurfaceVariant,
                             )
                         }
-                        Text(
-                            text = bridge.engineNotice,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = scheme.onSurfaceVariant,
-                        )
+                        val isRemoteBridge = bridge.engineNotice.startsWith("由 ") || bridge.engineNotice.startsWith("已结合")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isRemoteBridge) mintAiAccent(dark).bg else mintCardSurface(dark))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            ) {
+                                Text(
+                                    text = if (isRemoteBridge) "外部模型" else "本机推理",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = if (isRemoteBridge) mintAiAccent(dark).fg else scheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(
+                                text = bridge.engineNotice,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
 
