@@ -122,11 +122,128 @@ internal interface DiscoveryDao {
     @Query("DELETE FROM note_chunks WHERE note_id = :noteId")
     suspend fun deleteChunksForNote(noteId: String)
 
+    @Query("DELETE FROM note_chunks WHERE note_id IN (:noteIds)")
+    suspend fun deleteChunksForNoteIds(noteIds: List<String>)
+
     @Query("DELETE FROM note_chunks WHERE note_id NOT IN (SELECT id FROM notes WHERE deleted_at IS NULL)")
     suspend fun purgeStaleOrDeletedChunks()
 
     @Query("DELETE FROM note_chunks")
     suspend fun clearAllChunks()
+
+    @Query(
+        """
+        SELECT n.id FROM notes n
+        WHERE n.deleted_at IS NULL
+          AND (
+            TRIM(COALESCE(n.title, ''), char(32, 9, 10, 13)) != ''
+            OR TRIM(n.search_text, char(32, 9, 10, 13)) != ''
+          )
+          AND (
+            NOT EXISTS (SELECT 1 FROM note_chunks c WHERE c.note_id = n.id)
+            OR EXISTS (
+              SELECT 1 FROM note_chunks c
+              WHERE c.note_id = n.id
+                AND (c.note_revision != n.local_revision OR c.content_hash != n.content_hash)
+            )
+          )
+        """,
+    )
+    suspend fun staleOrMissingActiveNoteIds(): List<String>
+
+    @Query(
+        """
+        SELECT DISTINCT c.note_id FROM note_chunks c
+        LEFT JOIN notes n ON n.id = c.note_id
+        WHERE n.id IS NULL
+           OR n.deleted_at IS NOT NULL
+           OR (
+             TRIM(COALESCE(n.title, ''), char(32, 9, 10, 13)) = ''
+             AND TRIM(n.search_text, char(32, 9, 10, 13)) = ''
+           )
+        """,
+    )
+    suspend fun obsoleteChunkNoteIds(): List<String>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM notes n
+        WHERE n.deleted_at IS NULL
+          AND (
+            TRIM(COALESCE(n.title, ''), char(32, 9, 10, 13)) != ''
+            OR TRIM(n.search_text, char(32, 9, 10, 13)) != ''
+          )
+        """,
+    )
+    suspend fun indexableActiveNoteCount(): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM notes n
+        WHERE n.deleted_at IS NULL
+          AND (
+            TRIM(COALESCE(n.title, ''), char(32, 9, 10, 13)) != ''
+            OR TRIM(n.search_text, char(32, 9, 10, 13)) != ''
+          )
+          AND EXISTS (SELECT 1 FROM note_chunks c WHERE c.note_id = n.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM note_chunks c
+            WHERE c.note_id = n.id
+              AND (c.note_revision != n.local_revision OR c.content_hash != n.content_hash)
+          )
+        """,
+    )
+    suspend fun freshIndexedNoteCount(): Int
+
+    @Query("SELECT COUNT(*) FROM note_chunks")
+    suspend fun totalChunkCount(): Int
+
+    @Query(
+        """
+        SELECT
+            n.noteCount AS noteCount,
+            (SELECT MAX(updated_at) FROM notes) AS noteMaxUpdatedAt,
+            n.noteRevisionSum AS noteRevisionSum,
+            n.activeNoteCount AS activeNoteCount,
+            n.archivedNoteCount AS archivedNoteCount,
+            n.excludedNoteCount AS excludedNoteCount,
+            c.chunkCount AS chunkCount,
+            c.chunkMaxUpdatedAt AS chunkMaxUpdatedAt,
+            c.chunkRevisionSum AS chunkRevisionSum,
+            t.tagCount AS tagCount,
+            t.tagMaxNameKey AS tagMaxNameKey,
+            t.tagLenSum AS tagLenSum,
+            (SELECT COUNT(*) FROM note_tags) AS noteTagCount,
+            (SELECT MAX(tagId) FROM note_tags) AS noteTagMaxId,
+            (SELECT COUNT(*) FROM notebook_notes) AS notebookNoteCount,
+            (SELECT MAX(notebookId) FROM notebook_notes) AS notebookNoteMaxId,
+            (SELECT COUNT(*) FROM note_links) AS noteLinkCount
+        FROM (
+            SELECT
+                COUNT(*) AS noteCount,
+                COALESCE(SUM(local_revision), 0) AS noteRevisionSum,
+                COALESCE(SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS activeNoteCount,
+                COALESCE(SUM(CASE WHEN archived_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS archivedNoteCount,
+                COALESCE(SUM(CASE WHEN ai_policy = 'exclude' THEN 1 ELSE 0 END), 0) AS excludedNoteCount
+            FROM notes
+        ) n
+        CROSS JOIN (
+            SELECT
+                COUNT(*) AS chunkCount,
+                MAX(updated_at) AS chunkMaxUpdatedAt,
+                COALESCE(SUM(note_revision), 0) AS chunkRevisionSum
+            FROM note_chunks
+        ) c
+        CROSS JOIN (
+            SELECT
+                COUNT(*) AS tagCount,
+                MAX(nameKey) AS tagMaxNameKey,
+                COALESCE(SUM(LENGTH(name) + LENGTH(parentId)), 0) AS tagLenSum
+            FROM tags
+        ) t
+        """,
+    )
+    suspend fun discoveryWatermark(): DiscoveryWatermarkRow
 
     @Query(
         "SELECT * FROM review_sessions WHERE local_date = :localDate AND profile_key = :profileKey ORDER BY round DESC, updated_at DESC, id DESC LIMIT 1",
@@ -223,6 +340,26 @@ internal interface DiscoveryDao {
 internal data class NoteRevisionMark(
     @ColumnInfo(name = "note_id") val noteId: String,
     val maxRev: Long,
+)
+
+internal data class DiscoveryWatermarkRow(
+    val noteCount: Int,
+    val noteMaxUpdatedAt: String?,
+    val noteRevisionSum: Long,
+    val activeNoteCount: Int,
+    val archivedNoteCount: Int,
+    val excludedNoteCount: Int,
+    val chunkCount: Int,
+    val chunkMaxUpdatedAt: String?,
+    val chunkRevisionSum: Long,
+    val tagCount: Int,
+    val tagMaxNameKey: String?,
+    val tagLenSum: Long,
+    val noteTagCount: Int,
+    val noteTagMaxId: String?,
+    val notebookNoteCount: Int,
+    val notebookNoteMaxId: String?,
+    val noteLinkCount: Int,
 )
 
 internal val MIGRATION_5_6: Migration = object : Migration(5, 6) {

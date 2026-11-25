@@ -183,7 +183,12 @@ class P0HardeningUnitTest {
 
         val outZip = File(temp.root, "over-limit.zip")
         try {
-            BackupCodec.writeBackupZip(snapshot, outZip) { null }
+            BackupCodec.writeBackupZip(
+                snapshot,
+                outZip,
+                attachmentFileProvider = { null },
+                shardingEnabled = false,
+            )
             fail("Expected BackupValidationException when exceeding MAX_ARCHIVE_ENTRIES")
         } catch (_: BackupValidationException) {
             // Expected fast rejection before producing an un-restorable ZIP.

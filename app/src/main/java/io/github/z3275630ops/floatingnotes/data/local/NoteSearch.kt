@@ -7,9 +7,12 @@ import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalFuzzyMatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -83,10 +86,21 @@ internal data class SavedSearch(
     @ColumnInfo(name = "scope_json") val scopeJson: String,
 )
 
+internal data class NoteSearchProjection(
+    val id: String,
+    val title: String?,
+    @ColumnInfo(name = "search_text") val searchText: String,
+    val pinned: Boolean,
+    @ColumnInfo(name = "updated_at") val updatedAt: String,
+)
+
 @Dao
 internal interface SearchDao {
     @RawQuery(observedEntities = [NoteEntity::class, TagEntity::class, NoteTagEntity::class, NotebookNoteEntity::class])
     fun observe(query: SupportSQLiteQuery): Flow<List<NoteEntity>>
+
+    @RawQuery(observedEntities = [NoteEntity::class, TagEntity::class, NoteTagEntity::class, NotebookNoteEntity::class])
+    fun observeProjections(query: SupportSQLiteQuery): Flow<List<NoteSearchProjection>>
 
     @RawQuery
     suspend fun search(query: SupportSQLiteQuery): List<NoteEntity>
@@ -118,34 +132,62 @@ internal class SearchRepository(private val database: NotesDatabase) {
     fun observe(keyword: String, scope: NoteScope, limit: Int) =
         database.search().observe(searchQuery(keyword, scope, limit))
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun observeSmart(keyword: String, scope: NoteScope, limit: Int): Flow<List<NoteEntity>> {
+        require(limit > 0)
         val trimmed = keyword.trim()
         if (trimmed.isEmpty()) return observe("", scope, limit)
-        val fuzzyPoolLimit = maxOf(limit * 4, 20_000)
-        return combine(
-            observe(trimmed, scope, limit),
-            observe("", scope, fuzzyPoolLimit),
-        ) { exactMatches, scopedPool ->
-            if (exactMatches.size >= limit) return@combine exactMatches.take(limit)
-            val seenIds = exactMatches.mapTo(HashSet(exactMatches.size)) { it.id }
-            val fuzzyMatches = scopedPool
-                .asSequence()
-                .filter { it.id !in seenIds }
-                .mapNotNull { note ->
-                    val target = "${note.title.orEmpty()}\n${note.searchText}"
-                    val res = LocalFuzzyMatcher.matchFuzzyText(trimmed, target)
-                    if (res.matched) note to res.score else null
+        val fuzzyPoolLimit = maxOf(limit * 8, 2_000)
+        return observe(trimmed, scope, limit)
+            .flatMapLatest { exactMatches ->
+                if (exactMatches.size >= limit) {
+                    flowOf(exactMatches.take(limit))
+                } else {
+                    val remaining = limit - exactMatches.size
+                    val seenIds = exactMatches.mapTo(HashSet(exactMatches.size)) { it.id }
+                    database.search()
+                        .observeProjections(searchProjectionQuery(scope, fuzzyPoolLimit))
+                        .map { scopedPool ->
+                            val fuzzyIds = scopedPool
+                                .asSequence()
+                                .filter { it.id !in seenIds }
+                                .mapNotNull { row ->
+                                    val target = "${row.title.orEmpty()}\n${row.searchText}"
+                                    val res = LocalFuzzyMatcher.matchFuzzyText(trimmed, target)
+                                    if (res.matched) row to res.score else null
+                                }
+                                .sortedWith(
+                                    compareByDescending<Pair<NoteSearchProjection, Double>> { it.second }
+                                        .thenByDescending { it.first.pinned }
+                                        .thenByDescending { it.first.updatedAt }
+                                        .thenBy { it.first.id },
+                                )
+                                .take(remaining)
+                                .map { it.first.id }
+                                .toList()
+                            if (fuzzyIds.isEmpty()) {
+                                exactMatches
+                            } else {
+                                exactMatches + hydrateNotesInOrder(fuzzyIds)
+                            }
+                        }
                 }
-                .sortedWith(
-                    compareByDescending<Pair<NoteEntity, Double>> { it.second }
-                        .thenByDescending { it.first.pinned }
-                        .thenByDescending { it.first.updatedAt }
-                        .thenBy { it.first.id },
-                )
-                .map { it.first }
-                .toList()
-            (exactMatches + fuzzyMatches).take(limit)
-        }.flowOn(Dispatchers.Default)
+            }
+            .flowOn(Dispatchers.Default)
+    }
+
+    private suspend fun hydrateNotesInOrder(ids: List<String>): List<NoteEntity> {
+        if (ids.isEmpty()) return emptyList()
+        val notesDao = database.notes()
+        val byId = HashMap<String, NoteEntity>(ids.size)
+        for (batch in ids.chunked(FTS_BATCH_SIZE)) {
+            for (note in notesDao.notesByIds(batch)) {
+                if (note.deletedAt == null) {
+                    byId[note.id] = note
+                }
+            }
+        }
+        return ids.mapNotNull(byId::get)
     }
 
     suspend fun save(name: String, keyword: String, scope: NoteScope) {
@@ -168,7 +210,23 @@ internal val mediaFlags = mapOf("image" to 1, "audio" to 2, "video" to 4)
 internal fun NoteDocument.mediaMask(): Int =
     blocks.fold(0) { mask, block -> if (block.attachmentId != null) mask or (mediaFlags[block.type] ?: 0) else mask }
 
-internal fun searchQuery(keyword: String, scope: NoteScope, limit: Int): SimpleSQLiteQuery {
+internal fun searchQuery(keyword: String, scope: NoteScope, limit: Int): SimpleSQLiteQuery =
+    buildSearchQuery(selectColumns = "n.*", keyword = keyword, scope = scope, limit = limit)
+
+internal fun searchProjectionQuery(scope: NoteScope, limit: Int): SimpleSQLiteQuery =
+    buildSearchQuery(
+        selectColumns = "n.id, n.title, n.search_text, n.pinned, n.updated_at",
+        keyword = "",
+        scope = scope,
+        limit = limit,
+    )
+
+private fun buildSearchQuery(
+    selectColumns: String,
+    keyword: String,
+    scope: NoteScope,
+    limit: Int,
+): SimpleSQLiteQuery {
     require(limit > 0)
     val bindings = mutableListOf<Any>()
     val conditions = mutableListOf("n.deleted_at IS NULL")
@@ -210,11 +268,15 @@ internal fun searchQuery(keyword: String, scope: NoteScope, limit: Int): SimpleS
     if (scope.excludeTags.isNotEmpty()) conditions.add("NOT ${matchesTags(scope.excludeTags)}")
     val phrase = keyword.trim()
     if (phrase.isNotEmpty()) {
+        val ftsMatch = NoteFtsTokenizer.buildFtsMatchQuery(phrase)
+        if (ftsMatch != null) {
+            conditions.add("n.id IN (SELECT note_id FROM notes_fts WHERE notes_fts MATCH ${bind(ftsMatch)})")
+        }
         val pattern = "%" + phrase.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
         conditions.add("(n.search_text LIKE ${bind(pattern)} ESCAPE '!' OR n.title LIKE ${bind(pattern)} ESCAPE '!')")
     }
     return SimpleSQLiteQuery(
-        "SELECT n.* FROM notes n WHERE ${conditions.joinToString(" AND ")} " +
+        "SELECT $selectColumns FROM notes n WHERE ${conditions.joinToString(" AND ")} " +
             "ORDER BY n.pinned DESC, n.updated_at DESC, n.id LIMIT ${bind(limit)}",
         bindings.toTypedArray(),
     )

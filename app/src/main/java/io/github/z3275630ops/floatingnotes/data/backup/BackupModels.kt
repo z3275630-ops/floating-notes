@@ -5,9 +5,11 @@ import java.io.IOException
 internal class BackupValidationException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
 internal object BackupConstants {
-    const val SUPPORTED_BACKUP_SCHEMA_VERSION = 1
-    const val SUPPORTED_DB_SCHEMA_VERSION = 7
+    const val SUPPORTED_BACKUP_SCHEMA_VERSION = 2
+    const val SUPPORTED_DB_SCHEMA_VERSION = 8
     const val MAX_ARCHIVE_ENTRIES = 10_000
+    const val SHARD_NOTES_THRESHOLD = 200
+    const val NOTES_PER_SHARD = 500
     const val MAX_ENTRY_BYTES = 128L * 1024L * 1024L
     const val MAX_TOTAL_UNCOMPRESSED_BYTES = 512L * 1024L * 1024L
     const val MAX_COMPRESSION_RATIO = 200L

@@ -6,6 +6,7 @@ import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.data.agent.AgentActionEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
+import io.github.z3275630ops.floatingnotes.data.local.NoteLinkEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteScope
 import io.github.z3275630ops.floatingnotes.data.local.NoteTagEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotesDatabase
@@ -13,6 +14,9 @@ import io.github.z3275630ops.floatingnotes.data.local.NotesRepository
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
 import io.github.z3275630ops.floatingnotes.data.local.tagNameKey
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -53,6 +57,17 @@ internal data class ActiveWalkSnapshot(
     val stepPositionLabel: String,
 )
 
+internal data class DiscoveryCorpusSnapshot(
+    val watermark: DiscoveryWatermarkRow,
+    val allNotes: List<NoteEntity>,
+    val allChunks: List<NoteChunkEntity>,
+    val chunksByNote: Map<String, List<NoteChunkEntity>>,
+    val tags: List<TagEntity>,
+    val noteTagMap: Map<String, Set<String>>,
+    val noteNotebookMap: Map<String, Set<String>>,
+    val links: List<NoteLinkEntity>,
+)
+
 internal class DiscoveryRepository(
     private val database: NotesDatabase,
     private val notesRepository: NotesRepository,
@@ -62,68 +77,170 @@ internal class DiscoveryRepository(
     private val orgDao = database.organization()
     private val discoveryDao = database.discovery()
     private val isoFormatter = DateTimeFormatterBuilder().appendInstant(3).toFormatter()
+    private val indexMutex = Mutex()
+    private val corpusMutex = Mutex()
 
-    suspend fun ensureIndexFresh(forceRebuild: Boolean = false): RetrievalCoverage = withContext(Dispatchers.IO) {
-        if (forceRebuild) {
-            discoveryDao.clearAllChunks()
-        } else {
-            discoveryDao.purgeStaleOrDeletedChunks()
+    @Volatile
+    private var cachedCorpusSnapshot: DiscoveryCorpusSnapshot? = null
+
+    private suspend fun invalidateCorpusSnapshot() {
+        corpusMutex.withLock {
+            cachedCorpusSnapshot = null
         }
-        val activeNotes = notesDao.allNotes().filter { it.deletedAt == null }
-        val marks = discoveryDao.indexedNoteRevisions().associate { it.noteId to it.maxRev }
-        for (note in activeNotes) {
-            val hasContent = !note.title.isNullOrBlank() || note.searchText.isNotBlank()
-            val currentMark = marks[note.id]
-            val needsSync = if (!hasContent) {
-                currentMark != null
-            } else {
-                currentMark == null || currentMark != note.revision
+    }
+
+    internal suspend fun getOrLoadCorpusSnapshot(): DiscoveryCorpusSnapshot = corpusMutex.withLock {
+        val currentWatermark = discoveryDao.discoveryWatermark()
+        val existing = cachedCorpusSnapshot
+        if (existing != null && existing.watermark == currentWatermark) {
+            return@withLock existing
+        }
+        val allNotes = notesDao.allNotes()
+        val allChunks = discoveryDao.allChunks()
+        val chunksByNote = allChunks.groupBy { it.noteId }
+        val tags = orgDao.tags()
+        val noteTagMap = orgDao.noteTags()
+            .groupBy({ it.noteId }, { it.tagId })
+            .mapValues { it.value.toSet() }
+        val noteNotebookMap = orgDao.notebookNotes()
+            .groupBy({ it.noteId }, { it.notebookId })
+            .mapValues { it.value.toSet() }
+        val links = orgDao.noteLinks()
+        DiscoveryCorpusSnapshot(
+            watermark = currentWatermark,
+            allNotes = allNotes,
+            allChunks = allChunks,
+            chunksByNote = chunksByNote,
+            tags = tags,
+            noteTagMap = noteTagMap,
+            noteNotebookMap = noteNotebookMap,
+            links = links,
+        ).also { cachedCorpusSnapshot = it }
+    }
+
+    private suspend fun rebuildChunksForNoteIds(noteIds: List<String>) {
+        for (batchIds in noteIds.chunked(DB_BATCH_SIZE)) {
+            val notes = notesDao.notesByIds(batchIds)
+            val chunksToInsert = ArrayList<NoteChunkEntity>(notes.size * 2)
+            for (note in notes) {
+                if (note.deletedAt != null) continue
+                chunksToInsert.addAll(LocalRetrievalEngine.buildChunks(note))
             }
-            if (needsSync) {
-                discoveryDao.deleteChunksForNote(note.id)
-                val chunks = LocalRetrievalEngine.buildChunks(note)
-                if (chunks.isNotEmpty()) {
-                    discoveryDao.insertChunks(chunks)
+            database.withTransaction {
+                discoveryDao.deleteChunksForNoteIds(batchIds)
+                if (chunksToInsert.isNotEmpty()) {
+                    for (chunkBatch in chunksToInsert.chunked(DB_BATCH_SIZE)) {
+                        discoveryDao.insertChunks(chunkBatch)
+                    }
                 }
             }
         }
-        val allChunks = discoveryDao.allChunks().groupBy { it.noteId }
-        LocalRetrievalEngine.computeCoverage(activeNotes, allChunks)
+    }
+
+    suspend fun ensureIndexFresh(forceRebuild: Boolean = false): RetrievalCoverage = withContext(Dispatchers.IO) {
+        indexMutex.withLock {
+            var mutated = false
+            try {
+                if (forceRebuild) {
+                    mutated = true
+                    discoveryDao.clearAllChunks()
+                    val activeIds = discoveryDao.staleOrMissingActiveNoteIds()
+                    if (activeIds.isNotEmpty()) {
+                        rebuildChunksForNoteIds(activeIds)
+                    }
+                } else {
+                    val chunksBeforePurge = discoveryDao.totalChunkCount()
+                    val obsoleteIds = discoveryDao.obsoleteChunkNoteIds()
+                    if (obsoleteIds.isNotEmpty()) {
+                        mutated = true
+                        for (batch in obsoleteIds.chunked(DB_BATCH_SIZE)) {
+                            discoveryDao.deleteChunksForNoteIds(batch)
+                        }
+                    }
+                    discoveryDao.purgeStaleOrDeletedChunks()
+                    if (discoveryDao.totalChunkCount() != chunksBeforePurge) {
+                        mutated = true
+                    }
+                    val dirtyIds = discoveryDao.staleOrMissingActiveNoteIds()
+                    if (dirtyIds.isNotEmpty()) {
+                        mutated = true
+                        rebuildChunksForNoteIds(dirtyIds)
+                    }
+                }
+            } finally {
+                if (mutated) {
+                    withContext(NonCancellable) {
+                        invalidateCorpusSnapshot()
+                    }
+                }
+            }
+
+            val eligibleCount = discoveryDao.indexableActiveNoteCount()
+            val indexedCount = discoveryDao.freshIndexedNoteCount()
+            val totalChunks = discoveryDao.totalChunkCount()
+            val watermark = if (eligibleCount > 0 && indexedCount > 0 && totalChunks > 0) {
+                discoveryDao.discoveryWatermark().chunkMaxUpdatedAt
+            } else {
+                null
+            }
+            RetrievalCoverage(
+                eligibleCount = eligibleCount,
+                indexedCount = indexedCount,
+                staleCount = (eligibleCount - indexedCount).coerceAtLeast(0),
+                indexWatermark = watermark,
+            )
+        }
     }
 
     suspend fun syncChunksForNote(note: NoteEntity) = withContext(Dispatchers.IO) {
-        discoveryDao.deleteChunksForNote(note.id)
-        if (note.deletedAt == null) {
-            val chunks = LocalRetrievalEngine.buildChunks(note)
-            if (chunks.isNotEmpty()) {
-                discoveryDao.insertChunks(chunks)
+        indexMutex.withLock {
+            var mutated = false
+            try {
+                val chunks = if (note.deletedAt == null) {
+                    LocalRetrievalEngine.buildChunks(note)
+                } else {
+                    emptyList()
+                }
+                database.withTransaction {
+                    mutated = true
+                    discoveryDao.deleteChunksForNote(note.id)
+                    if (chunks.isNotEmpty()) {
+                        for (chunkBatch in chunks.chunked(DB_BATCH_SIZE)) {
+                            discoveryDao.insertChunks(chunkBatch)
+                        }
+                    }
+                }
+            } finally {
+                if (mutated) {
+                    withContext(NonCancellable) {
+                        invalidateCorpusSnapshot()
+                    }
+                }
             }
         }
     }
 
     suspend fun removeChunksForNoteIds(noteIds: List<String>) = withContext(Dispatchers.IO) {
-        for (id in noteIds) {
-            discoveryDao.deleteChunksForNote(id)
+        val distinctIds = noteIds.asSequence().map { it.trim() }.filter { it.isNotEmpty() }.distinct().toList()
+        if (distinctIds.isEmpty()) return@withContext
+        indexMutex.withLock {
+            var mutated = false
+            try {
+                database.withTransaction {
+                    mutated = true
+                    for (batch in distinctIds.chunked(DB_BATCH_SIZE)) {
+                        discoveryDao.deleteChunksForNoteIds(batch)
+                    }
+                }
+            } finally {
+                if (mutated) {
+                    withContext(NonCancellable) {
+                        invalidateCorpusSnapshot()
+                    }
+                }
+            }
         }
     }
-
-    private data class TagCorpusCacheKey(
-        val noteCount: Int,
-        val maxUpdatedAt: String,
-        val tagCount: Int,
-        val noteTagCount: Int,
-    )
-
-    private data class TagCorpusSnapshot(
-        val key: TagCorpusCacheKey,
-        val allNotes: List<NoteEntity>,
-        val allChunks: List<NoteChunkEntity>,
-        val tags: List<TagEntity>,
-        val noteTagMap: Map<String, Set<String>>,
-    )
-
-    @Volatile
-    private var cachedTagCorpus: TagCorpusSnapshot? = null
 
     suspend fun loadOrCreateDailyReview(
         startExtraRound: Boolean = false,
@@ -136,12 +253,12 @@ internal class DiscoveryRepository(
         val todayStr = today.toString()
         val config = preferences.reviewConfig
         val configHash = config.configHash()
-        val allNotes = notesDao.allNotes()
+        val snapshot = getOrLoadCorpusSnapshot()
+        val allNotes = snapshot.allNotes
         val notesById = allNotes.associateBy { it.id }
-        val tags = orgDao.tags()
+        val tags = snapshot.tags
         val tagsById = tags.associateBy { it.id }
-        val noteTags = orgDao.noteTags()
-        val noteTagIdsMap = noteTags.groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+        val noteTagIdsMap = snapshot.noteTagMap
         val events = discoveryDao.allReviewEvents()
 
         val daySessions = discoveryDao.reviewSessionsForDay(todayStr, profileKey)
@@ -337,24 +454,7 @@ internal class DiscoveryRepository(
         attachedTagIds: Set<String>,
         limit: Int = 4,
     ): List<TagRecommendation> = withContext(Dispatchers.IO) {
-        val allNotes = notesDao.allNotes()
-        val tags = orgDao.tags()
-        val rawNoteTags = orgDao.noteTags()
-        val maxUpdatedAt = allNotes.maxOfOrNull { it.updatedAt }.orEmpty()
-        val key = TagCorpusCacheKey(
-            noteCount = allNotes.size,
-            maxUpdatedAt = maxUpdatedAt,
-            tagCount = tags.size,
-            noteTagCount = rawNoteTags.size,
-        )
-        val cached = cachedTagCorpus?.takeIf { it.key == key }
-        val snapshot = cached ?: TagCorpusSnapshot(
-            key = key,
-            allNotes = allNotes,
-            allChunks = discoveryDao.allChunks(),
-            tags = tags,
-            noteTagMap = rawNoteTags.groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() },
-        ).also { cachedTagCorpus = it }
+        val snapshot = getOrLoadCorpusSnapshot()
 
         LocalTagAndGraphEngine.recommendTagsForDraft(
             draftText = draftText,
@@ -373,11 +473,10 @@ internal class DiscoveryRepository(
         maxGroups: Int = 10,
     ): List<DuplicateNoteGroup> = withContext(Dispatchers.IO) {
         ensureIndexFresh()
-        val allNotes = notesDao.allNotes()
-        val allChunks = discoveryDao.allChunks()
+        val snapshot = getOrLoadCorpusSnapshot()
         LocalTextIntelligence.findDuplicateGroups(
-            notes = allNotes,
-            allChunks = allChunks,
+            notes = snapshot.allNotes,
+            allChunks = snapshot.allChunks,
             minSimilarityPercent = minSimilarityPercent,
             maxGroups = maxGroups,
         )
@@ -475,19 +574,15 @@ internal class DiscoveryRepository(
         limit: Int = 24,
     ): FindSearchResult = withContext(Dispatchers.IO) {
         ensureIndexFresh()
-        val allNotes = notesDao.allNotes()
-        val allChunks = discoveryDao.allChunks()
-        val tags = orgDao.tags()
-        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
-        val noteNotebookMap = orgDao.notebookNotes().groupBy({ it.noteId }, { it.notebookId }).mapValues { it.value.toSet() }
+        val snapshot = getOrLoadCorpusSnapshot()
         LocalRetrievalEngine.searchEvidence(
             query = query,
             scope = scope,
-            allNotes = allNotes,
-            allChunks = allChunks,
-            tags = tags,
-            noteTagIdsByNote = noteTagMap,
-            noteNotebookIdsByNote = noteNotebookMap,
+            allNotes = snapshot.allNotes,
+            allChunks = snapshot.allChunks,
+            tags = snapshot.tags,
+            noteTagIdsByNote = snapshot.noteTagMap,
+            noteNotebookIdsByNote = snapshot.noteNotebookMap,
             excludedNoteIds = preferences.excludedFindNoteIds,
             limit = limit,
         )
@@ -528,20 +623,15 @@ internal class DiscoveryRepository(
     ): List<RelatedNoteMatch> = withContext(Dispatchers.IO) {
         val sourceNote = notesDao.note(noteId)?.takeIf { it.deletedAt == null } ?: return@withContext emptyList()
         ensureIndexFresh()
-        val allNotes = notesDao.allNotes()
-        val chunksByNote = discoveryDao.allChunks().groupBy { it.noteId }
-        val tags = orgDao.tags()
-        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
-        val noteNotebookMap = orgDao.notebookNotes().groupBy({ it.noteId }, { it.notebookId }).mapValues { it.value.toSet() }
-        val links = orgDao.noteLinks()
+        val snapshot = getOrLoadCorpusSnapshot()
         LocalRetrievalEngine.computeRelatedNotes(
             sourceNote = sourceNote,
-            allNotes = allNotes,
-            chunksByNote = chunksByNote,
-            tags = tags,
-            noteTagIdsByNote = noteTagMap,
-            noteNotebookIdsByNote = noteNotebookMap,
-            links = links,
+            allNotes = snapshot.allNotes,
+            chunksByNote = snapshot.chunksByNote,
+            tags = snapshot.tags,
+            noteTagIdsByNote = snapshot.noteTagMap,
+            noteNotebookIdsByNote = snapshot.noteNotebookMap,
+            links = snapshot.links,
             excludedNoteIds = preferences.excludedFindNoteIds,
             includeArchived = includeArchived,
             limit = limit,
@@ -553,20 +643,17 @@ internal class DiscoveryRepository(
         currentNoteId: String?,
         dismissedNoteIds: Set<String> = emptySet(),
     ): EvidenceHit? = withContext(Dispatchers.IO) {
-        val allNotes = notesDao.allNotes()
-        val allChunks = discoveryDao.allChunks()
-        val tags = orgDao.tags()
-        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
-        val noteNotebookMap = orgDao.notebookNotes().groupBy({ it.noteId }, { it.notebookId }).mapValues { it.value.toSet() }
+        if (draftText.trim().length < 4) return@withContext null
+        val snapshot = getOrLoadCorpusSnapshot()
         val excluded = preferences.excludedFindNoteIds + dismissedNoteIds
         val hit = LocalRetrievalEngine.findBestEdgeEchoCandidate(
             draftText = draftText,
             currentNoteId = currentNoteId,
-            allNotes = allNotes,
-            allChunks = allChunks,
-            tags = tags,
-            noteTagIdsByNote = noteTagMap,
-            noteNotebookIdsByNote = noteNotebookMap,
+            allNotes = snapshot.allNotes,
+            allChunks = snapshot.allChunks,
+            tags = snapshot.tags,
+            noteTagIdsByNote = snapshot.noteTagMap,
+            noteNotebookIdsByNote = snapshot.noteNotebookMap,
             excludedNoteIds = excluded,
         ) ?: return@withContext null
 
@@ -617,8 +704,9 @@ internal class DiscoveryRepository(
         now: Instant = Instant.now(),
     ): ActiveWalkSnapshot? = withContext(Dispatchers.IO) {
         ensureIndexFresh()
-        val allNotes = notesDao.allNotes().filter { it.deletedAt == null && it.archivedAt == null }
-        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+        val snapshot = getOrLoadCorpusSnapshot()
+        val allNotes = snapshot.allNotes.filter { it.deletedAt == null && it.archivedAt == null }
+        val noteTagMap = snapshot.noteTagMap
         val excluded = preferences.excludedFindNoteIds
         val pool = allNotes.filter {
             it.id !in excluded &&
@@ -693,14 +781,15 @@ internal class DiscoveryRepository(
         val steps = discoveryDao.walkSteps(sessionId)
         val currentStep = steps.firstOrNull { it.stepOrder == session.currentStepOrder } ?: steps.lastOrNull()
             ?: return@withContext null
-        val allNotes = notesDao.allNotes()
+        val snapshot = getOrLoadCorpusSnapshot()
+        val allNotes = snapshot.allNotes
         val notesById = allNotes.associateBy { it.id }
         val currentNote = notesById[currentStep.noteId] ?: return@withContext loadWalkSnapshot(sessionId)
-        val chunksByNote = discoveryDao.allChunks().groupBy { it.noteId }
-        val tags = orgDao.tags()
-        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
-        val noteNotebookMap = orgDao.notebookNotes().groupBy({ it.noteId }, { it.notebookId }).mapValues { it.value.toSet() }
-        val links = orgDao.noteLinks()
+        val chunksByNote = snapshot.chunksByNote
+        val tags = snapshot.tags
+        val noteTagMap = snapshot.noteTagMap
+        val noteNotebookMap = snapshot.noteNotebookMap
+        val links = snapshot.links
 
         val visitedIds = steps.mapTo(HashSet()) { it.noteId }
         val choice = DiscoveryEngines.pickNextWalkCandidate(
@@ -769,11 +858,11 @@ internal class DiscoveryRepository(
             )
         }
         val steps = discoveryDao.walkSteps(sessionId)
-        val notesById = notesDao.allNotes().associateBy { it.id }
-        val tagsById = orgDao.tags().associateBy { it.id }
-        val noteTagsByNote = orgDao.noteTags()
-            .groupBy { it.noteId }
-            .mapValues { (_, list) -> list.mapNotNull { tagsById[it.tagId]?.name }.sorted() }
+        val snapshot = getOrLoadCorpusSnapshot()
+        val notesById = snapshot.allNotes.associateBy { it.id }
+        val tagsById = snapshot.tags.associateBy { it.id }
+        val noteTagsByNote = snapshot.noteTagMap
+            .mapValues { (_, tagIds) -> tagIds.mapNotNull { tagsById[it]?.name }.sorted() }
         DiscoveryEngines.buildWalkPostcard(
             steps = steps,
             notesById = notesById,
@@ -816,18 +905,15 @@ internal class DiscoveryRepository(
 
     suspend fun drawDualCollisionPair(excludePairKeys: Set<String> = emptySet()): DualPairDrawResult =
         withContext(Dispatchers.IO) {
-            val allNotes = notesDao.allNotes()
-            val allChunks = discoveryDao.allChunks()
-            val tagsById = orgDao.tags().associateBy { it.id }
-            val noteTagIdsMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
-            val links = orgDao.noteLinks()
+            val snapshot = getOrLoadCorpusSnapshot()
+            val tagsById = snapshot.tags.associateBy { it.id }
             val (pair, eligibleCount) = DiscoveryEngines.pickDualCollisionPair(
-                notes = allNotes,
-                noteTagIdsByNote = noteTagIdsMap,
+                notes = snapshot.allNotes,
+                noteTagIdsByNote = snapshot.noteTagMap,
                 tagsById = tagsById,
                 excludePairKeys = excludePairKeys,
-                allChunks = allChunks,
-                links = links,
+                allChunks = snapshot.allChunks,
+                links = snapshot.links,
                 excludedNoteIds = preferences.excludedFindNoteIds,
             )
             if (pair == null) DualPairDrawResult.Insufficient(eligibleCount)
@@ -835,22 +921,21 @@ internal class DiscoveryRepository(
         }
 
     suspend fun analyzeDualCollision(pair: DualCollisionPair): DualCollisionBridge = withContext(Dispatchers.IO) {
-        val links = orgDao.noteLinks()
-        val allNotes = notesDao.allNotes()
-        val tagsById = orgDao.tags().associateBy { it.id }
-        val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+        val snapshot = getOrLoadCorpusSnapshot()
+        val tagsById = snapshot.tags.associateBy { it.id }
         DiscoveryEngines.analyzeDualCollision(
             pair = pair,
-            links = links,
-            allNotes = allNotes,
-            noteTagIdsByNote = noteTagMap,
+            links = snapshot.links,
+            allNotes = snapshot.allNotes,
+            noteTagIdsByNote = snapshot.noteTagMap,
             tagsById = tagsById,
         )
     }
 
     suspend fun analyzeDualCollisionRefreshed(pair: DualCollisionPair): DualBridgeAnalyzeResult =
         withContext(Dispatchers.IO) {
-            val allNotes = notesDao.allNotes()
+            val snapshot = getOrLoadCorpusSnapshot()
+            val allNotes = snapshot.allNotes
             val byId = allNotes.associateBy { it.id }
             val leftFresh = byId[pair.leftNote.id]
             val rightFresh = byId[pair.rightNote.id]
@@ -864,9 +949,9 @@ internal class DiscoveryRepository(
             if (!leftFresh.isEligible() || !rightFresh.isEligible()) {
                 return@withContext DualBridgeAnalyzeResult.Unavailable
             }
-            val links = orgDao.noteLinks()
-            val tagsById = orgDao.tags().associateBy { it.id }
-            val noteTagMap = orgDao.noteTags().groupBy({ it.noteId }, { it.tagId }).mapValues { it.value.toSet() }
+            val links = snapshot.links
+            val tagsById = snapshot.tags.associateBy { it.id }
+            val noteTagMap = snapshot.noteTagMap
             val leftNote = leftFresh!!
             val rightNote = rightFresh!!
             val alignedPair = if (leftNote.revision != pair.leftRevision || rightNote.revision != pair.rightRevision) {
@@ -989,4 +1074,8 @@ internal class DiscoveryRepository(
         val arr = JSONArray(json)
         (0 until arr.length()).map(arr::getString)
     }.getOrDefault(emptyList())
+
+    private companion object {
+        const val DB_BATCH_SIZE = 500
+    }
 }

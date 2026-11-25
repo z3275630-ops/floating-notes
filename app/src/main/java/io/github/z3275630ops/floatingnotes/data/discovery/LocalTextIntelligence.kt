@@ -5,6 +5,7 @@ import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.safeUtf16Slice
 import io.github.z3275630ops.floatingnotes.data.backup.MiniJson
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
+import java.util.LinkedHashMap
 import java.util.Locale
 import kotlin.math.ln
 import kotlin.math.roundToInt
@@ -41,8 +42,31 @@ internal data class MergedDuplicateContent(
  */
 internal object LocalTextIntelligence {
 
+    const val MAX_FEATURE_CACHE_ENTRIES = 12_000
+
     private const val FNV_OFFSET_BASIS_64 = -3750763034362895579L // 0xcbf29ce484222325
     private const val FNV_PRIME_64 = 1099511628211L              // 0x100000001b3
+
+    private val featureCacheLock = Any()
+    private val featureCache = object : LinkedHashMap<FeatureCacheKey, CachedNoteFeature>(
+        256,
+        0.75f,
+        true,
+    ) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<FeatureCacheKey, CachedNoteFeature>?,
+        ): Boolean = size > MAX_FEATURE_CACHE_ENTRIES
+    }
+
+    internal fun clearFeatureCacheForTesting() {
+        synchronized(featureCacheLock) {
+            featureCache.clear()
+        }
+    }
+
+    internal fun featureCacheSizeForTesting(): Int = synchronized(featureCacheLock) {
+        featureCache.size
+    }
 
     private val LINE_SPLIT_REGEX = Regex("\\r?\\n+")
     private val URL_LINE_REGEX = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE)
@@ -271,62 +295,60 @@ internal object LocalTextIntelligence {
         maxGroups: Int = 10,
         checkCancelled: () -> Unit = {},
     ): List<DuplicateNoteGroup> {
-        val chunksByNote = allChunks.groupBy { it.noteId }
-        val eligible = ArrayList<NoteFeature>()
-        for (note in notes) {
-            checkCancelled()
-            if (note.deletedAt != null || note.archivedAt != null || note.aiPolicy == "exclude") continue
-            if (note.sourceType in IGNORED_SOURCE_TYPES) continue
-            val rawText = noteCombinedText(note)
-            val normalized = normalizeForComparison(rawText)
-            if (normalized.length < 8) continue
-
-            val freshChunks = chunksByNote[note.id]?.takeIf { list ->
-                list.isNotEmpty() && list.all {
-                    it.noteRevision == note.revision && it.contentHash == note.contentHash
-                }
-            }
-            val tokenSet = if (freshChunks != null) {
-                freshChunks
-                    .flatMap { it.tokenPayload.split(' ') }
-                    .filter { it.isNotEmpty() }
-                    .toHashSet()
-            } else {
-                LocalRetrievalEngine.tokenizeForIndex(rawText).toHashSet()
-            }
-            if (tokenSet.isEmpty()) continue
-
-            eligible.add(
-                NoteFeature(
-                    note = note,
-                    normalized = normalized,
-                    tokens = tokenSet,
-                ),
-            )
-        }
+        val chunksByNote = if (allChunks.isEmpty()) emptyMap() else allChunks.groupBy { it.noteId }
+        val eligible = extractEligibleNoteFeatures(
+            notes = notes,
+            chunksByNote = chunksByNote,
+            checkCancelled = checkCancelled,
+        )
 
         if (eligible.size < 2) return emptyList()
 
         val docCount = eligible.size
-        val df = HashMap<String, Int>()
+        val df = HashMap<String, Int>(docCount * 4)
         for (item in eligible) {
             for (tok in item.tokens) {
                 df[tok] = (df[tok] ?: 0) + 1
             }
         }
         val idf = HashMap<String, Double>(df.size)
+        val tokenHashes = HashMap<String, Long>(df.size)
         for ((tok, count) in df) {
             idf[tok] = ln(1.0 + (docCount.toDouble() + 0.5) / (count.toDouble() + 0.5))
+            if (tok.isNotEmpty()) {
+                tokenHashes[tok] = fnv1a64(tok)
+            }
         }
 
         val simHashes = LongArray(docCount)
         val totalWeights = DoubleArray(docCount)
+        val bits = DoubleArray(64)
         for (i in 0 until docCount) {
             if ((i and 63) == 0) checkCancelled()
             val toks = eligible[i].tokens
-            simHashes[i] = computeSimHash64(toks, idf)
+            bits.fill(0.0)
             var sum = 0.0
-            for (tok in toks) sum += idf[tok] ?: 1.0
+            for (tok in toks) {
+                if (tok.isEmpty()) continue
+                val weight = idf[tok] ?: 1.0
+                sum += weight
+                if (weight == 0.0) continue
+                val hash = tokenHashes[tok] ?: fnv1a64(tok)
+                for (bit in 0 until 64) {
+                    if (((hash ushr bit) and 1L) == 1L) {
+                        bits[bit] += weight
+                    } else {
+                        bits[bit] -= weight
+                    }
+                }
+            }
+            var fingerprint = 0L
+            for (bit in 0 until 64) {
+                if (bits[bit] > 0.0) {
+                    fingerprint = fingerprint or (1L shl bit)
+                }
+            }
+            simHashes[i] = fingerprint
             totalWeights[i] = sum
         }
 
@@ -358,21 +380,20 @@ internal object LocalTextIntelligence {
                 }
             }
         } else {
-            val buckets = HashMap<Long, MutableList<Int>>()
+            val buckets = HashMap<Long, MutableList<Int>>(docCount * 4)
             val seenPairs = HashSet<Long>()
             for (i in 0 until docCount) {
                 if ((i and 63) == 0) checkCancelled()
                 val h = simHashes[i]
                 for (band in 0 until 4) {
                     val bandKey = (band.toLong() shl 48) or ((h ushr (band * 16)) and 0xFFFFL)
-                    buckets.getOrPut(bandKey) { ArrayList() }.add(i)
+                    buckets.getOrPut(bandKey) { ArrayList(2) }.add(i)
                 }
-                val topTokens = eligible[i].tokens
-                    .sortedByDescending { idf[it] ?: 0.0 }
-                    .take(8)
+                val topTokens = selectTopKTokens(eligible[i].tokens, idf, 8, df)
                 for (tok in topTokens) {
-                    val tokKey = (1L shl 56) or (fnv1a64(tok) and 0x00FF_FFFF_FFFF_FFFFL)
-                    buckets.getOrPut(tokKey) { ArrayList() }.add(i)
+                    val tokHash = tokenHashes[tok] ?: fnv1a64(tok)
+                    val tokKey = (1L shl 56) or (tokHash and 0x00FF_FFFF_FFFF_FFFFL)
+                    buckets.getOrPut(tokKey) { ArrayList(2) }.add(i)
                 }
             }
             for (members in buckets.values) {
@@ -814,6 +835,220 @@ internal object LocalTextIntelligence {
         }
     }
 
+    internal fun selectTopKTokens(
+        tokens: Collection<String>,
+        idf: Map<String, Double>,
+        k: Int = 8,
+        df: Map<String, Int>? = null,
+    ): List<String> {
+        if (k <= 0 || tokens.isEmpty()) return emptyList()
+        if (df == null && tokens.size <= k) {
+            return tokens.sortedByDescending { idf[it] ?: 0.0 }
+        }
+        val heapTokens = arrayOfNulls<String>(k)
+        val heapWeights = DoubleArray(k)
+        val heapIndices = IntArray(k)
+        var size = 0
+
+        fun isWorse(a: Int, b: Int): Boolean {
+            val wa = heapWeights[a]
+            val wb = heapWeights[b]
+            return wa < wb || (wa == wb && heapIndices[a] > heapIndices[b])
+        }
+
+        fun swap(a: Int, b: Int) {
+            val tmpTok = heapTokens[a]
+            heapTokens[a] = heapTokens[b]
+            heapTokens[b] = tmpTok
+            val tmpW = heapWeights[a]
+            heapWeights[a] = heapWeights[b]
+            heapWeights[b] = tmpW
+            val tmpIdx = heapIndices[a]
+            heapIndices[a] = heapIndices[b]
+            heapIndices[b] = tmpIdx
+        }
+
+        var idx = 0
+        for (tok in tokens) {
+            if (df != null) {
+                val freq = df[tok] ?: 0
+                if (freq < 2 || freq > 256) {
+                    idx++
+                    continue
+                }
+            }
+            val weight = idf[tok] ?: 0.0
+            if (size < k) {
+                var pos = size
+                heapTokens[pos] = tok
+                heapWeights[pos] = weight
+                heapIndices[pos] = idx
+                size++
+                while (pos > 0) {
+                    val parent = (pos - 1) ushr 1
+                    if (isWorse(pos, parent)) {
+                        swap(pos, parent)
+                        pos = parent
+                    } else {
+                        break
+                    }
+                }
+            } else if (weight > heapWeights[0]) {
+                heapTokens[0] = tok
+                heapWeights[0] = weight
+                heapIndices[0] = idx
+                var pos = 0
+                while (true) {
+                    val left = (pos shl 1) + 1
+                    if (left >= size) break
+                    val right = left + 1
+                    val worstChild = if (right < size && isWorse(right, left)) right else left
+                    if (isWorse(worstChild, pos)) {
+                        swap(pos, worstChild)
+                        pos = worstChild
+                    } else {
+                        break
+                    }
+                }
+            }
+            idx++
+        }
+
+        for (i in 1 until size) {
+            val curTok = heapTokens[i]
+            val curW = heapWeights[i]
+            val curIdx = heapIndices[i]
+            var j = i - 1
+            while (j >= 0 && (heapWeights[j] < curW || (heapWeights[j] == curW && heapIndices[j] > curIdx))) {
+                heapTokens[j + 1] = heapTokens[j]
+                heapWeights[j + 1] = heapWeights[j]
+                heapIndices[j + 1] = heapIndices[j]
+                j--
+            }
+            heapTokens[j + 1] = curTok
+            heapWeights[j + 1] = curW
+            heapIndices[j + 1] = curIdx
+        }
+
+        val out = ArrayList<String>(size)
+        for (i in 0 until size) {
+            out.add(heapTokens[i]!!)
+        }
+        return out
+    }
+
+    private fun extractEligibleNoteFeatures(
+        notes: List<NoteEntity>,
+        chunksByNote: Map<String, List<NoteChunkEntity>>,
+        checkCancelled: () -> Unit,
+    ): List<NoteFeature> {
+        val candidates = ArrayList<FeatureLookupCandidate>(notes.size)
+        for (note in notes) {
+            checkCancelled()
+            if (note.deletedAt != null || note.archivedAt != null || note.aiPolicy == "exclude") continue
+            if (note.sourceType in IGNORED_SOURCE_TYPES) continue
+            val freshChunks = chunksByNote[note.id]?.takeIf { list ->
+                list.isNotEmpty() && list.all {
+                    it.noteRevision == note.revision && it.contentHash == note.contentHash
+                }
+            }
+            val key = FeatureCacheKey(
+                noteId = note.id,
+                revision = note.revision,
+                contentHash = note.contentHash,
+                fromChunks = freshChunks != null,
+            )
+            candidates.add(
+                FeatureLookupCandidate(
+                    note = note,
+                    freshChunks = freshChunks,
+                    key = key,
+                    titleHash = note.title?.hashCode() ?: 0,
+                    searchTextHash = note.searchText.hashCode(),
+                    chunkSigHash = computeChunkSigHash(freshChunks),
+                ),
+            )
+        }
+        if (candidates.isEmpty()) return emptyList()
+
+        val resolved = arrayOfNulls<CachedNoteFeature>(candidates.size)
+        val missIndices = ArrayList<Int>()
+        synchronized(featureCacheLock) {
+            for (i in candidates.indices) {
+                val cand = candidates[i]
+                val hit = featureCache[cand.key]
+                if (hit != null &&
+                    hit.titleHash == cand.titleHash &&
+                    hit.searchTextHash == cand.searchTextHash &&
+                    hit.chunkSigHash == cand.chunkSigHash
+                ) {
+                    resolved[i] = hit
+                } else {
+                    missIndices.add(i)
+                }
+            }
+        }
+
+        if (missIndices.isNotEmpty()) {
+            val computed = ArrayList<Pair<FeatureCacheKey, CachedNoteFeature>>(missIndices.size)
+            for (mIdx in missIndices.indices) {
+                if ((mIdx and 63) == 0) checkCancelled()
+                val candIdx = missIndices[mIdx]
+                val cand = candidates[candIdx]
+                val rawText = noteCombinedText(cand.note)
+                val normalized = normalizeForComparison(rawText)
+                val tokenSet = if (normalized.length < 8) {
+                    emptySet()
+                } else if (cand.freshChunks != null) {
+                    cand.freshChunks
+                        .flatMap { it.tokenPayload.split(' ') }
+                        .filter { it.isNotEmpty() }
+                        .toHashSet()
+                } else {
+                    LocalRetrievalEngine.tokenizeForIndex(rawText).toHashSet()
+                }
+                val entry = CachedNoteFeature(
+                    titleHash = cand.titleHash,
+                    searchTextHash = cand.searchTextHash,
+                    chunkSigHash = cand.chunkSigHash,
+                    normalized = normalized,
+                    tokens = tokenSet,
+                )
+                resolved[candIdx] = entry
+                computed.add(cand.key to entry)
+            }
+            synchronized(featureCacheLock) {
+                for ((k, v) in computed) {
+                    featureCache[k] = v
+                }
+            }
+        }
+
+        val eligible = ArrayList<NoteFeature>(candidates.size)
+        for (i in candidates.indices) {
+            val feat = resolved[i] ?: continue
+            if (feat.normalized.length < 8 || feat.tokens.isEmpty()) continue
+            eligible.add(
+                NoteFeature(
+                    note = candidates[i].note,
+                    normalized = feat.normalized,
+                    tokens = feat.tokens,
+                ),
+            )
+        }
+        return eligible
+    }
+
+    private fun computeChunkSigHash(chunks: List<NoteChunkEntity>?): Int {
+        if (chunks == null) return 0
+        var h = chunks.size
+        for (c in chunks) {
+            h = 31 * h + c.id.hashCode()
+            h = 31 * h + c.tokenPayload.hashCode()
+        }
+        return h
+    }
+
     private fun fnv1a64(token: String): Long {
         var hash = FNV_OFFSET_BASIS_64
         val bytes = token.toByteArray(Charsets.UTF_8)
@@ -823,6 +1058,30 @@ internal object LocalTextIntelligence {
         }
         return hash
     }
+
+    private data class FeatureCacheKey(
+        val noteId: String,
+        val revision: Long,
+        val contentHash: String,
+        val fromChunks: Boolean,
+    )
+
+    private class CachedNoteFeature(
+        val titleHash: Int,
+        val searchTextHash: Int,
+        val chunkSigHash: Int,
+        val normalized: String,
+        val tokens: Set<String>,
+    )
+
+    private class FeatureLookupCandidate(
+        val note: NoteEntity,
+        val freshChunks: List<NoteChunkEntity>?,
+        val key: FeatureCacheKey,
+        val titleHash: Int,
+        val searchTextHash: Int,
+        val chunkSigHash: Int,
+    )
 
     private class NoteFeature(
         val note: NoteEntity,

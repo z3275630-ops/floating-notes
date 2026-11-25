@@ -21,9 +21,17 @@ import java.util.zip.ZipOutputStream
 internal object BackupCodec {
     private val SAFE_EXT = Regex("^[a-z0-9]{1,8}$")
     private val SAFE_ID = Regex("^[0-9A-Za-z._-]{1,128}$")
+    private val NOTE_V1_PATH = Regex("^notes/[^/]+\\.json$")
+    private val NOTE_SHARD_PATH = Regex("^notes/shard-(\\d{4,})\\.jsonl$")
     private val CONTROL_OR_INVALID_PATH = Regex("[\\u0000-\\u001f\\\\]")
     private val CONTROL_CHARS = Regex("[\\u0000-\\u001f\\u007f]")
     private const val BUFFER_SIZE = 64 * 1024
+    private val REQUIRED_METADATA_PATHS = listOf(
+        "metadata/versions.jsonl",
+        "metadata/drafts.jsonl",
+        "metadata/organization.json",
+        "metadata/tasks.json",
+    )
 
     fun isSafeAttachmentId(id: String): Boolean =
         SAFE_ID.matches(id) &&
@@ -92,11 +100,36 @@ internal object BackupCodec {
         snapshot: BackupSnapshot,
         targetZipFile: File,
         attachmentFileProvider: (String) -> File?,
+    ): BackupManifest = writeBackupZip(
+        snapshot = snapshot,
+        targetZipFile = targetZipFile,
+        attachmentFileProvider = attachmentFileProvider,
+        shardingEnabled = true,
+        forceSharded = false,
+    )
+
+    fun writeBackupZip(
+        snapshot: BackupSnapshot,
+        targetZipFile: File,
+        attachmentFileProvider: (String) -> File?,
+        shardingEnabled: Boolean = true,
+        forceSharded: Boolean = false,
     ): BackupManifest {
         targetZipFile.parentFile?.mkdirs()
         val filesMap = LinkedHashMap<String, BackupFileChecksum>()
         val writtenAttachmentEntries = ArrayList<BackupAttachmentEntry>(snapshot.attachments.size)
         val sortedAttachments = snapshot.attachments.sortedBy { it.id }
+        val useSharding = shardingEnabled && (forceSharded || snapshot.notes.size > BackupConstants.SHARD_NOTES_THRESHOLD)
+        val sortedNotes = snapshot.notes.sortedBy { it.id }
+        val seenNoteIds = HashSet<String>(sortedNotes.size)
+        for (note in sortedNotes) {
+            if (note.id.isBlank()) {
+                throw BackupValidationException("笔记 ID 不能为空")
+            }
+            if (!seenNoteIds.add(note.id)) {
+                throw BackupValidationException("备份数据包含重复笔记 ID: ${note.id}")
+            }
+        }
         var entryCount = 0
         var totalUncompressedBytes = 0L
 
@@ -167,8 +200,21 @@ internal object BackupCodec {
                 filesMap[clean] = BackupFileChecksum(bytes = entryBytes, sha256 = sha)
             }
 
-            for (note in snapshot.notes.sortedBy { it.id }) {
-                writeTextEntry("notes/${note.id}.json", MiniJson.encode(noteToJsonMap(note)))
+            if (useSharding) {
+                sortedNotes
+                    .chunked(BackupConstants.NOTES_PER_SHARD)
+                    .forEachIndexed { shardIndex, shardNotes ->
+                        val shardPath = String.format(Locale.ROOT, "notes/shard-%04d.jsonl", shardIndex)
+                        writeJsonlStreamed(shardPath) { writeLine ->
+                            shardNotes.forEach { note ->
+                                writeLine(MiniJson.encode(noteToJsonMap(note)))
+                            }
+                        }
+                    }
+            } else {
+                for (note in sortedNotes) {
+                    writeTextEntry("notes/${note.id}.json", MiniJson.encode(noteToJsonMap(note)))
+                }
             }
 
             writeJsonlStreamed("metadata/versions.jsonl") { writeLine ->
@@ -223,7 +269,7 @@ internal object BackupCodec {
             }
 
             val manifest = BackupManifest(
-                backupSchemaVersion = BackupConstants.SUPPORTED_BACKUP_SCHEMA_VERSION,
+                backupSchemaVersion = if (useSharding) BackupConstants.SUPPORTED_BACKUP_SCHEMA_VERSION else 1,
                 dbSchemaVersion = snapshot.dbSchemaVersion,
                 exportedAt = snapshot.exportedAt,
                 appVersion = snapshot.appVersion,
@@ -255,6 +301,87 @@ internal object BackupCodec {
         }
     }
 
+    fun validateArchiveStreaming(zipFile: File): BackupManifest {
+        if (!zipFile.isFile || zipFile.length() == 0L) {
+            throw BackupValidationException("备份文件不存在或为空")
+        }
+        rejectZipSymlinkEntries(zipFile)
+
+        try {
+            ZipFile(zipFile).use { zf ->
+                val header = openAndValidateZipHeader(zf)
+                val entriesByPath = header.entriesByPath
+                val manifest = header.manifest
+                val totalCounter = header.totalCounter
+
+                var notesCount = 0
+                val verifiedPaths = HashSet<String>(manifest.files.size)
+
+                if (manifest.backupSchemaVersion == 1) {
+                    for (notePath in header.notePaths) {
+                        val expected = manifest.files.getValue(notePath)
+                        val (actualBytes, actualSha) = digestEntryChecked(zf, entriesByPath.getValue(notePath), totalCounter)
+                        if (actualBytes != expected.bytes || !actualSha.equals(expected.sha256, ignoreCase = true)) {
+                            throw BackupValidationException("备份条目校验失败: $notePath")
+                        }
+                        verifiedPaths.add(notePath)
+                        notesCount++
+                    }
+                } else {
+                    for (shardPath in header.notePaths) {
+                        val expected = manifest.files.getValue(shardPath)
+                        notesCount += countAndVerifyJsonLines(zf, entriesByPath.getValue(shardPath), expected, totalCounter)
+                        verifiedPaths.add(shardPath)
+                    }
+                }
+
+                val versionsCount = countAndVerifyJsonLines(
+                    zf,
+                    entriesByPath.getValue("metadata/versions.jsonl"),
+                    manifest.files.getValue("metadata/versions.jsonl"),
+                    totalCounter,
+                )
+                verifiedPaths.add("metadata/versions.jsonl")
+
+                val draftsCount = countAndVerifyJsonLines(
+                    zf,
+                    entriesByPath.getValue("metadata/drafts.jsonl"),
+                    manifest.files.getValue("metadata/drafts.jsonl"),
+                    totalCounter,
+                )
+                verifiedPaths.add("metadata/drafts.jsonl")
+
+                for ((declaredPath, expected) in manifest.files) {
+                    val clean = validateArchiveEntryPath(declaredPath)
+                    if (clean !in verifiedPaths) {
+                        val entry = entriesByPath.getValue(clean)
+                        val (actualBytes, actualSha) = digestEntryChecked(zf, entry, totalCounter)
+                        if (actualBytes != expected.bytes || !actualSha.equals(expected.sha256, ignoreCase = true)) {
+                            throw BackupValidationException("备份文件校验失败: $clean")
+                        }
+                        verifiedPaths.add(clean)
+                    }
+                }
+
+                val c = manifest.counts
+                if (c.notes != notesCount ||
+                    c.versions != versionsCount ||
+                    c.drafts != draftsCount ||
+                    c.attachments != manifest.attachments.size
+                ) {
+                    throw BackupValidationException("备份清单实体数量与实际文件内容不一致")
+                }
+                return manifest
+            }
+        } catch (err: BackupValidationException) {
+            throw err
+        } catch (err: ZipException) {
+            throw BackupValidationException("备份压缩包已损坏或格式无效", err)
+        } catch (err: IOException) {
+            throw BackupValidationException("无法读取备份文件", err)
+        }
+    }
+
     fun readAndValidateArchive(
         zipFile: File,
         attachmentStagingDir: File? = null,
@@ -264,102 +391,71 @@ internal object BackupCodec {
         }
         rejectZipSymlinkEntries(zipFile)
 
-        val entriesByPath = LinkedHashMap<String, ZipEntry>()
         try {
             ZipFile(zipFile).use { zf ->
-                val enumEntries = zf.entries()
-                while (enumEntries.hasMoreElements()) {
-                    val entry = enumEntries.nextElement()
-                    if (entriesByPath.size >= BackupConstants.MAX_ARCHIVE_ENTRIES) {
-                        throw BackupValidationException("压缩包条目数量超过安全上限")
-                    }
-                    val cleanPath = validateArchiveEntryPath(entry.name)
-                    if (entry.isDirectory || cleanPath.endsWith("/")) continue
-                    if (entriesByPath.containsKey(cleanPath)) {
-                        throw BackupValidationException("压缩包包含重复路径条目: $cleanPath")
-                    }
-                    entriesByPath[cleanPath] = entry
-                }
+                val header = openAndValidateZipHeader(zf)
+                val entriesByPath = header.entriesByPath
+                val manifest = header.manifest
+                val totalCounter = header.totalCounter
+                val notePaths = header.notePaths
 
-                val manifestEntry = entriesByPath["manifest.json"]
-                    ?: throw BackupValidationException("备份包缺少 manifest.json")
-                val totalCounter = LongCounter()
-                val manifestBytes = readEntryChecked(
-                    zipFile = zf,
-                    entry = manifestEntry,
-                    maxEntryBytes = 16L * 1024L * 1024L,
-                    totalCounter = totalCounter,
-                ).first
-                val manifest = parseManifest(String(manifestBytes, StandardCharsets.UTF_8))
+                val notes = ArrayList<BackupNoteRecord>(manifest.counts.notes.coerceAtLeast(0))
+                val seenNoteIds = HashSet<String>(manifest.counts.notes.coerceAtLeast(0))
 
-                if (manifest.backupSchemaVersion !in 1..BackupConstants.SUPPORTED_BACKUP_SCHEMA_VERSION) {
-                    throw BackupValidationException("备份格式版本 (${manifest.backupSchemaVersion}) 高于当前应用支持范围，请升级后再恢复")
-                }
-                if (manifest.dbSchemaVersion !in 1..BackupConstants.SUPPORTED_DB_SCHEMA_VERSION) {
-                    throw BackupValidationException("备份数据库版本 (v${manifest.dbSchemaVersion}) 高于当前版本 (v${BackupConstants.SUPPORTED_DB_SCHEMA_VERSION})，请升级后再恢复")
-                }
-
-                // Verify every declared file exists, passes zip-bomb limits, and matches SHA-256 + length.
-                for (entryPath in entriesByPath.keys) {
-                    if (entryPath != "manifest.json" && !manifest.files.containsKey(entryPath)) {
-                        throw BackupValidationException("压缩包包含未登记的异常文件: $entryPath")
+                if (manifest.backupSchemaVersion == 1) {
+                    for (notePath in notePaths) {
+                        val expected = manifest.files.getValue(notePath)
+                        val bytes = readAndVerifyEntry(zf, entriesByPath.getValue(notePath), expected, totalCounter)
+                        val record = parseNoteRecord(String(bytes, StandardCharsets.UTF_8))
+                        // Validate embedded document_json matches schema v1 cleanly.
+                        VersionDiff.parseBlocks(record.documentJson)
+                        if (record.id.isBlank()) {
+                            throw BackupValidationException("笔记 ID 不能为空: $notePath")
+                        }
+                        if (!seenNoteIds.add(record.id)) {
+                            throw BackupValidationException("备份包包含重复笔记 ID: ${record.id}")
+                        }
+                        notes.add(record)
                     }
-                }
-                for ((declaredPath, expectedChecksum) in manifest.files) {
-                    val cleanDeclared = validateArchiveEntryPath(declaredPath)
-                    val zipEntry = entriesByPath[cleanDeclared]
-                        ?: throw BackupValidationException("备份包缺少声明文件: $cleanDeclared")
-                    if (zipEntry.isDirectory) {
-                        throw BackupValidationException("备份包声明文件实际是目录: $cleanDeclared")
-                    }
-                    if (expectedChecksum.bytes < 0L) {
-                        throw BackupValidationException("备份文件声明大小非法: $cleanDeclared")
+                } else {
+                    for (shardPath in notePaths) {
+                        val expected = manifest.files.getValue(shardPath)
+                        val shardNotes = readAndVerifyJsonLines(zf, entriesByPath.getValue(shardPath), expected, totalCounter) { obj ->
+                            parseNoteRecord(obj).also { record ->
+                                VersionDiff.parseBlocks(record.documentJson)
+                                if (record.id.isBlank()) {
+                                    throw BackupValidationException("笔记 ID 不能为空: $shardPath")
+                                }
+                                if (!seenNoteIds.add(record.id)) {
+                                    throw BackupValidationException("备份包包含重复笔记 ID: ${record.id}")
+                                }
+                            }
+                        }
+                        notes.addAll(shardNotes)
                     }
                 }
 
-                val notes = ArrayList<BackupNoteRecord>(manifest.counts.notes)
-                val notePaths = entriesByPath.keys
-                    .filter { it.startsWith("notes/") && it.endsWith(".json") }
-                    .sorted()
-                for (notePath in notePaths) {
-                    val expected = manifest.files[notePath]
-                        ?: throw BackupValidationException("笔记条目未列入清单校验: $notePath")
-                    val bytes = readAndVerifyEntry(zf, entriesByPath.getValue(notePath), expected, totalCounter)
-                    val record = parseNoteRecord(String(bytes, StandardCharsets.UTF_8))
-                    // Validate embedded document_json matches schema v1 cleanly.
-                    VersionDiff.parseBlocks(record.documentJson)
-                    notes.add(record)
-                }
-
-                val versionsEntry = entriesByPath["metadata/versions.jsonl"]
-                    ?: throw BackupValidationException("备份包缺少 metadata/versions.jsonl")
-                val versionsExpected = manifest.files["metadata/versions.jsonl"]
-                    ?: throw BackupValidationException("版本记录未列入清单校验")
+                val versionsEntry = entriesByPath.getValue("metadata/versions.jsonl")
+                val versionsExpected = manifest.files.getValue("metadata/versions.jsonl")
                 val versions = readAndVerifyJsonLines(zf, versionsEntry, versionsExpected, totalCounter) { obj ->
                     parseVersionRecord(obj).also { VersionDiff.parseBlocks(it.documentJson) }
                 }
 
-                val draftsEntry = entriesByPath["metadata/drafts.jsonl"]
-                    ?: throw BackupValidationException("备份包缺少 metadata/drafts.jsonl")
-                val draftsExpected = manifest.files["metadata/drafts.jsonl"]
-                    ?: throw BackupValidationException("草稿记录未列入清单校验")
+                val draftsEntry = entriesByPath.getValue("metadata/drafts.jsonl")
+                val draftsExpected = manifest.files.getValue("metadata/drafts.jsonl")
                 val drafts = readAndVerifyJsonLines(zf, draftsEntry, draftsExpected, totalCounter) { obj ->
                     parseDraftRecord(obj).also { VersionDiff.parseBlocks(it.documentJson) }
                 }
 
-                val orgEntry = entriesByPath["metadata/organization.json"]
-                    ?: throw BackupValidationException("备份包缺少 metadata/organization.json")
-                val orgExpected = manifest.files["metadata/organization.json"]
-                    ?: throw BackupValidationException("组织关系未列入清单校验")
+                val orgEntry = entriesByPath.getValue("metadata/organization.json")
+                val orgExpected = manifest.files.getValue("metadata/organization.json")
                 val orgMap = MiniJson.parseObject(
                     String(readAndVerifyEntry(zf, orgEntry, orgExpected, totalCounter), StandardCharsets.UTF_8),
                 )
                 val (tags, notebooks, noteTags, notebookNotes, noteLinks, savedSearches) = parseOrganization(orgMap)
 
-                val tasksEntry = entriesByPath["metadata/tasks.json"]
-                    ?: throw BackupValidationException("备份包缺少 metadata/tasks.json")
-                val tasksExpected = manifest.files["metadata/tasks.json"]
-                    ?: throw BackupValidationException("待办提醒元数据未列入清单校验")
+                val tasksEntry = entriesByPath.getValue("metadata/tasks.json")
+                val tasksExpected = manifest.files.getValue("metadata/tasks.json")
                 val tasksMap = MiniJson.parseObject(
                     String(readAndVerifyEntry(zf, tasksEntry, tasksExpected, totalCounter), StandardCharsets.UTF_8),
                 )
@@ -369,18 +465,10 @@ internal object BackupCodec {
                 attachmentStagingDir?.mkdirs()
                 for (att in manifest.attachments) {
                     val cleanArchivePath = validateArchiveEntryPath(att.archivePath)
-                    val attEntry = entriesByPath[cleanArchivePath]
-                        ?: throw BackupValidationException("备份包缺少附件文件: ${att.originalName}")
-                    val expectedFile = manifest.files[cleanArchivePath]
-                        ?: throw BackupValidationException("附件未列入清单校验: $cleanArchivePath")
-                    if (expectedFile.bytes != att.bytes || expectedFile.sha256 != att.sha256) {
-                        throw BackupValidationException("附件清单校验值不一致: ${att.id}")
-                    }
+                    val attEntry = entriesByPath.getValue(cleanArchivePath)
                     val metaPath = "attachments/${att.id}.meta.json"
-                    val metaEntry = entriesByPath[metaPath]
-                        ?: throw BackupValidationException("备份包缺少附件元数据: ${att.id}")
-                    val metaExpected = manifest.files[metaPath]
-                        ?: throw BackupValidationException("附件元数据未列入清单校验: $metaPath")
+                    val metaEntry = entriesByPath.getValue(metaPath)
+                    val metaExpected = manifest.files.getValue(metaPath)
                     readAndVerifyEntry(zf, metaEntry, metaExpected, totalCounter)
 
                     if (attachmentStagingDir != null) {
@@ -409,6 +497,9 @@ internal object BackupCodec {
                         add(validateArchiveEntryPath(it.archivePath))
                         add("attachments/${it.id}.meta.json")
                     }
+                }
+                if (!checkedPaths.containsAll(notePaths)) {
+                    throw BackupValidationException("备份分片校验覆盖集合不完整")
                 }
                 for ((declaredPath, expected) in manifest.files) {
                     val clean = validateArchiveEntryPath(declaredPath)
@@ -464,6 +555,129 @@ internal object BackupCodec {
         } catch (err: IOException) {
             throw BackupValidationException("无法读取备份文件", err)
         }
+    }
+
+    private data class ValidatedZipHeader(
+        val entriesByPath: LinkedHashMap<String, ZipEntry>,
+        val manifest: BackupManifest,
+        val notePaths: List<String>,
+        val totalCounter: LongCounter,
+    )
+
+    private fun shardIndexOf(path: String): Int =
+        NOTE_SHARD_PATH.matchEntire(path)?.groupValues?.get(1)?.toIntOrNull()
+            ?: throw BackupValidationException("备份包包含非法的笔记分片路径: $path")
+
+    private fun openAndValidateZipHeader(zf: ZipFile): ValidatedZipHeader {
+        val entriesByPath = LinkedHashMap<String, ZipEntry>()
+        val enumEntries = zf.entries()
+        var totalRawEntries = 0
+        while (enumEntries.hasMoreElements()) {
+            val entry = enumEntries.nextElement()
+            totalRawEntries++
+            if (totalRawEntries > BackupConstants.MAX_ARCHIVE_ENTRIES + 64 ||
+                entriesByPath.size >= BackupConstants.MAX_ARCHIVE_ENTRIES
+            ) {
+                throw BackupValidationException("压缩包条目数量超过安全上限")
+            }
+            val cleanPath = validateArchiveEntryPath(entry.name)
+            if (entry.isDirectory || cleanPath.endsWith("/")) continue
+            if (entriesByPath.containsKey(cleanPath)) {
+                throw BackupValidationException("压缩包包含重复路径条目: $cleanPath")
+            }
+            entriesByPath[cleanPath] = entry
+        }
+
+        val manifestEntry = entriesByPath["manifest.json"]
+            ?: throw BackupValidationException("备份包缺少 manifest.json")
+        val totalCounter = LongCounter()
+        val manifestBytes = readEntryChecked(
+            zipFile = zf,
+            entry = manifestEntry,
+            maxEntryBytes = 16L * 1024L * 1024L,
+            totalCounter = totalCounter,
+        ).first
+        val manifest = parseManifest(String(manifestBytes, StandardCharsets.UTF_8))
+
+        if (manifest.backupSchemaVersion !in 1..BackupConstants.SUPPORTED_BACKUP_SCHEMA_VERSION) {
+            throw BackupValidationException("备份格式版本 (${manifest.backupSchemaVersion}) 高于当前应用支持范围，请升级后再恢复")
+        }
+        if (manifest.dbSchemaVersion !in 1..BackupConstants.SUPPORTED_DB_SCHEMA_VERSION) {
+            throw BackupValidationException("备份数据库版本 (v${manifest.dbSchemaVersion}) 高于当前版本 (v${BackupConstants.SUPPORTED_DB_SCHEMA_VERSION})，请升级后再恢复")
+        }
+        if (manifest.files.containsKey("manifest.json")) {
+            throw BackupValidationException("清单校验表不得包含 manifest.json")
+        }
+
+        // Verify every declared file exists and every archive entry is declared.
+        for (entryPath in entriesByPath.keys) {
+            if (entryPath != "manifest.json" && !manifest.files.containsKey(entryPath)) {
+                throw BackupValidationException("压缩包包含未登记的异常文件: $entryPath")
+            }
+        }
+        for ((declaredPath, expectedChecksum) in manifest.files) {
+            val cleanDeclared = validateArchiveEntryPath(declaredPath)
+            val zipEntry = entriesByPath[cleanDeclared]
+                ?: throw BackupValidationException("备份包缺少声明文件: $cleanDeclared")
+            if (zipEntry.isDirectory) {
+                throw BackupValidationException("备份包声明文件实际是目录: $cleanDeclared")
+            }
+            if (expectedChecksum.bytes < 0L) {
+                throw BackupValidationException("备份文件声明大小非法: $cleanDeclared")
+            }
+        }
+
+        for (requiredPath in REQUIRED_METADATA_PATHS) {
+            if (!entriesByPath.containsKey(requiredPath)) {
+                throw BackupValidationException("备份包缺少 $requiredPath")
+            }
+            if (!manifest.files.containsKey(requiredPath)) {
+                throw BackupValidationException("必需元数据未列入清单校验: $requiredPath")
+            }
+        }
+
+        for (att in manifest.attachments) {
+            val cleanArchivePath = validateArchiveEntryPath(att.archivePath)
+            if (!entriesByPath.containsKey(cleanArchivePath)) {
+                throw BackupValidationException("备份包缺少附件文件: ${att.originalName}")
+            }
+            val expectedFile = manifest.files[cleanArchivePath]
+                ?: throw BackupValidationException("附件未列入清单校验: $cleanArchivePath")
+            if (expectedFile.bytes != att.bytes || !expectedFile.sha256.equals(att.sha256, ignoreCase = true)) {
+                throw BackupValidationException("附件清单校验值不一致: ${att.id}")
+            }
+            val metaPath = "attachments/${att.id}.meta.json"
+            if (!entriesByPath.containsKey(metaPath)) {
+                throw BackupValidationException("备份包缺少附件元数据: ${att.id}")
+            }
+            if (!manifest.files.containsKey(metaPath)) {
+                throw BackupValidationException("附件元数据未列入清单校验: $metaPath")
+            }
+        }
+
+        val rawNoteEntries = entriesByPath.keys.filter { it.startsWith("notes/") }
+        val notePaths = if (manifest.backupSchemaVersion == 1) {
+            for (path in rawNoteEntries) {
+                if (!NOTE_V1_PATH.matches(path)) {
+                    throw BackupValidationException("v1 备份包包含非法的笔记条目路径: $path")
+                }
+            }
+            rawNoteEntries.sorted()
+        } else {
+            for (path in rawNoteEntries) {
+                if (!NOTE_SHARD_PATH.matches(path)) {
+                    throw BackupValidationException("v2 备份包包含非法的笔记分片路径: $path")
+                }
+            }
+            rawNoteEntries.sortedBy(::shardIndexOf)
+        }
+
+        return ValidatedZipHeader(
+            entriesByPath = entriesByPath,
+            manifest = manifest,
+            notePaths = notePaths,
+            totalCounter = totalCounter,
+        )
     }
 
     fun writeMarkdownZip(
@@ -806,6 +1020,19 @@ internal object BackupCodec {
 
     private class LongCounter(var value: Long = 0L)
 
+    private fun countAndVerifyJsonLines(
+        zipFile: ZipFile,
+        entry: ZipEntry,
+        expected: BackupFileChecksum,
+        totalCounter: LongCounter,
+    ): Int {
+        var count = 0
+        streamAndVerifyJsonLines(zipFile, entry, expected, totalCounter) {
+            count++
+        }
+        return count
+    }
+
     private fun <T> readAndVerifyJsonLines(
         zipFile: ZipFile,
         entry: ZipEntry,
@@ -813,6 +1040,20 @@ internal object BackupCodec {
         totalCounter: LongCounter,
         mapper: (Map<String, Any?>) -> T,
     ): List<T> {
+        val records = ArrayList<T>()
+        streamAndVerifyJsonLines(zipFile, entry, expected, totalCounter) { line ->
+            records.add(mapper(MiniJson.parseObject(line)))
+        }
+        return records
+    }
+
+    private inline fun streamAndVerifyJsonLines(
+        zipFile: ZipFile,
+        entry: ZipEntry,
+        expected: BackupFileChecksum,
+        totalCounter: LongCounter,
+        onLine: (String) -> Unit,
+    ) {
         val digest = MessageDigest.getInstance("SHA-256")
         var entryBytes = 0L
         val checkedStream = object : InputStream() {
@@ -841,19 +1082,17 @@ internal object BackupCodec {
 
             override fun close() = delegate.close()
         }
-        val records = ArrayList<T>()
         BufferedReader(InputStreamReader(checkedStream, StandardCharsets.UTF_8)).use { reader ->
             while (true) {
                 val line = reader.readLine() ?: break
                 if (line.isBlank()) continue
-                records.add(mapper(MiniJson.parseObject(line)))
+                onLine(line)
             }
         }
         val sha = digest.digest().joinToString("") { "%02x".format(it) }
         if (entryBytes != expected.bytes || !sha.equals(expected.sha256, ignoreCase = true)) {
             throw BackupValidationException("备份条目校验失败: ${entry.name}")
         }
-        return records
     }
 
     private fun resolveTagPath(byId: Map<String, BackupTagRecord>, tag: BackupTagRecord): String {
@@ -900,30 +1139,30 @@ internal object BackupCodec {
         "media_mask" to n.mediaMask,
     )
 
-    private fun parseNoteRecord(json: String): BackupNoteRecord {
-        val m = MiniJson.parseObject(json)
-        return BackupNoteRecord(
-            id = m.reqString("id"),
-            title = m.optString("title"),
-            documentJson = m.reqString("document_json"),
-            searchText = m.reqString("search_text"),
-            authorType = m.optString("author_type") ?: "user",
-            sourceType = m.reqString("source_type"),
-            sourceUrl = m.optString("source_url"),
-            aiPolicy = m.optString("ai_policy") ?: "inherit",
-            createdAt = m.reqString("created_at"),
-            updatedAt = m.reqString("updated_at"),
-            revision = m.reqLong("local_revision"),
-            serverRevision = m.optLong("server_revision"),
-            contentHash = m.reqString("content_hash"),
-            archivedAt = m.optString("archived_at"),
-            deletedAt = m.optString("deleted_at"),
-            pinned = m.reqBool("pinned"),
-            lastDraftId = m.reqString("last_draft_id"),
-            committedSeq = m.reqLong("committed_seq"),
-            mediaMask = m.optLong("media_mask")?.toInt() ?: 0,
-        )
-    }
+    private fun parseNoteRecord(json: String): BackupNoteRecord =
+        parseNoteRecord(MiniJson.parseObject(json))
+
+    private fun parseNoteRecord(m: Map<String, Any?>): BackupNoteRecord = BackupNoteRecord(
+        id = m.reqString("id"),
+        title = m.optString("title"),
+        documentJson = m.reqString("document_json"),
+        searchText = m.reqString("search_text"),
+        authorType = m.optString("author_type") ?: "user",
+        sourceType = m.reqString("source_type"),
+        sourceUrl = m.optString("source_url"),
+        aiPolicy = m.optString("ai_policy") ?: "inherit",
+        createdAt = m.reqString("created_at"),
+        updatedAt = m.reqString("updated_at"),
+        revision = m.reqLong("local_revision"),
+        serverRevision = m.optLong("server_revision"),
+        contentHash = m.reqString("content_hash"),
+        archivedAt = m.optString("archived_at"),
+        deletedAt = m.optString("deleted_at"),
+        pinned = m.reqBool("pinned"),
+        lastDraftId = m.reqString("last_draft_id"),
+        committedSeq = m.reqLong("committed_seq"),
+        mediaMask = m.optLong("media_mask")?.toInt() ?: 0,
+    )
 
     private fun versionToJsonMap(v: BackupVersionRecord): Map<String, Any?> = linkedMapOf(
         "note_id" to v.noteId,

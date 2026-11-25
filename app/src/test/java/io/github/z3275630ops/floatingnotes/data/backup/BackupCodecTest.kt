@@ -573,6 +573,302 @@ class BackupCodecTest {
         }
     }
 
+    @Test
+    fun shardedBackupRoundTripPreservesAllNotesAndSchemaV2() {
+        val notes = (0 until 1_200).map { idx ->
+            syntheticNote(
+                id = "note-${idx.toString().padStart(4, '0')}",
+                title = "分片笔记 $idx",
+                body = "自适应流式分片正文 #$idx-${BackupCodec.sha256Hex("b-$idx".toByteArray()).take(12)}",
+                deletedAt = if (idx % 10 == 0) "2026-11-20T01:00:00.000Z" else null,
+            )
+        }
+        val snapshot = syntheticSnapshot(notes = notes)
+
+        val zipFile = File(temp.root, "sharded-1200.zip")
+        val manifest = BackupCodec.writeBackupZip(snapshot, zipFile) { null }
+        assertEquals(2, manifest.backupSchemaVersion)
+        assertEquals(1_200, manifest.counts.notes)
+        assertEquals(120, manifest.counts.trashedNotes)
+
+        ZipFile(zipFile).use { zf ->
+            val names = zf.entries().toList().map { it.name }.sorted()
+            val shardNames = names.filter { it.startsWith("notes/") }
+            assertEquals(
+                listOf(
+                    "notes/shard-0000.jsonl",
+                    "notes/shard-0001.jsonl",
+                    "notes/shard-0002.jsonl",
+                ),
+                shardNames,
+            )
+            assertFalse(names.any { it.startsWith("notes/") && it.endsWith(".json") })
+        }
+
+        val streamedManifest = BackupCodec.validateArchiveStreaming(zipFile)
+        assertEquals(manifest.backupSchemaVersion, streamedManifest.backupSchemaVersion)
+        assertEquals(manifest.counts, streamedManifest.counts)
+
+        val parsed = BackupCodec.readAndValidateArchive(zipFile)
+        assertEquals(2, parsed.manifest.backupSchemaVersion)
+        assertEquals(notes.sortedBy { it.id }, parsed.snapshot.notes)
+
+        // Small batch with forceSharded = true also round-trips cleanly via v2 shards.
+        val smallNotes = notes.take(3)
+        val forcedZip = File(temp.root, "forced-sharded-small.zip")
+        val forcedManifest = BackupCodec.writeBackupZip(
+            snapshot = syntheticSnapshot(notes = smallNotes),
+            targetZipFile = forcedZip,
+            attachmentFileProvider = { null },
+            shardingEnabled = true,
+            forceSharded = true,
+        )
+        assertEquals(2, forcedManifest.backupSchemaVersion)
+        ZipFile(forcedZip).use { zf ->
+            val noteEntries = zf.entries().toList().map { it.name }.filter { it.startsWith("notes/") }
+            assertEquals(listOf("notes/shard-0000.jsonl"), noteEntries)
+        }
+        assertEquals(2, BackupCodec.validateArchiveStreaming(forcedZip).backupSchemaVersion)
+        val parsedSmall = BackupCodec.readAndValidateArchive(forcedZip)
+        assertEquals(smallNotes.sortedBy { it.id }, parsedSmall.snapshot.notes)
+
+        // Empty snapshot with forceSharded = true writes 0 shard entries and stays consistent across read/validate.
+        val emptyForcedZip = File(temp.root, "forced-sharded-empty.zip")
+        val emptyManifest = BackupCodec.writeBackupZip(
+            snapshot = syntheticSnapshot(notes = emptyList()),
+            targetZipFile = emptyForcedZip,
+            attachmentFileProvider = { null },
+            shardingEnabled = true,
+            forceSharded = true,
+        )
+        assertEquals(2, emptyManifest.backupSchemaVersion)
+        assertEquals(0, emptyManifest.counts.notes)
+        val emptyStreamed = BackupCodec.validateArchiveStreaming(emptyForcedZip)
+        assertEquals(2, emptyStreamed.backupSchemaVersion)
+        assertEquals(0, emptyStreamed.counts.notes)
+        assertTrue(BackupCodec.readAndValidateArchive(emptyForcedZip).snapshot.notes.isEmpty())
+
+        // shardingEnabled = false forces v1 single-note files even above SHARD_NOTES_THRESHOLD.
+        val v1ForcedNotes = notes.take(BackupConstants.SHARD_NOTES_THRESHOLD + 5)
+        val v1ForcedZip = File(temp.root, "unsharded-v1-forced.zip")
+        val v1Manifest = BackupCodec.writeBackupZip(
+            snapshot = syntheticSnapshot(notes = v1ForcedNotes),
+            targetZipFile = v1ForcedZip,
+            attachmentFileProvider = { null },
+            shardingEnabled = false,
+        )
+        assertEquals(1, v1Manifest.backupSchemaVersion)
+        assertEquals(1, BackupCodec.validateArchiveStreaming(v1ForcedZip).backupSchemaVersion)
+        assertEquals(v1ForcedNotes.sortedBy { it.id }, BackupCodec.readAndValidateArchive(v1ForcedZip).snapshot.notes)
+    }
+
+    @Test
+    fun shardedBackupRejectsTamperedShardAndUnexpectedEntry() {
+        val notes = (0 until 250).map { idx ->
+            syntheticNote(
+                id = "s-note-${idx.toString().padStart(3, '0')}",
+                title = "分片校验 $idx",
+                body = "分片防篡改测试内容 #$idx",
+            )
+        }
+        val baseZip = File(temp.root, "sharded-base.zip")
+        BackupCodec.writeBackupZip(syntheticSnapshot(notes = notes), baseZip) { null }
+
+        // 1. Tamper shard contents -> both streaming and full validation reject.
+        val tamperedZip = File(temp.root, "sharded-tampered.zip")
+        copyZipWithReplacement(baseZip, tamperedZip) { path, bytes ->
+            if (path == "notes/shard-0000.jsonl") {
+                String(bytes, StandardCharsets.UTF_8)
+                    .replace("分片校验 0", "恶意篡改 0")
+                    .toByteArray(StandardCharsets.UTF_8)
+            } else {
+                bytes
+            }
+        }
+        assertThrows(BackupValidationException::class.java) {
+            BackupCodec.validateArchiveStreaming(tamperedZip)
+        }
+        assertThrows(BackupValidationException::class.java) {
+            BackupCodec.readAndValidateArchive(tamperedZip)
+        }
+
+        // 2. Inject undeclared shard entry -> both streaming and full validation reject.
+        val extraShardZip = File(temp.root, "sharded-extra.zip")
+        copyZipWithReplacement(
+            source = baseZip,
+            dest = extraShardZip,
+            extraEntry = "notes/shard-0099.jsonl" to """{"id":"rogue"}""".toByteArray(StandardCharsets.UTF_8),
+        )
+        assertThrows(BackupValidationException::class.java) {
+            BackupCodec.validateArchiveStreaming(extraShardZip)
+        }
+        assertThrows(BackupValidationException::class.java) {
+            BackupCodec.readAndValidateArchive(extraShardZip)
+        }
+
+        // 3. Register an illegal shard filename in manifest -> both streaming and full validation reject.
+        val illegalShardBytes = """{"id":"rogue"}""".toByteArray(StandardCharsets.UTF_8)
+        val illegalSha = BackupCodec.sha256Hex(illegalShardBytes)
+        val illegalNameZip = File(temp.root, "sharded-illegal-name.zip")
+        copyZipWithReplacement(
+            source = baseZip,
+            dest = illegalNameZip,
+            extraEntry = "notes/shard-bad.jsonl" to illegalShardBytes,
+        ) { path, bytes ->
+            if (path == "manifest.json") {
+                val root = MiniJson.parseObject(String(bytes, StandardCharsets.UTF_8)).toMutableMap()
+                @Suppress("UNCHECKED_CAST")
+                val files = (root["files"] as Map<String, Any?>).toMutableMap()
+                files["notes/shard-bad.jsonl"] = linkedMapOf(
+                    "bytes" to illegalShardBytes.size.toLong(),
+                    "sha256" to illegalSha,
+                )
+                root["files"] = files
+                MiniJson.encode(root).toByteArray(StandardCharsets.UTF_8)
+            } else {
+                bytes
+            }
+        }
+        assertThrows(BackupValidationException::class.java) {
+            BackupCodec.validateArchiveStreaming(illegalNameZip)
+        }
+        assertThrows(BackupValidationException::class.java) {
+            BackupCodec.readAndValidateArchive(illegalNameZip)
+        }
+
+        // 4. Duplicate note ID inside a v2 shard (with updated checksum) -> full validation rejects.
+        val dupLine = MiniJson.encode(
+            linkedMapOf(
+                "id" to "dup-note",
+                "title" to "重复",
+                "document_json" to """{"document_schema_version":1,"blocks":[{"id":"b1","type":"paragraph","text":"a"}]}""",
+                "search_text" to "a",
+                "author_type" to "user",
+                "source_type" to "manual",
+                "source_url" to null,
+                "ai_policy" to "inherit",
+                "created_at" to "2026-11-25T00:00:00.000Z",
+                "updated_at" to "2026-11-25T00:00:00.000Z",
+                "local_revision" to 1L,
+                "server_revision" to null,
+                "content_hash" to "h",
+                "archived_at" to null,
+                "deleted_at" to null,
+                "pinned" to false,
+                "last_draft_id" to "d",
+                "committed_seq" to 1L,
+                "media_mask" to 0,
+            ),
+        )
+        val dupShardBytes = "$dupLine\n$dupLine".toByteArray(StandardCharsets.UTF_8)
+        val dupShardSha = BackupCodec.sha256Hex(dupShardBytes)
+        val dupZip = File(temp.root, "sharded-dup-note.zip")
+        copyZipWithReplacement(baseZip, dupZip) { path, bytes ->
+            when (path) {
+                "notes/shard-0000.jsonl" -> dupShardBytes
+                "manifest.json" -> {
+                    val root = MiniJson.parseObject(String(bytes, StandardCharsets.UTF_8)).toMutableMap()
+                    @Suppress("UNCHECKED_CAST")
+                    val counts = (root["counts"] as Map<String, Any?>).toMutableMap()
+                    counts["notes"] = 2
+                    root["counts"] = counts
+                    @Suppress("UNCHECKED_CAST")
+                    val files = (root["files"] as Map<String, Any?>).toMutableMap()
+                    files["notes/shard-0000.jsonl"] = linkedMapOf(
+                        "bytes" to dupShardBytes.size.toLong(),
+                        "sha256" to dupShardSha,
+                    )
+                    root["files"] = files
+                    MiniJson.encode(root).toByteArray(StandardCharsets.UTF_8)
+                }
+                else -> bytes
+            }
+        }
+        assertThrows(BackupValidationException::class.java) {
+            BackupCodec.readAndValidateArchive(dupZip)
+        }
+    }
+
+    @Test
+    fun tenThousandNoteShardedExportStaysUnderArchiveEntryLimit() {
+        val notes = (0 until 10_000).map { idx ->
+            val tagHex = BackupCodec.sha256Hex("note-10k-$idx".toByteArray(StandardCharsets.UTF_8)).take(16)
+            syntheticNote(
+                id = "n-${idx.toString().padStart(5, '0')}",
+                title = "万级笔记 $idx",
+                body = "轻量归档 $idx-$tagHex",
+                contentHash = tagHex,
+            )
+        }
+        val zipFile = File(temp.root, "sharded-10k.zip")
+        val manifest = BackupCodec.writeBackupZip(syntheticSnapshot(notes = notes), zipFile) { null }
+
+        assertEquals(10_000, manifest.counts.notes)
+        assertEquals(2, manifest.backupSchemaVersion)
+        assertTrue("Expected < 50 files, got ${manifest.files.size}", manifest.files.size < 50)
+        assertTrue(manifest.files.size < BackupConstants.MAX_ARCHIVE_ENTRIES)
+
+        val streamedManifest = BackupCodec.validateArchiveStreaming(zipFile)
+        assertEquals(10_000, streamedManifest.counts.notes)
+        assertEquals(2, streamedManifest.backupSchemaVersion)
+    }
+
+    private fun syntheticNote(
+        id: String,
+        title: String?,
+        body: String,
+        deletedAt: String? = null,
+        contentHash: String = BackupCodec.sha256Hex(body.toByteArray(StandardCharsets.UTF_8)),
+    ): BackupNoteRecord {
+        val doc = MiniJson.encode(
+            linkedMapOf(
+                "document_schema_version" to 1,
+                "blocks" to listOf(
+                    linkedMapOf("id" to "b1", "type" to "paragraph", "text" to body),
+                ),
+            ),
+        )
+        return BackupNoteRecord(
+            id = id,
+            title = title,
+            documentJson = doc,
+            searchText = body,
+            authorType = "user",
+            sourceType = "manual",
+            sourceUrl = null,
+            aiPolicy = "inherit",
+            createdAt = "2026-11-25T00:00:00.000Z",
+            updatedAt = "2026-11-25T00:00:00.000Z",
+            revision = 1L,
+            serverRevision = null,
+            contentHash = contentHash,
+            archivedAt = null,
+            deletedAt = deletedAt,
+            pinned = false,
+            lastDraftId = "draft-$id",
+            committedSeq = 1L,
+            mediaMask = 0,
+        )
+    }
+
+    private fun syntheticSnapshot(notes: List<BackupNoteRecord>): BackupSnapshot = BackupSnapshot(
+        exportedAt = "2026-11-25T05:00:00.000Z",
+        appVersion = "0.3.0-scale.1",
+        dbSchemaVersion = 8,
+        notes = notes,
+        versions = emptyList(),
+        drafts = emptyList(),
+        tags = emptyList(),
+        notebooks = emptyList(),
+        noteTags = emptyList(),
+        notebookNotes = emptyList(),
+        noteLinks = emptyList(),
+        savedSearches = emptyList(),
+        reminders = emptyList(),
+        taskOccurrences = emptyList(),
+        attachments = emptyList(),
+    )
+
     private fun writeMinimalValidBackupZip(name: String): File {
         val doc = """{"document_schema_version":1,"blocks":[{"id":"b1","type":"paragraph","text":"最小内容"}]}"""
         val snapshot = BackupSnapshot(

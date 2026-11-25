@@ -152,7 +152,7 @@ internal class BackupManager(
                     File(folder, "original").takeIf { it.isFile }
                 },
             )
-            BackupCodec.readAndValidateArchive(targetZipFile, attachmentStagingDir = null)
+            BackupCodec.validateArchiveStreaming(targetZipFile)
             manifest
         } finally {
             leasesFile.delete()
@@ -559,9 +559,9 @@ internal class BackupManager(
             val notebookIds = notebooks.mapTo(HashSet()) { it.id }
             val deletedNoteIds = notes.asSequence().filter { it.deletedAt != null }.mapTo(HashSet()) { it.id }
 
-            if (notes.isNotEmpty()) notesDao.insertNotes(notes)
-            if (tags.isNotEmpty()) orgDao.insertTags(tags)
-            if (notebooks.isNotEmpty()) orgDao.insertNotebooks(notebooks)
+            notes.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertNotes(it) }
+            tags.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertTags(it) }
+            notebooks.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertNotebooks(it) }
 
             val versions = snapshot.versions.filter { it.noteId in noteIds }.map {
                 NoteVersionEntity(
@@ -574,31 +574,31 @@ internal class BackupManager(
                     attachmentRefs = it.attachmentRefs,
                 )
             }
-            if (versions.isNotEmpty()) notesDao.insertVersions(versions)
+            versions.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertVersions(it) }
 
             val drafts = snapshot.drafts.map { it.toEntity() }
-            if (drafts.isNotEmpty()) notesDao.insertDrafts(drafts)
+            drafts.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertDrafts(it) }
 
             val noteTags = snapshot.noteTags
                 .filter { it.noteId in noteIds && it.tagId in tagIds }
                 .map { NoteTagEntity(it.noteId, it.tagId) }
-            if (noteTags.isNotEmpty()) orgDao.insertNoteTags(noteTags)
+            noteTags.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertNoteTags(it) }
 
             val notebookNotes = snapshot.notebookNotes
                 .filter { it.noteId in noteIds && it.notebookId in notebookIds }
                 .map { NotebookNoteEntity(it.noteId, it.notebookId) }
-            if (notebookNotes.isNotEmpty()) orgDao.insertNotebookNotes(notebookNotes)
+            notebookNotes.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertNotebookNotes(it) }
 
             val noteLinks = snapshot.noteLinks
                 .filter { it.sourceId in noteIds }
                 .map { NoteLinkEntity(it.sourceId, it.blockId, it.targetId, it.targetRevision) }
-            if (noteLinks.isNotEmpty()) orgDao.upsertLinks(noteLinks)
+            noteLinks.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.upsertLinks(it) }
 
             val searches = snapshot.savedSearches.map { SavedSearch(it.id, it.name, it.keyword, it.scopeJson) }
-            if (searches.isNotEmpty()) searchDao.insertAll(searches)
+            searches.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { searchDao.insertAll(it) }
 
             val tasks = rebuildTaskIndexForNotes(notes)
-            if (tasks.isNotEmpty()) taskDao.insertTasks(tasks)
+            tasks.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { taskDao.insertTasks(it) }
 
             val normalizedReminders = ArrayList<ReminderEntity>(snapshot.reminders.size)
             val activeToSchedule = ArrayList<ReminderEntity>()
@@ -617,12 +617,12 @@ internal class BackupManager(
                 if (paused) pausedPastDue++
                 if (isActive) activeToSchedule.add(adjusted)
             }
-            if (normalizedReminders.isNotEmpty()) taskDao.insertReminders(normalizedReminders)
+            normalizedReminders.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { taskDao.insertReminders(it) }
 
             val occurrences = snapshot.taskOccurrences
                 .filter { it.noteId in noteIds }
                 .map { it.toEntity() }
-            if (occurrences.isNotEmpty()) taskDao.insertOccurrences(occurrences)
+            occurrences.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { taskDao.insertOccurrences(it) }
 
             agentDao.insertAction(
                 AgentActionEntity(
@@ -672,7 +672,7 @@ internal class BackupManager(
                 tagsToInsert.add(newTag)
                 tagIdMap[tag.id] = newTag.id
             }
-            if (tagsToInsert.isNotEmpty()) orgDao.insertTags(tagsToInsert)
+            tagsToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertTags(it) }
 
             val existingNotebooks = orgDao.notebooks()
             val existingNotebookById = existingNotebooks.associateBy { it.id }.toMutableMap()
@@ -696,7 +696,7 @@ internal class BackupManager(
                 notebooksToInsert.add(newNb)
                 notebookIdMap[nb.id] = newNb.id
             }
-            if (notebooksToInsert.isNotEmpty()) orgDao.insertNotebooks(notebooksToInsert)
+            notebooksToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertNotebooks(it) }
 
             val noteIdMap = HashMap<String, String>()
             val skippedNoteIds = HashSet<String>()
@@ -823,7 +823,7 @@ internal class BackupManager(
                 }
                 importedCount++
             }
-            if (notesToInsert.isNotEmpty()) notesDao.insertNotes(notesToInsert)
+            notesToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertNotes(it) }
 
             val insertedNoteIds = notesToInsert.mapTo(HashSet()) { it.id }
             val deletedInsertedNoteIds = notesToInsert.asSequence()
@@ -854,7 +854,7 @@ internal class BackupManager(
                         },
                     )
                 }
-            if (versionsToInsert.isNotEmpty()) notesDao.insertVersions(versionsToInsert)
+            versionsToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertVersions(it) }
 
             val draftsToInsert = ArrayList<DraftEntity>()
             for (d in snapshot.drafts) {
@@ -896,7 +896,7 @@ internal class BackupManager(
                     ),
                 )
             }
-            if (draftsToInsert.isNotEmpty()) notesDao.insertDrafts(draftsToInsert)
+            draftsToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertDrafts(it) }
 
             val noteTagsToInsert = snapshot.noteTags
                 .filter { it.noteId !in skippedNoteIds }
@@ -905,7 +905,7 @@ internal class BackupManager(
                     val targetTag = tagIdMap[nt.tagId] ?: return@mapNotNull null
                     NoteTagEntity(targetNote, targetTag)
                 }
-            if (noteTagsToInsert.isNotEmpty()) orgDao.insertNoteTags(noteTagsToInsert)
+            noteTagsToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertNoteTags(it) }
 
             val notebookNotesToInsert = snapshot.notebookNotes
                 .filter { it.noteId !in skippedNoteIds }
@@ -914,7 +914,7 @@ internal class BackupManager(
                     val targetNb = notebookIdMap[nn.notebookId] ?: return@mapNotNull null
                     NotebookNoteEntity(targetNote, targetNb)
                 }
-            if (notebookNotesToInsert.isNotEmpty()) orgDao.insertNotebookNotes(notebookNotesToInsert)
+            notebookNotesToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertNotebookNotes(it) }
 
             val linksToInsert = snapshot.noteLinks
                 .filter { it.sourceId !in skippedNoteIds }
@@ -927,16 +927,16 @@ internal class BackupManager(
                         targetRevision = link.targetRevision,
                     )
                 }
-            if (linksToInsert.isNotEmpty()) orgDao.upsertLinks(linksToInsert)
+            linksToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.upsertLinks(it) }
 
             val existingSearchIds = searchDao.allSavedSearches().mapTo(HashSet()) { it.id }
             val searchesToInsert = snapshot.savedSearches
                 .filter { it.id !in existingSearchIds }
                 .map { SavedSearch(it.id, it.name, it.keyword, it.scopeJson) }
-            if (searchesToInsert.isNotEmpty()) searchDao.insertAll(searchesToInsert)
+            searchesToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { searchDao.insertAll(it) }
 
             val tasksToInsert = rebuildTaskIndexForNotes(notesToInsert)
-            if (tasksToInsert.isNotEmpty()) taskDao.insertTasks(tasksToInsert)
+            tasksToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { taskDao.insertTasks(it) }
 
             val remindersToInsert = ArrayList<ReminderEntity>()
             val activeToSchedule = ArrayList<ReminderEntity>()
@@ -961,7 +961,7 @@ internal class BackupManager(
                 if (paused) pausedPastDue++
                 if (isActive) activeToSchedule.add(adjusted)
             }
-            if (remindersToInsert.isNotEmpty()) taskDao.insertReminders(remindersToInsert)
+            remindersToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { taskDao.insertReminders(it) }
 
             val occToInsert = snapshot.taskOccurrences
                 .filter { it.noteId !in skippedNoteIds }
@@ -974,7 +974,7 @@ internal class BackupManager(
                         reminderId = occ.reminderId?.let { reminderIdMap[it] ?: it },
                     )
                 }
-            if (occToInsert.isNotEmpty()) taskDao.insertOccurrences(occToInsert)
+            occToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { taskDao.insertOccurrences(it) }
 
             agentDao.insertAction(
                 AgentActionEntity(
@@ -1345,6 +1345,7 @@ internal class BackupManager(
 
     companion object {
         private const val RESTORE_COMMIT_RUN_ID = "__system_restore__"
+        private const val RESTORE_INSERT_BATCH_SIZE = 500
 
         internal fun restoreCommitActionId(restoreId: String): String = "__restore_commit__:$restoreId"
     }
