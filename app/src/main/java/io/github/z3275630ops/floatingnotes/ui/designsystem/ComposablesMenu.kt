@@ -25,6 +25,7 @@ package io.github.z3275630ops.floatingnotes.ui.designsystem
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -47,20 +49,38 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+
+private object MenuScrimPosition : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset = IntOffset.Zero
+}
 
 @Composable
 internal fun NoteMenuTrigger(
@@ -109,13 +129,33 @@ internal fun ComposablesMenu(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     tag: String = "note-menu",
+    focusable: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val isDark = scheme.surface.luminance() < 0.5f
+    if (expanded && !focusable) {
+        val dismiss by rememberUpdatedState(onDismiss)
+        // This window receives outside taps below the menu while the editor keeps input focus.
+        Popup(
+            popupPositionProvider = MenuScrimPosition,
+            properties = PopupProperties(
+                focusable = false,
+                dismissOnClickOutside = false,
+                excludeFromSystemGesture = false,
+            ),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) { detectTapGestures(onTap = { dismiss() }) },
+            )
+        }
+    }
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = focusable, dismissOnClickOutside = focusable),
         modifier = modifier
             .widthIn(min = 196.dp, max = 320.dp)
             .padding(horizontal = 4.dp)

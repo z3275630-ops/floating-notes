@@ -5,6 +5,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
@@ -16,6 +17,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
@@ -49,7 +51,6 @@ import io.github.z3275630ops.floatingnotes.core.model.toggleTextMark
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalFuzzyMatcher
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import kotlinx.coroutines.awaitCancellation
-import kotlin.math.abs
 
 internal data class SlashTrigger(
     val triggerIndex: Int,
@@ -74,6 +75,7 @@ internal data class BlockEditOutcome(
     val cursorOffset: Int,
     val focusToggleTitle: Boolean = false,
     val statusHint: String? = null,
+    val selection: TextRange = TextRange(cursorOffset),
 )
 
 internal data class EditorSnapshot(
@@ -81,7 +83,14 @@ internal data class EditorSnapshot(
     val focusedBlockId: String?,
     val cursorOffset: Int,
     val focusToggleTitle: Boolean = false,
+    val selection: TextRange = TextRange(cursorOffset),
 )
+
+internal fun NoteBlock.editorFieldBranch(): String? = when {
+    !editable -> null
+    type == "callout" || type == "toggle" -> type
+    else -> "standard"
+}
 
 internal sealed interface UndoRedoOutcome {
     data class Applied(val snapshot: EditorSnapshot) : UndoRedoOutcome
@@ -260,25 +269,18 @@ internal object EditorBlockOps {
     fun isSingleNewlineInsertion(
         oldText: String,
         newText: String,
+        oldSelection: TextRange,
         newSelection: TextRange,
     ): Int? {
         if (!newSelection.collapsed) return null
-        if (newText.length > oldText.length + 1) return null
-        val cursorAfter = newSelection.start.coerceIn(0, newText.length)
-        if (cursorAfter <= 0 || newText[cursorAfter - 1] != '\n') return null
-        val splitIndex = cursorAfter - 1
-        if (newText.length == oldText.length + 1 &&
-            newText.substring(0, splitIndex) == oldText.substring(0, splitIndex) &&
-            newText.substring(cursorAfter) == oldText.substring(splitIndex)
-        ) {
-            return splitIndex
+        val start = oldSelection.min
+        val end = oldSelection.max
+        if (start !in 0..oldText.length || end !in start..oldText.length || newSelection.start != start + 1) return null
+        if (newText.length != oldText.length - (end - start) + 1 || newText.getOrNull(start) != '\n') return null
+        return start.takeIf {
+            newText.regionMatches(0, oldText, 0, start) &&
+                newText.regionMatches(start + 1, oldText, end, oldText.length - end)
         }
-        // Selection replacement with a single '\n'
-        val prefixLen = commonPrefixLength(oldText, newText, maxPrefix = splitIndex)
-        val suffixLen = commonSuffixLength(oldText, newText, minIndexInOld = prefixLen, minIndexInNew = cursorAfter)
-        val removedInOld = oldText.length - prefixLen - suffixLen
-        val insertedInNew = newText.length - prefixLen - suffixLen
-        return if (removedInOld >= 0 && insertedInNew == 1 && prefixLen == splitIndex) splitIndex else null
     }
 
     fun tryApplyMarkdownPrefix(
@@ -443,7 +445,12 @@ internal object EditorBlockOps {
         isToggleTitle: Boolean = false,
     ): BlockEditOutcome {
         if (blockIndex !in blocks.indices) return BlockEditOutcome(blocks, null, 0)
-        val block = blocks[blockIndex]
+        val original = blocks[blockIndex]
+        val remaining = beforeCursor + afterCursor
+        val block = if (isToggleTitle || original.text == remaining) original else original.copy(
+            text = remaining,
+            marks = adjustMarksForTextEdit(original.marks, original.text, remaining, beforeCursor.length),
+        )
         val updated = blocks.toMutableList()
 
         if (block.type == "toggle" && isToggleTitle) {
@@ -510,6 +517,7 @@ internal object EditorBlockOps {
             "heading" -> {
                 if (beforeCursor.isEmpty() && afterCursor.isNotEmpty()) {
                     val insertedAbove = NoteBlock.paragraph()
+                    updated[blockIndex] = block
                     updated.add(blockIndex, insertedAbove)
                     BlockEditOutcome(updated, block.id, 0)
                 } else {
@@ -598,7 +606,8 @@ internal object EditorBlockOps {
                 if (prevEditableIdx != null) {
                     updated.removeAt(blockIndex)
                     val target = updated[prevEditableIdx]
-                    return BlockEditOutcome(updated, target.id, target.text.length)
+                    val title = target.type == "toggle" && target.collapsed
+                    return BlockEditOutcome(updated, target.id, if (title) target.title.length else target.text.length, title)
                 }
             }
             return null
@@ -632,7 +641,9 @@ internal object EditorBlockOps {
         if (blockIndex !in blocks.indices) return BlockEditOutcome(blocks, null, 0)
         val block = blocks[blockIndex]
         val updated = blocks.toMutableList()
+        if (!block.editable && block.type != "divider") return BlockEditOutcome(blocks, null, 0)
         if (targetType == "divider") {
+            if (block.type == "divider") return BlockEditOutcome(blocks, null, 0)
             val div = block.convertToType(
                 newType = "divider",
                 dividerStyle = dividerStyle ?: block.dividerStyle,
@@ -644,7 +655,7 @@ internal object EditorBlockOps {
             } else {
                 NoteBlock.paragraph().also { updated.add(blockIndex + 1, it) }
             }
-            return BlockEditOutcome(updated, focusTarget.id, 0)
+            return BlockEditOutcome(updated, focusTarget.id, 0, focusTarget.type == "toggle" && focusTarget.collapsed)
         }
         val converted = block.convertToType(
             newType = targetType,
@@ -659,6 +670,34 @@ internal object EditorBlockOps {
             cursorOffset = if (converted.type == "toggle") converted.title.length else converted.text.length,
             focusToggleTitle = converted.type == "toggle",
         )
+    }
+
+    fun convertFromControls(
+        before: EditorSnapshot,
+        blockIndex: Int,
+        targetType: String,
+        headingLevel: Int = 1,
+    ): BlockEditOutcome {
+        val outcome = convertBlockType(before.blocks, blockIndex, targetType, headingLevel)
+        val old = before.blocks.getOrNull(blockIndex) ?: return outcome
+        val converted = outcome.blocks[blockIndex]
+        if (before.focusedBlockId != old.id || old.editorFieldBranch() == converted.editorFieldBranch()) {
+            return BlockEditOutcome(outcome.blocks, null, 0)
+        }
+        if (!converted.editable) return outcome
+
+        val selection = before.selection
+        val newline = old.text.indexOf('\n')
+        val focusTitle = converted.type == "toggle" && (newline < 0 || selection.end <= newline)
+        val offset = when {
+            focusTitle -> 0
+            converted.type == "toggle" -> -(newline + 1)
+            old.type == "toggle" && !before.focusToggleTitle && old.title.isNotEmpty() -> old.title.length + 1
+            else -> 0
+        }
+        val length = if (focusTitle) converted.title.length else converted.text.length
+        val restored = clampSelection(TextRange(selection.start + offset, selection.end + offset), length)
+        return BlockEditOutcome(outcome.blocks, converted.id, restored.start, focusTitle, selection = restored)
     }
 
     fun adjustIndent(
@@ -714,7 +753,12 @@ internal object EditorBlockOps {
         return BlockEditOutcome(
             blocks = updated,
             focusBlockId = if (target.editable) target.id else null,
-            cursorOffset = if (target.editable) target.text.length else 0,
+            cursorOffset = when {
+                target.type == "toggle" && target.collapsed -> target.title.length
+                target.editable -> target.text.length
+                else -> 0
+            },
+            focusToggleTitle = target.type == "toggle" && target.collapsed,
         )
     }
 
@@ -832,21 +876,6 @@ internal object EditorBlockOps {
         return normalizeMarks(shifted, rest)
     }
 
-    private fun commonPrefixLength(a: String, b: String, maxPrefix: Int): Int {
-        val limit = minOf(a.length, b.length, maxPrefix)
-        var i = 0
-        while (i < limit && a[i] == b[i]) i++
-        return i
-    }
-
-    private fun commonSuffixLength(a: String, b: String, minIndexInOld: Int, minIndexInNew: Int): Int {
-        var s = 0
-        while (s < a.length - minIndexInOld && s < b.length - minIndexInNew) {
-            if (a[a.length - 1 - s] != b[b.length - 1 - s]) break
-            s++
-        }
-        return s
-    }
 }
 
 internal class EditorUndoStack(
@@ -856,7 +885,7 @@ internal class EditorUndoStack(
     private val undoEntries = ArrayDeque<EditorSnapshot>()
     private val redoEntries = ArrayDeque<EditorSnapshot>()
     private var lastTypingAtMs = 0L
-    private var lastTypingBlockId: String? = null
+    private var lastTypingField: Pair<String, Boolean>? = null
 
     val canUndo: Boolean get() = undoEntries.isNotEmpty()
     val canRedo: Boolean get() = redoEntries.isNotEmpty()
@@ -865,31 +894,31 @@ internal class EditorUndoStack(
         undoEntries.clear()
         redoEntries.clear()
         lastTypingAtMs = 0L
-        lastTypingBlockId = null
+        lastTypingField = null
     }
 
     fun recordTypingChange(
         before: EditorSnapshot,
         nowMs: Long = System.currentTimeMillis(),
         forceBreak: Boolean = false,
+        composing: Boolean = false,
     ) {
-        val sameBlock = before.focusedBlockId != null && before.focusedBlockId == lastTypingBlockId
-        val withinWindow = !forceBreak && sameBlock && (nowMs - lastTypingAtMs) <= coalesceWindowMs && undoEntries.isNotEmpty()
+        val field = before.focusedBlockId?.let { it to before.focusToggleTitle }
+        val withinWindow = !forceBreak && field != null && field == lastTypingField &&
+            (nowMs - lastTypingAtMs) <= coalesceWindowMs && undoEntries.isNotEmpty()
         if (!withinWindow) {
             pushUndo(before)
         }
         redoEntries.clear()
         lastTypingAtMs = nowMs
-        lastTypingBlockId = before.focusedBlockId
+        lastTypingField = if (composing) null else field
     }
 
     fun recordStructuralChange(before: EditorSnapshot) {
-        if (undoEntries.lastOrNull()?.blocks != before.blocks) {
-            pushUndo(before)
-        }
+        pushUndo(before)
         redoEntries.clear()
         lastTypingAtMs = 0L
-        lastTypingBlockId = null
+        lastTypingField = null
     }
 
     fun undo(current: EditorSnapshot): UndoRedoOutcome {
@@ -900,7 +929,7 @@ internal class EditorUndoStack(
         redoEntries.addLast(current)
         if (redoEntries.size > maxDepth) redoEntries.removeFirst()
         lastTypingAtMs = 0L
-        lastTypingBlockId = null
+        lastTypingField = null
         return UndoRedoOutcome.Applied(target)
     }
 
@@ -911,12 +940,14 @@ internal class EditorUndoStack(
         val target = redoEntries.removeLast()
         pushUndo(current)
         lastTypingAtMs = 0L
-        lastTypingBlockId = null
+        lastTypingField = null
         return UndoRedoOutcome.Applied(target)
     }
 
     private fun pushUndo(snapshot: EditorSnapshot) {
-        if (undoEntries.lastOrNull()?.blocks == snapshot.blocks) return
+        if (undoEntries.lastOrNull()?.blocks == snapshot.blocks) {
+            undoEntries.removeLast()
+        }
         undoEntries.addLast(snapshot)
         if (undoEntries.size > maxDepth) {
             undoEntries.removeFirst()
@@ -931,73 +962,89 @@ internal class EditorUndoStack(
 
 internal data class PendingBlockFocus(
     val blockId: String,
-    val cursorOffset: Int,
     val toggleTitle: Boolean,
+    val showKeyboard: Boolean = false,
     val token: Int,
 )
 
 @Stable
 internal class BlockDragController {
     var draggingBlockId by mutableStateOf<String?>(null)
+        private set
     var draggingIndex by mutableIntStateOf(-1)
+        private set
     var targetDropIndex by mutableIntStateOf(-1)
-    var dragOffsetY by mutableFloatStateOf(0f)
-    var draggingItemHeightPx by mutableIntStateOf(0)
-    var pointerViewportY by mutableFloatStateOf(Float.NaN)
+        private set
+    private var grabOffsetY by mutableFloatStateOf(0f)
+    private var lastPointerRootY by mutableFloatStateOf(0f)
+    private var sourceTopInRootPx by mutableFloatStateOf(0f)
     var listTopInRootPx by mutableFloatStateOf(0f)
 
     val isDragging: Boolean get() = draggingBlockId != null
+    val dragOffsetY: Float get() = lastPointerRootY - grabOffsetY - sourceTopInRootPx
+    val pointerViewportY: Float get() = lastPointerRootY - listTopInRootPx
 
-    fun start(
-        blockId: String,
-        index: Int,
-        itemHeightPx: Int,
-        pointerRootY: Float,
-    ) {
+    fun start(blockId: String, index: Int, pointerRootY: Float, sourceTopInRootPx: Float) {
+        if (index < 0 || !pointerRootY.isFinite() || !sourceTopInRootPx.isFinite()) return
+        grabOffsetY = pointerRootY - sourceTopInRootPx
+        lastPointerRootY = pointerRootY
+        this.sourceTopInRootPx = sourceTopInRootPx
         draggingBlockId = blockId
         draggingIndex = index
         targetDropIndex = index
-        dragOffsetY = 0f
-        draggingItemHeightPx = itemHeightPx.coerceAtLeast(1)
-        pointerViewportY = pointerRootY - listTopInRootPx
     }
 
-    fun updateDrag(
-        deltaY: Float,
-        pointerRootY: Float,
-        listState: LazyListState,
-        blockCount: Int,
+    fun updatePointer(pointerRootY: Float) {
+        if (isDragging && pointerRootY.isFinite()) lastPointerRootY = pointerRootY
+    }
+
+    fun updateSourceTop(blockId: String, topInRootPx: Float) {
+        if (draggingBlockId == blockId && topInRootPx.isFinite()) sourceTopInRootPx = topInRootPx
+    }
+
+    fun recomputeDropIndex(listState: LazyListState, blockIds: List<String>) {
+        val layout = listState.layoutInfo
+        recomputeDropIndex(blockIds, layout.visibleItemsInfo, layout.viewportStartOffset)
+    }
+
+    internal fun recomputeDropIndex(
+        blockIds: List<String>,
+        visibleItems: List<LazyListItemInfo>,
+        viewportStartOffset: Int,
     ) {
-        if (!isDragging) return
-        dragOffsetY += deltaY
-        if (!pointerRootY.isNaN()) {
-            pointerViewportY = pointerRootY - listTopInRootPx
+        val sourceId = draggingBlockId ?: return
+        val from = blockIds.indexOf(sourceId)
+        if (from < 0) {
+            cancel()
+            return
         }
-        recomputeDropIndex(listState, blockCount)
-    }
-
-    fun recomputeDropIndex(listState: LazyListState, blockCount: Int) {
-        if (!isDragging || blockCount <= 0) return
-        val visible = listState.layoutInfo.visibleItemsInfo
-            .filter { it.index in 0 until blockCount }
-        if (visible.isEmpty()) return
-        val refY = if (!pointerViewportY.isNaN()) {
-            pointerViewportY
-        } else {
-            val draggedInfo = visible.firstOrNull { it.index == draggingIndex } ?: return
-            draggedInfo.offset + draggedInfo.size / 2f + dragOffsetY
-        }
-        var chosen = draggingIndex
-        var bestDist = Float.MAX_VALUE
-        for (item in visible) {
+        draggingIndex = from
+        // Lazy item offsets start after beforeContentPadding, while the pointer starts at the viewport edge.
+        val refY = pointerViewportY + viewportStartOffset
+        var chosen = from
+        var first = blockIds.size
+        var last = -1
+        for (item in visibleItems) {
+            val index = when {
+                blockIds.getOrNull(item.index) == item.key -> item.index
+                item.key is String -> blockIds.indexOf(item.key)
+                else -> item.index.takeIf { it in blockIds.indices } ?: -1
+            }
+            if (index < 0) continue
+            first = minOf(first, index)
+            last = maxOf(last, index)
             val center = item.offset + item.size / 2f
-            val dist = abs(refY - center)
-            if (dist < bestDist) {
-                bestDist = dist
-                chosen = item.index
+            if (index > from && refY >= center) {
+                chosen = maxOf(chosen, index)
+            } else if (index < from && refY <= center) {
+                chosen = minOf(chosen, index)
             }
         }
-        targetDropIndex = chosen.coerceIn(0, blockCount - 1)
+        if (last >= 0) {
+            targetDropIndex = chosen.coerceIn(first, last)
+        } else if (visibleItems.any { it.key == "editor-blank-canvas" }) {
+            targetDropIndex = blockIds.lastIndex
+        }
     }
 
     fun finish(): Pair<Int, Int>? {
@@ -1011,9 +1058,9 @@ internal class BlockDragController {
         draggingBlockId = null
         draggingIndex = -1
         targetDropIndex = -1
-        dragOffsetY = 0f
-        draggingItemHeightPx = 0
-        pointerViewportY = Float.NaN
+        grabOffsetY = 0f
+        lastPointerRootY = 0f
+        sourceTopInRootPx = 0f
     }
 }
 
@@ -1042,6 +1089,8 @@ internal class EditorEngineState(private val session: EditorSession) {
     }
 
     fun indexOfBlock(blockId: String): Int = session.blocks.indexOfFirst { it.id == blockId }
+
+    fun blockForInput(blockId: String): EditorBlock? = session.blocks.getOrNull(indexOfBlock(blockId))
 
     fun tfvStateFor(block: EditorBlock): MutableState<TextFieldValue> {
         val existing = tfvMap[block.id]
@@ -1076,25 +1125,26 @@ internal class EditorEngineState(private val session: EditorSession) {
         val activeTfv = focusedBlockId?.let { id ->
             if (focusToggleTitle) titleTfvMap[id]?.value else tfvMap[id]?.value
         }
-        val cursor = activeTfv?.selection?.start ?: 0
+        val selection = activeTfv?.selection ?: TextRange.Zero
         return EditorSnapshot(
             blocks = blocks,
             focusedBlockId = focusedBlockId,
-            cursorOffset = cursor,
+            cursorOffset = selection.start,
             focusToggleTitle = focusToggleTitle,
+            selection = selection,
         )
     }
 
     fun requestFocus(
         blockId: String,
-        cursorOffset: Int,
         toggleTitle: Boolean = false,
+        showKeyboard: Boolean = false,
     ) {
         focusSeq += 1
         pendingFocus = PendingBlockFocus(
             blockId = blockId,
-            cursorOffset = cursorOffset,
             toggleTitle = toggleTitle,
+            showKeyboard = showKeyboard,
             token = focusSeq,
         )
     }
@@ -1111,16 +1161,7 @@ internal class EditorEngineState(private val session: EditorSession) {
         if (focusId != null) {
             val targetDoc = outcome.blocks.firstOrNull { it.id == focusId }
             if (targetDoc != null) {
-                if (outcome.focusToggleTitle && targetDoc.type == "toggle") {
-                    val safeOff = outcome.cursorOffset.coerceIn(0, targetDoc.title.length)
-                    titleTfvMap.getOrPut(focusId) { mutableStateOf(TextFieldValue(targetDoc.title)) }.value =
-                        TextFieldValue(targetDoc.title, TextRange(safeOff))
-                } else {
-                    val safeOff = outcome.cursorOffset.coerceIn(0, targetDoc.text.length)
-                    tfvMap.getOrPut(focusId) { mutableStateOf(TextFieldValue(targetDoc.text)) }.value =
-                        TextFieldValue(targetDoc.text, TextRange(safeOff))
-                }
-                requestFocus(focusId, outcome.cursorOffset, outcome.focusToggleTitle)
+                if (targetDoc.editable) applyFocusSelection(targetDoc, outcome.focusToggleTitle, outcome.selection)
             }
         }
         if (outcome.statusHint != null) {
@@ -1162,23 +1203,33 @@ internal class EditorEngineState(private val session: EditorSession) {
     }
 
     private fun restoreSnapshot(snap: EditorSnapshot) {
-        replaceSessionBlocks(snap.blocks)
-        val focusId = snap.focusedBlockId
-        if (focusId != null) {
-            val targetDoc = snap.blocks.firstOrNull { it.id == focusId }
-            if (targetDoc != null && targetDoc.editable) {
-                if (snap.focusToggleTitle && targetDoc.type == "toggle") {
-                    val safeOff = snap.cursorOffset.coerceIn(0, targetDoc.title.length)
-                    titleTfvMap.getOrPut(focusId) { mutableStateOf(TextFieldValue(targetDoc.title)) }.value =
-                        TextFieldValue(targetDoc.title, TextRange(safeOff))
-                } else {
-                    val safeOff = snap.cursorOffset.coerceIn(0, targetDoc.text.length)
-                    tfvMap.getOrPut(focusId) { mutableStateOf(TextFieldValue(targetDoc.text)) }.value =
-                        TextFieldValue(targetDoc.text, TextRange(safeOff))
-                }
-                requestFocus(focusId, snap.cursorOffset, snap.focusToggleTitle)
+        pendingFocus = null
+        val liveBlocks = session.blocks.associateBy { it.id }
+        val restored = snap.blocks.map { block ->
+            val live = liveBlocks[block.id]
+            // A surviving checkbox's schedule is edited independently of the document history.
+            if (block.type == "checkbox" && live?.type == "checkbox" &&
+                (block.dueDate != live.dueDate || block.reminderId != live.reminderId ||
+                    block.occurrenceId != live.occurrenceId)
+            ) {
+                block.withTaskSchedule(live.dueDate, live.reminderId, live.occurrenceId)
+            } else {
+                block
             }
         }
+        applyOutcome(BlockEditOutcome(restored, snap.focusedBlockId, snap.cursorOffset, snap.focusToggleTitle, selection = snap.selection))
+    }
+
+    private fun applyFocusSelection(doc: NoteBlock, toggleTitle: Boolean, selection: TextRange) {
+        val block = blockForInput(doc.id) ?: return
+        val title = doc.type == "toggle" && (toggleTitle || doc.collapsed)
+        val state = if (title) titleTfvStateFor(block) else tfvStateFor(block)
+        val range = clampSelection(selection, state.value.text.length)
+        if (state.value.selection != range || state.value.composition != null) {
+            state.value = state.value.copy(selection = range, composition = null)
+        }
+        if (!title && block.text.selection != range) block.text.edit { this.selection = range }
+        requestFocus(doc.id, title)
     }
 
     fun replaceSessionBlocks(targetBlocks: List<NoteBlock>) {
@@ -1193,8 +1244,12 @@ internal class EditorEngineState(private val session: EditorSession) {
                 EditorBlock(docBlock)
             }
         }
-        session.blocks.clear()
-        session.blocks.addAll(nextEditorBlocks)
+        if (session.blocks.toList() != nextEditorBlocks) {
+            Snapshot.withMutableSnapshot {
+                session.blocks.clear()
+                session.blocks.addAll(nextEditorBlocks)
+            }
+        }
 
         val liveIds = targetBlocks.mapTo(HashSet()) { it.id }
         tfvMap.keys.retainAll(liveIds)
@@ -1311,13 +1366,11 @@ internal fun rememberEditorEngineState(session: EditorSession): EditorEngineStat
 }
 
 internal fun EditorBlock.withUpdatedDocumentBlock(newBlock: NoteBlock): EditorBlock {
-    val preserveCheckboxMeta = type == "checkbox" && newBlock.type == "checkbox"
+    val preserveCheckboxMeta = id == newBlock.id && type == "checkbox" && newBlock.type == "checkbox"
     return EditorBlock(newBlock).apply {
         checked = newBlock.checked
+        text.edit { selection = clampSelection(this@withUpdatedDocumentBlock.text.selection, length) }
         if (preserveCheckboxMeta) {
-            dueDate = newBlock.dueDate ?: this@withUpdatedDocumentBlock.dueDate
-            reminderId = newBlock.reminderId ?: this@withUpdatedDocumentBlock.reminderId
-            occurrenceId = newBlock.occurrenceId ?: this@withUpdatedDocumentBlock.occurrenceId
             reminderLocalTime = this@withUpdatedDocumentBlock.reminderLocalTime
             recurrenceRule = this@withUpdatedDocumentBlock.recurrenceRule
             reminderPolicy = this@withUpdatedDocumentBlock.reminderPolicy
@@ -1416,7 +1469,7 @@ private class BackspaceAtStartInputConnection(
 internal suspend fun autoScrollDuringBlockDrag(
     dragController: BlockDragController,
     listState: LazyListState,
-    blockCount: Int,
+    blockIds: () -> List<String>,
     edgeThresholdPx: Float,
     maxStepPx: Float,
 ) {
@@ -1438,7 +1491,7 @@ internal suspend fun autoScrollDuringBlockDrag(
             if (delta != 0f) {
                 val scrolled = listState.scrollBy(delta)
                 if (scrolled != 0f) {
-                    dragController.recomputeDropIndex(listState, blockCount)
+                    dragController.recomputeDropIndex(listState, blockIds())
                 }
             }
         }

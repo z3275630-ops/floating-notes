@@ -2,9 +2,8 @@ package io.github.z3275630ops.floatingnotes.feature.capture
 
 import android.Manifest
 import android.content.ActivityNotFoundException
-import android.content.Context
 import android.os.Build
-import android.view.inputmethod.InputMethodManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -35,6 +34,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -66,16 +67,18 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.LocalPinnableContainer
+import androidx.compose.ui.layout.PinnableContainer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -172,7 +175,8 @@ internal data class InlineTrigger(
 private data class PendingTriggerReplace(
     val blockId: String,
     val start: Int,
-    val end: Int,
+    val expectedText: String,
+    val toggleTitle: Boolean,
 )
 
 internal fun detectInlineTrigger(
@@ -233,7 +237,6 @@ internal fun ColumnScope.NoteEditor(
     undoHandle: EditorUndoHandle? = null,
 ) {
     val context = LocalContext.current
-    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -246,6 +249,9 @@ internal fun ColumnScope.NoteEditor(
 
     val engine = rememberEditorEngineState(session)
     val listState = rememberLazyListState()
+    val blockIds by remember(session) {
+        derivedStateOf(structuralEqualityPolicy()) { session.blocks.map { it.id } }
+    }
 
     val liveTags by model.organization.tags.collectAsStateWithLifecycle(initialValue = emptyList())
     val availableTags = if (tags.isNotEmpty()) tags else liveTags
@@ -300,6 +306,8 @@ internal fun ColumnScope.NoteEditor(
     var scheduleBlockId by remember { mutableStateOf<String?>(null) }
     var focusedBlockId by remember(session.draft.id) { mutableStateOf<String?>(null) }
     var focusedIsToggleTitle by remember(session.draft.id) { mutableStateOf(false) }
+    var selectedControlBlockId by remember(session.draft.id) { mutableStateOf<String?>(null) }
+    var initialFocusCanceled by remember(session.draft.id) { mutableStateOf(false) }
     var excerptTarget by remember { mutableStateOf<NoteEntity?>(null) }
     var pendingTriggerReplace by remember { mutableStateOf<PendingTriggerReplace?>(null) }
     var showRelatedSheet by remember { mutableStateOf(false) }
@@ -311,10 +319,39 @@ internal fun ColumnScope.NoteEditor(
     var isSelectionMode by remember(session.draft.id) { mutableStateOf(false) }
     var selectedBlockIds by remember(session.draft.id) { mutableStateOf<Set<String>>(emptySet()) }
 
-    fun enterSelectionMode(initialBlockId: String) {
-        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    BackHandler(enabled = openBlockMenuId != null || moreInsertMenuOpen) {
+        if (openBlockMenuId != null) openBlockMenuId = null else moreInsertMenuOpen = false
+    }
+    LaunchedEffect(blockIds, openBlockMenuId) {
+        if (openBlockMenuId != null && openBlockMenuId !in blockIds) openBlockMenuId = null
+    }
+
+    fun clearEditorFocus() {
+        initialFocusCanceled = true
+        engine.pendingFocus = null
         focusManager.clearFocus(force = true)
         keyboard?.hide()
+    }
+
+    fun onEditorFieldFocus(blockId: String, title: Boolean, focused: Boolean) {
+        if (focused) {
+            if (focusedBlockId != blockId || focusedIsToggleTitle != title) {
+                engine.pendingTypingMarks = emptySet()
+                engine.dismissedSlashAt = null
+            }
+            focusedBlockId = blockId
+            focusedIsToggleTitle = title
+            selectedControlBlockId = blockId
+        } else if (focusedBlockId == blockId && focusedIsToggleTitle == title) {
+            focusedBlockId = null
+            focusedIsToggleTitle = false
+            engine.pendingTypingMarks = emptySet()
+        }
+    }
+
+    fun enterSelectionMode(initialBlockId: String) {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        clearEditorFocus()
         formatPanelOpen = false
         moreInsertMenuOpen = false
         openBlockMenuId = null
@@ -329,10 +366,10 @@ internal fun ColumnScope.NoteEditor(
     }
 
     val performUndoAction: () -> Unit = {
-        engine.performUndo(focusedBlockId, focusedIsToggleTitle)
+        if (!session.closing) engine.performUndo(focusedBlockId, focusedIsToggleTitle)
     }
     val performRedoAction: () -> Unit = {
-        engine.performRedo(focusedBlockId, focusedIsToggleTitle)
+        if (!session.closing) engine.performRedo(focusedBlockId, focusedIsToggleTitle)
     }
     SideEffect {
         undoHandle?.bind(
@@ -510,6 +547,7 @@ internal fun ColumnScope.NoteEditor(
         moveToEnd: Boolean = false,
         cursorOffset: Int? = null,
         toggleTitle: Boolean = false,
+        showKeyboard: Boolean = false,
     ) {
         val targetBlock = session.blocks.firstOrNull { it.id == targetId && it.editable } ?: return
         val docBlock = targetBlock.documentBlock()
@@ -530,9 +568,7 @@ internal fun ColumnScope.NoteEditor(
                 selection = TextRange(resolvedCursor.coerceIn(0, length))
             }
         }
-        focusedBlockId = targetBlock.id
-        focusedIsToggleTitle = effectiveTitle
-        engine.requestFocus(targetBlock.id, resolvedCursor, effectiveTitle)
+        engine.requestFocus(targetBlock.id, effectiveTitle, showKeyboard = showKeyboard)
     }
 
     LaunchedEffect(session.focusBlockId) {
@@ -556,51 +592,31 @@ internal fun ColumnScope.NoteEditor(
 
     LaunchedEffect(engine.pendingFocus?.token) {
         val req = engine.pendingFocus ?: return@LaunchedEffect
-        val targetIndex = session.blocks.indexOfFirst { it.id == req.blockId && it.editable }
-        if (targetIndex < 0) {
-            engine.pendingFocus = null
-            return@LaunchedEffect
-        }
-        val attachedSet = if (req.toggleTitle) {
-            engine.attachedTitleFocusRequesters
-        } else {
-            engine.attachedFocusRequesters
-        }
-        val requesterMap = if (req.toggleTitle) titleFocusRequesters else blockFocusRequesters
+        try {
+            if (session.closing || isSelectionMode) return@LaunchedEffect
+            val targetIndex = session.blocks.indexOfFirst { it.id == req.blockId && it.editable }
+            if (targetIndex < 0) return@LaunchedEffect
+            val attached = if (req.toggleTitle) engine.attachedTitleFocusRequesters else engine.attachedFocusRequesters
+            val requesters = if (req.toggleTitle) titleFocusRequesters else blockFocusRequesters
 
-        if (req.blockId !in attachedSet) {
-            runCatching { listState.scrollToItem(targetIndex) }
-        }
-        var waitFrames = 0
-        while (req.blockId !in attachedSet && waitFrames < 14) {
+            // Let branch changes detach the previous field before checking its actual focus.
             withFrameNanos { }
-            waitFrames++
-        }
-        if (req.blockId !in attachedSet) {
-            runCatching { listState.animateScrollToItem(targetIndex) }
-            var retryFrames = 0
-            while (req.blockId !in attachedSet && retryFrames < 8) {
+            if (req.blockId in attached && focusedBlockId == req.blockId && focusedIsToggleTitle == req.toggleTitle) {
+                if (req.showKeyboard) keyboard?.show()
+                return@LaunchedEffect
+            }
+            if (req.blockId !in attached) listState.scrollToItem(targetIndex)
+            repeat(14) {
+                if (engine.pendingFocus?.token != req.token || session.closing) return@LaunchedEffect
+                if (req.blockId in attached && requesters[req.blockId]?.requestFocus() == true) {
+                    keyboard?.show()
+                    focusBlockRequesters[req.blockId]?.bringIntoView()
+                    return@LaunchedEffect
+                }
                 withFrameNanos { }
-                retryFrames++
             }
-        }
-        if (req.blockId in attachedSet) {
-            focusBlockRequesters[req.blockId]?.bringIntoView()
-            val requested = runCatching { requesterMap[req.blockId]?.requestFocus() }.isSuccess
-            if (!requested) {
-                withFrameNanos { }
-                runCatching { requesterMap[req.blockId]?.requestFocus() }
-            }
-            focusedBlockId = req.blockId
-            focusedIsToggleTitle = req.toggleTitle
-            keyboard?.show()
-            view.post {
-                val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
-            }
-        }
-        if (engine.pendingFocus?.token == req.token) {
-            engine.pendingFocus = null
+        } finally {
+            if (engine.pendingFocus?.token == req.token) engine.pendingFocus = null
         }
     }
 
@@ -609,7 +625,9 @@ internal fun ColumnScope.NoteEditor(
             val firstEditable = session.blocks.firstOrNull { it.editable } ?: return@LaunchedEffect
             withFrameNanos { }
             delay(90)
-            focusEditableBlock(firstEditable.id, moveToEnd = false)
+            if (!initialFocusCanceled && focusedBlockId == null && selectedControlBlockId == null && !isSelectionMode && !session.closing) {
+                focusEditableBlock(firstEditable.id, moveToEnd = false)
+            }
         }
     }
 
@@ -620,7 +638,7 @@ internal fun ColumnScope.NoteEditor(
             autoScrollDuringBlockDrag(
                 dragController = engine.dragController,
                 listState = listState,
-                blockCount = session.blocks.size,
+                blockIds = { blockIds },
                 edgeThresholdPx = edgeThresholdPx,
                 maxStepPx = maxScrollStepPx,
             )
@@ -644,38 +662,49 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
-    fun buildDragHandlers(
-        block: EditorBlock,
-        index: Int,
-        itemCoords: LayoutCoordinates?,
-        itemHeightPx: Int,
-        snapshotFocusedId: String?,
-        snapshotToggleTitle: Boolean,
-    ): BlockDragHandlers = BlockDragHandlers(
-        onStartDrag = { pointerOffset ->
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            focusManager.clearFocus(force = true)
-            keyboard?.hide()
-            val rootY = itemCoords?.takeIf { it.isAttached }?.localToRoot(pointerOffset)?.y ?: Float.NaN
-            engine.dragController.start(block.id, index, itemHeightPx, rootY)
-        },
-        onDragDelta = { deltaY, pointerPos ->
-            val rootY = itemCoords?.takeIf { it.isAttached }?.localToRoot(pointerPos)?.y ?: Float.NaN
-            engine.dragController.updateDrag(deltaY, rootY, listState, session.blocks.size)
-        },
-        onDragFinish = {
-            val swap = engine.dragController.finish()
-            if (swap != null) {
-                val before = engine.snapshot(snapshotFocusedId, snapshotToggleTitle)
-                val moved = EditorBlockOps.moveBlock(
-                    session.blocks.map { it.documentBlock() },
-                    swap.first,
-                    swap.second,
-                )
-                engine.applyOutcome(BlockEditOutcome(moved, null, 0), recordUndoBefore = before)
+    var dragBefore by remember(engine) { mutableStateOf<EditorSnapshot?>(null) }
+
+    fun buildDragHandlers(blockId: String, sourceTopInRoot: () -> Float?): BlockDragHandlers = BlockDragHandlers(
+        blockId = blockId,
+        enabled = !session.closing,
+        onStartDrag = { rootY ->
+            val index = blockIds.indexOf(blockId)
+            val sourceTop = sourceTopInRoot()
+            if (sourceTop != null && index >= 0 && !session.closing && !engine.dragController.isDragging) {
+                dragBefore = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                engine.dragController.start(blockId, index, rootY, sourceTop)
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                clearEditorFocus()
             }
         },
-        onDragCancel = { engine.dragController.cancel() },
+        onDragDelta = { rootY ->
+            if (engine.dragController.draggingBlockId == blockId) {
+                engine.dragController.updatePointer(rootY)
+                engine.dragController.recomputeDropIndex(listState, blockIds)
+            }
+        },
+        onDragFinish = {
+            if (engine.dragController.draggingBlockId == blockId) {
+                engine.dragController.recomputeDropIndex(listState, blockIds)
+                val move = engine.dragController.finish()
+                val before = dragBefore
+                dragBefore = null
+                if (move != null) {
+                    val keepListStart = !listState.canScrollBackward && (move.first == 0 || move.second == 0)
+                    val current = session.blocks.map { it.documentBlock() }
+                    val moved = EditorBlockOps.moveBlock(current, move.first, move.second)
+                    engine.applyOutcome(BlockEditOutcome(moved, null, 0), recordUndoBefore = before?.copy(blocks = current))
+                    // Keep the first position visible when its key changes at the top of the note.
+                    if (keepListStart) listState.requestScrollToItem(0)
+                }
+            }
+        },
+        onDragCancel = {
+            if (engine.dragController.draggingBlockId == blockId) {
+                engine.dragController.cancel()
+                dragBefore = null
+            }
+        },
     )
 
     fun handleBackspaceAtStart(blockId: String, isToggleTitle: Boolean): Boolean {
@@ -695,8 +724,8 @@ internal fun ColumnScope.NoteEditor(
         val tfvState = if (isToggleTitle) engine.titleTfvStateFor(block) else engine.tfvStateFor(block)
         val tfv = tfvState.value
         if (tfv.composition != null) return false
-        val start = tfv.selection.start.coerceIn(0, tfv.text.length)
-        val end = tfv.selection.end.coerceIn(start, tfv.text.length)
+        val start = tfv.selection.min.coerceIn(0, tfv.text.length)
+        val end = tfv.selection.max.coerceIn(start, tfv.text.length)
         val beforeCursor = tfv.text.substring(0, start)
         val afterCursor = tfv.text.substring(end)
         val beforeSnapshot = engine.snapshot(blockId, isToggleTitle)
@@ -722,6 +751,7 @@ internal fun ColumnScope.NoteEditor(
     val swipeTriggerVisualPx = (swipeTriggerPx * 0.55f).coerceAtLeast(1f)
     val latestSelectionMode by rememberUpdatedState(isSelectionMode)
     val latestSessionClosing by rememberUpdatedState(session.closing)
+    val latestBlockMenuOpen by rememberUpdatedState(openBlockMenuId != null)
     val latestEnterSelectionMode by rememberUpdatedState<(String) -> Unit>({ blockId -> enterSelectionMode(blockId) })
     val selectedCardBg = if (dark) Color(0xFF3B3118) else Color(0xFFFFF2C6)
     val selectedCardBorder = if (dark) Color(0xFFE5B84B).copy(alpha = 0.45f) else Color(0xFFE2B94B).copy(alpha = 0.7f)
@@ -777,36 +807,29 @@ internal fun ColumnScope.NoteEditor(
                     label = "block-selection-bg",
                 )
 
-                var itemCoords by remember(block.id) { mutableStateOf<LayoutCoordinates?>(null) }
-                var itemHeightPx by remember(block.id) { mutableIntStateOf(0) }
-
-                val topSpacing = when {
-                    index == 0 -> 0.dp
-                    doc.type == "heading" -> 14.dp
-                    doc.type in LIST_BLOCK_TYPES && session.blocks.getOrNull(index - 1)?.type in LIST_BLOCK_TYPES -> 1.dp
-                    else -> 2.dp
-                }
-                val bottomSpacing = when {
-                    doc.type == "heading" -> 4.dp
-                    doc.type in LIST_BLOCK_TYPES -> 1.dp
-                    else -> 1.dp
+                val previousType = session.blocks.getOrNull(index - 1)?.type
+                val blockSpacing = when {
+                    previousType == null -> 0.dp
+                    doc.type == "heading" -> 7.dp
+                    previousType == "heading" -> 6.dp
+                    doc.type in LIST_BLOCK_TYPES && previousType in LIST_BLOCK_TYPES -> 2.dp
+                    else -> 3.dp
                 }
 
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .zIndex(if (isDraggingThis) 10f else 0f)
-                        .onGloballyPositioned { coords -> itemCoords = coords }
-                        .onSizeChanged { itemHeightPx = it.height }
                         .pointerInput(block.id) {
                             val touchSlop = viewConfiguration.touchSlop
-                            val lockSlop = touchSlop * 0.55f
+                            val lockSlop = touchSlop
+                            val longPressTimeout = viewConfiguration.longPressTimeoutMillis
                             awaitEachGesture {
                                 val down = awaitFirstDown(
                                     requireUnconsumed = false,
                                     pass = PointerEventPass.Initial,
                                 )
-                                if (latestSelectionMode || latestSessionClosing || engine.dragController.isDragging) {
+                                if (latestSelectionMode || latestSessionClosing || latestBlockMenuOpen || engine.dragController.isDragging) {
                                     return@awaitEachGesture
                                 }
                                 val startX = down.position.x
@@ -818,6 +841,9 @@ internal fun ColumnScope.NoteEditor(
                                     while (true) {
                                         val event = awaitPointerEvent(pass = PointerEventPass.Initial)
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (event.changes.any { it.id != down.id && it.pressed } ||
+                                            engine.dragController.isDragging
+                                        ) break
                                         if (!change.pressed) {
                                             if (horizontalLocked) {
                                                 change.consume()
@@ -828,16 +854,21 @@ internal fun ColumnScope.NoteEditor(
                                             }
                                             break
                                         }
-                                        if (engine.dragController.isDragging) break
                                         val dx = change.position.x - startX
                                         val dy = change.position.y - startY
                                         lastDx = dx
                                         if (!horizontalLocked) {
-                                            if (change.isConsumed) break
-                                            if (abs(dy) > touchSlop && abs(dy) > abs(dx) * 1.15f) break
+                                            if (change.isConsumed || change.uptimeMillis - down.uptimeMillis >= longPressTimeout) break
+                                            if (abs(dy) > touchSlop && dx <= abs(dy) * 1.15f) break
                                             if (dx < -touchSlop) break
                                             if (dx > lockSlop && dx > abs(dy) * 1.15f) {
                                                 horizontalLocked = true
+                                            } else {
+                                                val afterChildren = awaitPointerEvent(PointerEventPass.Final)
+                                                if (afterChildren.changes.any {
+                                                        it.id == down.id && it.isConsumed && it.position != it.previousPosition
+                                                    }
+                                                ) break
                                             }
                                         }
                                         if (horizontalLocked) {
@@ -867,28 +898,33 @@ internal fun ColumnScope.NoteEditor(
                         }
                         .padding(horizontal = 20.dp)
                         .bringIntoViewRequester(bringIntoViewReq)
-                        .padding(top = topSpacing, bottom = bottomSpacing),
+                        .padding(top = blockSpacing),
                 ) {
                     if (showDropBefore) {
-                        DragInsertionIndicator(color = goldDropIndicator)
+                        Box(Modifier.height(0.dp).wrapContentHeight(unbounded = true)) {
+                            DragInsertionIndicator(color = goldDropIndicator)
+                        }
                     }
 
-                    val isFocusedRow = focusedBlockId == block.id
+                    val isFocusedRow = selectedControlBlockId == block.id || isDraggingThis
                     val indentDp = (doc.indent.coerceIn(0, NoteBlock.MAX_INDENT) * 20).dp
-                    val isInteractiveDoc = doc.type == "callout" || doc.type == "toggle" || doc.type == "divider" || doc.editable
                     val effectiveRowClosing = session.closing || isSelectionMode
-                    val dragHandlers = remember(block.id, index, itemHeightPx, itemCoords, focusedBlockId, focusedIsToggleTitle) {
-                        buildDragHandlers(
-                            block = block,
-                            index = index,
-                            itemCoords = itemCoords,
-                            itemHeightPx = itemHeightPx,
-                            snapshotFocusedId = if (isInteractiveDoc) block.id else focusedBlockId,
-                            snapshotToggleTitle = if (doc.type == "toggle") focusedIsToggleTitle else (!isInteractiveDoc && focusedIsToggleTitle),
-                        )
+                    var sourceCoordinates by remember(block.id) { mutableStateOf<LayoutCoordinates?>(null) }
+                    val dragHandlers = buildDragHandlers(block.id) {
+                        sourceCoordinates?.takeIf { it.isAttached }?.localToRoot(Offset.Zero)?.y?.takeIf { it.isFinite() }
                     }
 
-                    Box(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coordinates ->
+                                // Measure outside the translated layer, including when LazyColumn places a pinned row offscreen.
+                                sourceCoordinates = coordinates
+                                if (engine.dragController.draggingBlockId == block.id) {
+                                    engine.dragController.updateSourceTop(block.id, coordinates.localToRoot(Offset.Zero).y)
+                                }
+                            },
+                    ) {
                         if (swipeOffsetX.value > 1f) {
                             val progress = (swipeOffsetX.value / swipeTriggerVisualPx).coerceIn(0f, 1f)
                             val reached = progress >= 1f
@@ -923,8 +959,8 @@ internal fun ColumnScope.NoteEditor(
                                 .fillMaxWidth()
                                 .graphicsLayer {
                                     translationX = swipeOffsetX.value
+                                    translationY = if (isDraggingThis) engine.dragController.dragOffsetY else 0f
                                     if (isDraggingThis) {
-                                        translationY = engine.dragController.dragOffsetY
                                         alpha = 0.88f
                                         scaleX = 1.02f
                                         scaleY = 1.02f
@@ -955,10 +991,7 @@ internal fun ColumnScope.NoteEditor(
                                 onToggleSelect = {
                                     selectedBlockIds = EditorBlockOps.toggleBlockSelection(selectedBlockIds, block.id)
                                 },
-                                onStartDrag = dragHandlers.onStartDrag,
-                                onDragDelta = dragHandlers.onDragDelta,
-                                onDragFinish = dragHandlers.onDragFinish,
-                                onDragCancel = dragHandlers.onDragCancel,
+                                dragHandlers = dragHandlers,
                             ) {
                         when {
                             doc.type == "callout" -> {
@@ -966,7 +999,7 @@ internal fun ColumnScope.NoteEditor(
                                     openBlockMenuId = null
                                     val tones = NoteBlock.CALLOUT_TONES
                                     val nextTone = tones[(tones.indexOf(doc.tone) + 1) % tones.size]
-                                    val before = engine.snapshot(block.id, false)
+                                    val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                                     engine.undoStack.recordStructuralChange(before)
                                     engine.updateSingleBlock(index, doc.withCalloutTone(nextTone))
                                     engine.refreshUndoFlags()
@@ -986,12 +1019,7 @@ internal fun ColumnScope.NoteEditor(
                                     enableSlashShortcuts = enableSlashShortcuts,
                                     openBlockMenuId = openBlockMenuId,
                                     onOpenBlockMenu = { openBlockMenuId = it },
-                                    onFocusChange = { focused ->
-                                        if (focused) {
-                                            focusedBlockId = block.id
-                                            focusedIsToggleTitle = false
-                                        }
-                                    },
+                                    onFocusChange = { onEditorFieldFocus(block.id, false, it) },
                                     onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
                                     onBackspaceAtStart = { handleBackspaceAtStart(block.id, isToggleTitle = false) },
                                     onEnterKey = { handleEnterKey(block.id, isToggleTitle = false) },
@@ -1004,16 +1032,14 @@ internal fun ColumnScope.NoteEditor(
                                             session = session,
                                             engine = engine,
                                             clipboard = clipboard,
-                                            snapshotToggleTitle = false,
+                                            focusedBlockId = focusedBlockId,
+                                            focusedIsToggleTitle = focusedIsToggleTitle,
                                             onDismiss = { openBlockMenuId = null },
                                             onEnterSelectionMode = { enterSelectionMode(block.id) },
                                             onCycleCalloutTone = cycleTone,
                                         )
                                     },
-                                    onStartDrag = dragHandlers.onStartDrag,
-                                    onDragDelta = dragHandlers.onDragDelta,
-                                    onDragFinish = dragHandlers.onDragFinish,
-                                    onDragCancel = dragHandlers.onDragCancel,
+                                    dragHandlers = dragHandlers,
                                 )
                             }
 
@@ -1034,7 +1060,7 @@ internal fun ColumnScope.NoteEditor(
                                     openBlockMenuId = openBlockMenuId,
                                     onOpenBlockMenu = { openBlockMenuId = it },
                                     onToggleCollapse = {
-                                        val before = engine.snapshot(block.id, focusedIsToggleTitle)
+                                        val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                                         engine.undoStack.recordStructuralChange(before)
                                         val nextCollapsed = !doc.collapsed
                                         engine.updateSingleBlock(index, doc.withToggleState(collapsed = nextCollapsed))
@@ -1043,18 +1069,8 @@ internal fun ColumnScope.NoteEditor(
                                             focusEditableBlock(block.id, moveToEnd = true, toggleTitle = true)
                                         }
                                     },
-                                    onFocusTitleChange = { focused ->
-                                        if (focused) {
-                                            focusedBlockId = block.id
-                                            focusedIsToggleTitle = true
-                                        }
-                                    },
-                                    onFocusBodyChange = { focused ->
-                                        if (focused) {
-                                            focusedBlockId = block.id
-                                            focusedIsToggleTitle = false
-                                        }
-                                    },
+                                    onFocusTitleChange = { onEditorFieldFocus(block.id, true, it) },
+                                    onFocusBodyChange = { onEditorFieldFocus(block.id, false, it) },
                                     onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
                                     onBackspaceAtStart = { isTitle -> handleBackspaceAtStart(block.id, isToggleTitle = isTitle) },
                                     onEnterKey = { isTitle -> handleEnterKey(block.id, isToggleTitle = isTitle) },
@@ -1066,15 +1082,13 @@ internal fun ColumnScope.NoteEditor(
                                             session = session,
                                             engine = engine,
                                             clipboard = clipboard,
-                                            snapshotToggleTitle = focusedIsToggleTitle,
+                                            focusedBlockId = focusedBlockId,
+                                            focusedIsToggleTitle = focusedIsToggleTitle,
                                             onDismiss = { openBlockMenuId = null },
                                             onEnterSelectionMode = { enterSelectionMode(block.id) },
                                         )
                                     },
-                                    onStartDrag = dragHandlers.onStartDrag,
-                                    onDragDelta = dragHandlers.onDragDelta,
-                                    onDragFinish = dragHandlers.onDragFinish,
-                                    onDragCancel = dragHandlers.onDragCancel,
+                                    dragHandlers = dragHandlers,
                                 )
                             }
 
@@ -1083,11 +1097,10 @@ internal fun ColumnScope.NoteEditor(
                                     block = doc,
                                     index = index,
                                     dark = dark,
-                                    selected = focusedBlockId == block.id && !isSelectionMode,
+                                    selected = isFocusedRow && !isSelectionMode,
                                     openBlockMenuId = openBlockMenuId,
                                     onSelect = {
-                                        focusedBlockId = block.id
-                                        focusedIsToggleTitle = false
+                                        selectedControlBlockId = block.id
                                         openBlockMenuId = block.id
                                     },
                                     onOpenBlockMenu = { openBlockMenuId = it },
@@ -1099,23 +1112,24 @@ internal fun ColumnScope.NoteEditor(
                                             session = session,
                                             engine = engine,
                                             clipboard = clipboard,
-                                            snapshotToggleTitle = false,
-                                            onDismiss = { openBlockMenuId = null },
+                                            focusedBlockId = focusedBlockId,
+                                            focusedIsToggleTitle = focusedIsToggleTitle,
+                                            onDismiss = {
+                                                openBlockMenuId = null
+                                                selectedControlBlockId = focusedBlockId ?: selectedControlBlockId
+                                            },
                                             onEnterSelectionMode = { enterSelectionMode(block.id) },
                                             onToggleDividerStyle = {
                                                 openBlockMenuId = null
                                                 val nextStyle = if (doc.dividerStyle == "dashed") "solid" else "dashed"
-                                                val before = engine.snapshot(block.id, false)
+                                                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                                                 engine.undoStack.recordStructuralChange(before)
                                                 engine.updateSingleBlock(index, doc.withDividerStyle(nextStyle))
                                                 engine.refreshUndoFlags()
                                             },
                                         )
                                     },
-                                    onStartDrag = dragHandlers.onStartDrag,
-                                    onDragDelta = dragHandlers.onDragDelta,
-                                    onDragFinish = dragHandlers.onDragFinish,
-                                    onDragCancel = dragHandlers.onDragCancel,
+                                    dragHandlers = dragHandlers,
                                 )
                             }
 
@@ -1140,12 +1154,7 @@ internal fun ColumnScope.NoteEditor(
                                         openBlockMenuId = openBlockMenuId,
                                         onOpenBlockMenu = { openBlockMenuId = it },
                                         onToggleCheckbox = { checked -> model.toggleEditorTask(session, block, checked) },
-                                        onFocusChange = { focused ->
-                                            if (focused) {
-                                                focusedBlockId = block.id
-                                                focusedIsToggleTitle = false
-                                            }
-                                        },
+                                        onFocusChange = { onEditorFieldFocus(block.id, false, it) },
                                         onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
                                         onBackspaceAtStart = { handleBackspaceAtStart(block.id, isToggleTitle = false) },
                                         onEnterKey = { handleEnterKey(block.id, isToggleTitle = false) },
@@ -1157,15 +1166,13 @@ internal fun ColumnScope.NoteEditor(
                                                 session = session,
                                                 engine = engine,
                                                 clipboard = clipboard,
-                                                snapshotToggleTitle = false,
+                                                focusedBlockId = focusedBlockId,
+                                                focusedIsToggleTitle = focusedIsToggleTitle,
                                                 onDismiss = { openBlockMenuId = null },
                                                 onEnterSelectionMode = { enterSelectionMode(block.id) },
                                             )
                                         },
-                                        onStartDrag = dragHandlers.onStartDrag,
-                                        onDragDelta = dragHandlers.onDragDelta,
-                                        onDragFinish = dragHandlers.onDragFinish,
-                                        onDragCancel = dragHandlers.onDragCancel,
+                                        dragHandlers = dragHandlers,
                                     )
 
                                     if (block.type == "checkbox") {
@@ -1196,8 +1203,7 @@ internal fun ColumnScope.NoteEditor(
                                                 dark = dark,
                                                 startIndentDp = indentDp + 44.dp,
                                                 onClick = {
-                                                    focusManager.clearFocus(force = true)
-                                                    keyboard?.hide()
+                                                    clearEditorFocus()
                                                     capability = ReminderScheduler.capability(context)
                                                     scheduleBlockId = block.id
                                                 },
@@ -1261,10 +1267,7 @@ internal fun ColumnScope.NoteEditor(
                                     if (!isSelectionMode) {
                                         BlockDragOnlyHandle(
                                             dark = dark,
-                                            onStartDrag = dragHandlers.onStartDrag,
-                                            onDragDelta = dragHandlers.onDragDelta,
-                                            onDragFinish = dragHandlers.onDragFinish,
-                                            onDragCancel = dragHandlers.onDragCancel,
+                                            dragHandlers = dragHandlers,
                                         )
                                     }
                                 }
@@ -1301,10 +1304,7 @@ internal fun ColumnScope.NoteEditor(
                                     if (!isSelectionMode) {
                                         BlockDragOnlyHandle(
                                             dark = dark,
-                                            onStartDrag = dragHandlers.onStartDrag,
-                                            onDragDelta = dragHandlers.onDragDelta,
-                                            onDragFinish = dragHandlers.onDragFinish,
-                                            onDragCancel = dragHandlers.onDragCancel,
+                                            dragHandlers = dragHandlers,
                                         )
                                     }
                                 }
@@ -1324,7 +1324,9 @@ internal fun ColumnScope.NoteEditor(
                     }
 
                     if (showDropAfter) {
-                        DragInsertionIndicator(color = goldDropIndicator)
+                        Box(Modifier.height(0.dp).wrapContentHeight(unbounded = true)) {
+                            DragInsertionIndicator(color = goldDropIndicator)
+                        }
                     }
                 }
             }
@@ -1335,6 +1337,7 @@ internal fun ColumnScope.NoteEditor(
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
                         .heightIn(min = 240.dp)
+                        .focusProperties { canFocus = false }
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -1349,7 +1352,11 @@ internal fun ColumnScope.NoteEditor(
                                         val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                                         engine.applyOutcome(outcome, recordUndoBefore = before)
                                     } else if (outcome.focusBlockId != null) {
-                                        focusEditableBlock(outcome.focusBlockId, cursorOffset = outcome.cursorOffset)
+                                        focusEditableBlock(
+                                            outcome.focusBlockId,
+                                            cursorOffset = outcome.cursorOffset,
+                                            showKeyboard = true,
+                                        )
                                     }
                                 }
                             },
@@ -1401,10 +1408,13 @@ internal fun ColumnScope.NoteEditor(
                         .heightIn(max = 268.dp),
                     onSelectCommand = { cmd ->
                         val idx = session.blocks.indexOfFirst { it.id == activeBlockForSlash.id }
-                        if (idx >= 0) {
+                        val liveBlock = session.blocks.getOrNull(idx)
+                        val current = liveBlock?.let { engine.tfvStateFor(it).value }
+                        val liveTrigger = current?.let { EditorBlockOps.detectSlashCommand(it.text, it.selection, it.composition) }
+                        if (!session.closing && focusedBlockId == activeBlockForSlash.id && liveTrigger == slashTrigger) {
                             val before = engine.snapshot(activeBlockForSlash.id, false)
                             val outcome = EditorBlockOps.applySlashCommand(
-                                blocks = session.blocks.map { it.documentBlock() },
+                                blocks = before.blocks,
                                 blockIndex = idx,
                                 trigger = slashTrigger,
                                 command = cmd,
@@ -1414,9 +1424,12 @@ internal fun ColumnScope.NoteEditor(
                         }
                     },
                 )
+                BackHandler(enabled = openBlockMenuId == null && !moreInsertMenuOpen) {
+                    engine.dismissedSlashAt = activeBlockForSlash.id to slashTrigger.triggerIndex
+                }
             }
         } else if (slashTrigger == null && engine.dismissedSlashAt != null) {
-            engine.dismissedSlashAt = null
+            SideEffect { engine.dismissedSlashAt = null }
         }
     }
 
@@ -1438,7 +1451,14 @@ internal fun ColumnScope.NoteEditor(
         )
     } else null
 
-    if (activeBlock != null && activeTfv != null && inlineTrigger != null) {
+    if (activeBlock != null && inlineTrigger != null) {
+        val isTitle = focusedIsToggleTitle
+        fun currentTrigger(): InlineTrigger? {
+            if (focusedBlockId != activeBlock.id || focusedIsToggleTitle != isTitle) return null
+            val block = engine.blockForInput(activeBlock.id) ?: return null
+            val value = if (isTitle) engine.titleTfvStateFor(block).value else engine.tfvStateFor(block).value
+            return detectInlineTrigger(value.text, value.selection, value.composition)?.takeIf { it == inlineTrigger }
+        }
         InlineTriggerSuggestionBar(
             trigger = inlineTrigger,
             availableTags = availableTags,
@@ -1446,15 +1466,15 @@ internal fun ColumnScope.NoteEditor(
             candidateNotes = notes.filter { it.id != session.draft.noteId },
             dark = dark,
             onPickExistingTag = { tag ->
-                val latest = detectInlineTrigger(activeTfv.text, activeTfv.selection, activeTfv.composition)
-                if (latest != null && activeTfv.composition == null) {
+                val latest = currentTrigger()
+                if (latest != null) {
                     removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
                     model.attachTagToSession(session, tag.id)
                 }
             },
             onCreateTag = { tagName ->
-                val latest = detectInlineTrigger(activeTfv.text, activeTfv.selection, activeTfv.composition)
-                if (latest != null && activeTfv.composition == null) {
+                val latest = currentTrigger()
+                if (latest != null) {
                     removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
                     val existing = availableTags.firstOrNull {
                         it.parentId.isEmpty() && it.name.equals(tagName, ignoreCase = true)
@@ -1463,8 +1483,8 @@ internal fun ColumnScope.NoteEditor(
                 }
             },
             onPickNoteFull = { targetNote ->
-                val latest = detectInlineTrigger(activeTfv.text, activeTfv.selection, activeTfv.composition)
-                if (latest != null && activeTfv.composition == null) {
+                val latest = currentTrigger()
+                if (latest != null) {
                     val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                     engine.undoStack.recordStructuralChange(before)
                     removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
@@ -1473,12 +1493,12 @@ internal fun ColumnScope.NoteEditor(
                 }
             },
             onPickNoteExcerpt = { targetNote ->
-                val latest = detectInlineTrigger(activeTfv.text, activeTfv.selection, activeTfv.composition)
-                pendingTriggerReplace = latest?.let {
-                    PendingTriggerReplace(activeBlock.id, it.triggerIndex, it.cursorIndex)
+                val latest = currentTrigger()
+                if (latest != null) {
+                    pendingTriggerReplace = PendingTriggerReplace(activeBlock.id, latest.triggerIndex, "@" + latest.query, isTitle)
+                    excerptTarget = targetNote
+                    picker = "引用笔记"
                 }
-                excerptTarget = targetNote
-                picker = "引用笔记"
             },
         )
     }
@@ -1494,7 +1514,10 @@ internal fun ColumnScope.NoteEditor(
                 color = if (session.importFailed) scheme.error else scheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium,
             )
-            if (session.importing) TextButton(onClick = { model.cancelImport(session) }) { Text("取消导入") }
+            if (session.importing) TextButton(
+                onClick = { model.cancelImport(session) },
+                modifier = Modifier.focusProperties { canFocus = false },
+            ) { Text("取消导入") }
         }
     }
 
@@ -1514,6 +1537,7 @@ internal fun ColumnScope.NoteEditor(
             if (engine.transientHint == null && "失败" in session.status && !session.writing) {
                 TextButton(
                     onClick = onSave,
+                    modifier = Modifier.focusProperties { canFocus = false },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                 ) {
                     Text("重试", style = MaterialTheme.typography.labelMedium)
@@ -1580,6 +1604,7 @@ internal fun ColumnScope.NoteEditor(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .background(aiAccent.bg)
+                    .focusProperties { canFocus = false }
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -1664,16 +1689,18 @@ internal fun ColumnScope.NoteEditor(
         engine.activeMarksFor(activeBlock, activeSelection)
     } else emptySet()
     val hasReferenceOption = onOpenRelated != null && notes.any { it.id != session.draft.noteId && it.id !in trashedNoteIds }
-    val formatTargetIdx = activeBlockIndex.takeIf { it >= 0 } ?: session.blocks.indexOfLast { it.editable }
+    val formatTargetIdx = activeBlockIndex.takeIf { it >= 0 }
+        ?: session.blocks.indexOfFirst { it.id == selectedControlBlockId && it.editable }.takeIf { it >= 0 }
+        ?: session.blocks.indexOfLast { it.editable }
     val formatTargetDoc = formatTargetIdx.takeIf { it in session.blocks.indices }?.let { session.blocks[it].documentBlock() }
 
     fun insertOrConvertDivider() {
         val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
         val curBlocks = session.blocks.map { it.documentBlock() }
-        val idx = activeBlockIndex.takeIf { it >= 0 } ?: curBlocks.lastIndex
+        val idx = formatTargetIdx.takeIf { it in curBlocks.indices } ?: curBlocks.lastIndex
         val target = curBlocks.getOrNull(idx)
         if (target != null && target.editable && target.searchableText.isEmpty()) {
-            val outcome = EditorBlockOps.convertBlockType(curBlocks, idx, "divider")
+            val outcome = EditorBlockOps.convertFromControls(before, idx, "divider")
             engine.applyOutcome(outcome, recordUndoBefore = before)
         } else {
             engine.undoStack.recordStructuralChange(before)
@@ -1698,12 +1725,7 @@ internal fun ColumnScope.NoteEditor(
             onConvertType = { targetType, level ->
                 if (formatTargetIdx in session.blocks.indices) {
                     val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
-                    val outcome = EditorBlockOps.convertBlockType(
-                        blocks = session.blocks.map { it.documentBlock() },
-                        blockIndex = formatTargetIdx,
-                        targetType = targetType,
-                        headingLevel = level,
-                    )
+                    val outcome = EditorBlockOps.convertFromControls(before, formatTargetIdx, targetType, level)
                     engine.applyOutcome(outcome, recordUndoBefore = before)
                 }
             },
@@ -1717,11 +1739,11 @@ internal fun ColumnScope.NoteEditor(
                 if (formatTargetIdx in session.blocks.indices) {
                     val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                     val outcome = EditorBlockOps.adjustIndent(
-                        session.blocks.map { it.documentBlock() },
+                        before.blocks,
                         formatTargetIdx,
                         delta = delta,
                     )
-                    engine.applyOutcome(outcome, recordUndoBefore = before)
+                    engine.applyOutcome(BlockEditOutcome(outcome.blocks, null, 0, statusHint = outcome.statusHint), recordUndoBefore = before)
                 }
             },
         )
@@ -1786,11 +1808,11 @@ internal fun ColumnScope.NoteEditor(
                     onClick = {
                         val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                         val curBlocks = session.blocks.map { it.documentBlock() }
-                        val targetIdx = activeBlockIndex.takeIf { it >= 0 } ?: curBlocks.lastIndex
+                        val targetIdx = formatTargetIdx.takeIf { it in curBlocks.indices } ?: curBlocks.lastIndex
                         val targetBlock = curBlocks.getOrNull(targetIdx)
                         engine.undoStack.recordStructuralChange(before)
                         if (targetIdx > 0 && targetBlock?.type == "paragraph" && targetBlock.text.isEmpty()) {
-                            val outcome = EditorBlockOps.convertBlockType(curBlocks, targetIdx, "checkbox")
+                            val outcome = EditorBlockOps.convertFromControls(before, targetIdx, "checkbox")
                             engine.applyOutcome(outcome)
                         } else {
                             val insertAt = (targetIdx + 1).coerceIn(0, curBlocks.size)
@@ -1848,6 +1870,7 @@ internal fun ColumnScope.NoteEditor(
                         expanded = moreInsertMenuOpen,
                         onDismiss = { moreInsertMenuOpen = false },
                         tag = "editor-more-insert-menu",
+                        focusable = false,
                     ) {
                         ComposablesMenuItem(
                             label = if (session.importFailed) "重选图片/文件附件" else "插入图片/视频/附件",
@@ -1877,7 +1900,7 @@ internal fun ColumnScope.NoteEditor(
                             icon = EditorIcons.SelectAll,
                         ) {
                             moreInsertMenuOpen = false
-                            val seed = focusedBlockId ?: session.blocks.firstOrNull()?.id
+                            val seed = focusedBlockId ?: selectedControlBlockId ?: session.blocks.firstOrNull()?.id
                             if (seed != null) enterSelectionMode(seed)
                         }
                     }
@@ -1899,8 +1922,7 @@ internal fun ColumnScope.NoteEditor(
                 iconSize = 22.dp,
                 onClick = {
                     formatPanelOpen = false
-                    focusManager.clearFocus(force = true)
-                    keyboard?.hide()
+                    clearEditorFocus()
                 },
             )
         }
@@ -2194,10 +2216,7 @@ private fun EditableStandardBlockRow(
     onBackspaceAtStart: () -> Boolean,
     onEnterKey: () -> Boolean,
     blockMenuContent: @Composable () -> Unit,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
+    dragHandlers: BlockDragHandlers,
 ) {
     val scheme = MaterialTheme.colorScheme
     val tfvState = engine.tfvStateFor(block)
@@ -2217,12 +2236,15 @@ private fun EditableStandardBlockRow(
     val rowContent: @Composable RowScope.() -> Unit = {
         when (doc.type) {
             "checkbox" -> {
+                val inputModeManager = LocalInputModeManager.current
                 MintCheckbox(
                     checked = block.checked,
                     enabled = !sessionWriting && !sessionClosing,
                     onCheckedChange = onToggleCheckbox,
                     dark = dark,
-                    modifier = Modifier.testTag("checkbox-$index"),
+                    modifier = Modifier
+                        .focusProperties { canFocus = inputModeManager.inputMode != InputMode.Touch }
+                        .testTag("checkbox-$index"),
                 )
             }
             "bullet" -> {
@@ -2265,7 +2287,6 @@ private fun EditableStandardBlockRow(
 
         BlockBasicTextField(
             block = block,
-            doc = doc,
             tfvState = tfvState,
             textStyle = baseStyle,
             placeholder = placeholder,
@@ -2295,23 +2316,22 @@ private fun EditableStandardBlockRow(
                 menuOpen = openBlockMenuId == block.id,
                 onOpenMenu = { onOpenBlockMenu(block.id) },
                 menuContent = blockMenuContent,
-                onStartDrag = onStartDrag,
-                onDragDelta = onDragDelta,
-                onDragFinish = onDragFinish,
-                onDragCancel = onDragCancel,
+                dragHandlers = dragHandlers,
             )
+        } else {
+            BlockTrailingControlsSpace()
         }
     }
 
-    if (doc.type == "quote") {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = indentDp)
-                .height(IntrinsicSize.Min)
-                .heightIn(min = 28.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+    val isQuote = doc.type == "quote"
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = indentDp)
+            .then(if (isQuote) Modifier.height(IntrinsicSize.Min).heightIn(min = BlockControlHeight) else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isQuote) {
             Box(
                 modifier = Modifier
                     .padding(vertical = 3.dp)
@@ -2321,18 +2341,11 @@ private fun EditableStandardBlockRow(
                     .background(scheme.primary.copy(alpha = 0.55f)),
             )
             Spacer(Modifier.width(10.dp))
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-                content = rowContent,
-            )
         }
-    } else {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = indentDp)
-                .heightIn(min = if (doc.type == "checkbox") 32.dp else 26.dp),
+            modifier = Modifier.weight(1f).then(
+                if (isQuote) Modifier else Modifier.heightIn(min = if (doc.type == "checkbox") 32.dp else BlockControlHeight)
+            ),
             verticalAlignment = Alignment.CenterVertically,
             content = rowContent,
         )
@@ -2361,10 +2374,7 @@ private fun CalloutBlockRow(
     onEnterKey: () -> Boolean,
     onCycleTone: () -> Unit,
     blockMenuContent: @Composable () -> Unit,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
+    dragHandlers: BlockDragHandlers,
 ) {
     val scheme = MaterialTheme.colorScheme
     val tfvState = engine.tfvStateFor(block)
@@ -2397,6 +2407,7 @@ private fun CalloutBlockRow(
             modifier = Modifier
                 .size(34.dp)
                 .clip(CircleShape)
+                .focusProperties { canFocus = false }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -2415,7 +2426,6 @@ private fun CalloutBlockRow(
         }
         BlockBasicTextField(
             block = block,
-            doc = doc,
             tfvState = tfvState,
             textStyle = style,
             placeholder = "输入提示内容…",
@@ -2440,11 +2450,10 @@ private fun CalloutBlockRow(
                 menuOpen = openBlockMenuId == block.id,
                 onOpenMenu = { onOpenBlockMenu(block.id) },
                 menuContent = blockMenuContent,
-                onStartDrag = onStartDrag,
-                onDragDelta = onDragDelta,
-                onDragFinish = onDragFinish,
-                onDragCancel = onDragCancel,
+                dragHandlers = dragHandlers,
             )
+        } else {
+            BlockTrailingControlsSpace()
         }
     }
 }
@@ -2472,10 +2481,7 @@ private fun ToggleBlockRow(
     onBackspaceAtStart: (Boolean) -> Boolean,
     onEnterKey: (Boolean) -> Boolean,
     blockMenuContent: @Composable () -> Unit,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
+    dragHandlers: BlockDragHandlers,
 ) {
     val scheme = MaterialTheme.colorScheme
     val titleTfvState = engine.titleTfvStateFor(block)
@@ -2507,10 +2513,12 @@ private fun ToggleBlockRow(
             modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val inputModeManager = LocalInputModeManager.current
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
+                    .focusProperties { canFocus = inputModeManager.inputMode != InputMode.Touch }
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -2529,7 +2537,6 @@ private fun ToggleBlockRow(
             }
             ToggleTitleTextField(
                 block = block,
-                doc = doc,
                 tfvState = titleTfvState,
                 textStyle = titleStyle,
                 enabled = !sessionClosing,
@@ -2548,11 +2555,10 @@ private fun ToggleBlockRow(
                     menuOpen = openBlockMenuId == block.id,
                     onOpenMenu = { onOpenBlockMenu(block.id) },
                     menuContent = blockMenuContent,
-                    onStartDrag = onStartDrag,
-                    onDragDelta = onDragDelta,
-                    onDragFinish = onDragFinish,
-                    onDragCancel = onDragCancel,
+                    dragHandlers = dragHandlers,
                 )
+            } else {
+                BlockTrailingControlsSpace()
             }
         }
         if (!doc.collapsed) {
@@ -2573,7 +2579,6 @@ private fun ToggleBlockRow(
                 Spacer(Modifier.width(10.dp))
                 BlockBasicTextField(
                     block = block,
-                    doc = doc,
                     tfvState = bodyTfvState,
                     textStyle = bodyStyle,
                     placeholder = "展开内容…",
@@ -2605,10 +2610,7 @@ private fun DividerBlockRow(
     onSelect: () -> Unit,
     onOpenBlockMenu: (String?) -> Unit,
     blockMenuContent: @Composable () -> Unit,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
+    dragHandlers: BlockDragHandlers,
 ) {
     val scheme = MaterialTheme.colorScheme
     val lineColor = if (selected) scheme.primary else mintDividerColor(dark)
@@ -2617,6 +2619,7 @@ private fun DividerBlockRow(
             .fillMaxWidth()
             .heightIn(min = 40.dp)
             .clip(RoundedCornerShape(10.dp))
+            .focusProperties { canFocus = false }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -2650,10 +2653,7 @@ private fun DividerBlockRow(
                 menuOpen = openBlockMenuId == block.id,
                 onOpenMenu = { onOpenBlockMenu(block.id) },
                 menuContent = blockMenuContent,
-                onStartDrag = onStartDrag,
-                onDragDelta = onDragDelta,
-                onDragFinish = onDragFinish,
-                onDragCancel = onDragCancel,
+                dragHandlers = dragHandlers,
             )
         }
     }
@@ -2663,7 +2663,6 @@ private fun DividerBlockRow(
 @Composable
 private fun BlockBasicTextField(
     block: EditorBlock,
-    doc: NoteBlock,
     tfvState: MutableState<TextFieldValue>,
     textStyle: TextStyle,
     placeholder: String,
@@ -2681,6 +2680,7 @@ private fun BlockBasicTextField(
     onEnterKey: () -> Boolean,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val inputBranch = block.documentBlock().editorFieldBranch()
     var fieldCoords by remember(block.id) { mutableStateOf<LayoutCoordinates?>(null) }
     var lastTextLayout by remember(block.id) { mutableStateOf<TextLayoutResult?>(null) }
 
@@ -2688,12 +2688,14 @@ private fun BlockBasicTextField(
         onDispose { attachedSet.remove(block.id) }
     }
 
-    val currentTfv by rememberUpdatedState(tfvState.value)
+    var recordedCompositionEdit by remember(block.id) { mutableStateOf(false) }
+    val currentTfvState by rememberUpdatedState(tfvState)
     val latestOnBackspace by rememberUpdatedState(onBackspaceAtStart)
     val latestOnEnter by rememberUpdatedState(onEnterKey)
     val interceptor = remember(block.id) {
         backspaceAtStartInterceptor(
             shouldTriggerBackspaceAtStart = {
+                val currentTfv = currentTfvState.value
                 currentTfv.composition == null &&
                     currentTfv.selection.collapsed &&
                     currentTfv.selection.start == 0
@@ -2706,14 +2708,20 @@ private fun BlockBasicTextField(
         BasicTextField(
             value = tfvState.value,
             onValueChange = { next ->
+                val liveBlock = engine.blockForInput(block.id) ?: return@BasicTextField
+                val liveDoc = liveBlock.documentBlock()
+                if (liveDoc.editorFieldBranch() != inputBranch || (liveDoc.type == "toggle" && liveDoc.collapsed)) {
+                    return@BasicTextField
+                }
                 val prev = tfvState.value
                 if (next.text == prev.text) {
-                    if (next.selection != prev.selection && next.composition == null) {
+                    if (next.composition == null) recordedCompositionEdit = false
+                    if (next.selection != prev.selection && prev.composition == null && next.composition == null) {
                         engine.pendingTypingMarks = emptySet()
                     }
                     tfvState.value = next
-                    block.text.edit {
-                        selection = clampSelection(next.selection, length)
+                    if (liveBlock.text.selection != next.selection) {
+                        liveBlock.text.edit { selection = clampSelection(next.selection, length) }
                     }
                     val layout = lastTextLayout
                     val coords = fieldCoords
@@ -2723,98 +2731,82 @@ private fun BlockBasicTextField(
                     return@BasicTextField
                 }
 
-                if (next.composition != null) {
-                    tfvState.value = next
-                    block.text.edit {
-                        replace(0, length, next.text)
-                        selection = clampSelection(next.selection, length)
-                    }
-                    val updatedMarks = adjustMarksForTextEdit(doc.marks, prev.text, next.text, next.selection.end)
-                    val idx = engine.indexOfBlock(block.id)
-                    if (idx >= 0) {
-                        engine.updateSingleBlock(idx, doc.copy(text = next.text, marks = updatedMarks))
-                    }
-                    return@BasicTextField
-                }
-
-                val splitAt = EditorBlockOps.isSingleNewlineInsertion(prev.text, next.text, next.selection)
-                if (splitAt != null) {
-                    val before = EditorSnapshot(
-                        blocks = engine.blocksSnapshotWithOverride(block.id, prev.text, doc.marks),
-                        focusedBlockId = block.id,
-                        cursorOffset = prev.selection.start,
-                    )
-                    val idx = engine.indexOfBlock(block.id)
-                    if (idx >= 0) {
-                        val beforeCursor = next.text.substring(0, splitAt)
-                        val afterCursor = next.text.substring(splitAt + 1)
+                // Undo/Redo or focus restores clear composition directly without passing through onValueChange.
+                if (prev.composition == null) recordedCompositionEdit = false
+                val idx = engine.indexOfBlock(block.id)
+                val before = if (!recordedCompositionEdit) engine.snapshot(block.id, false) else null
+                var nextMarks = adjustMarksForTextEdit(liveDoc.marks, prev.text, next.text, next.selection.end)
+                if (before != null && prev.composition == null && next.composition == null) {
+                    val splitAt = EditorBlockOps.isSingleNewlineInsertion(prev.text, next.text, prev.selection, next.selection)
+                    if (splitAt != null) {
                         val outcome = EditorBlockOps.applyEnter(
                             blocks = before.blocks,
                             blockIndex = idx,
-                            beforeCursor = beforeCursor,
-                            afterCursor = afterCursor,
-                            isToggleTitle = false,
+                            beforeCursor = next.text.substring(0, splitAt),
+                            afterCursor = next.text.substring(splitAt + 1),
                         )
                         engine.applyOutcome(outcome, recordUndoBefore = before)
-                    }
-                    return@BasicTextField
-                }
-
-                val idx = engine.indexOfBlock(block.id)
-                if (enableSlashShortcuts && idx >= 0) {
-                    val beforeBlocks = engine.blocksSnapshotWithOverride(block.id, prev.text, doc.marks)
-                    val curBlocks = beforeBlocks.toMutableList()
-                    val shifted = adjustMarksForTextEdit(doc.marks, prev.text, next.text, next.selection.end)
-                    curBlocks[idx] = doc.copy(text = next.text, marks = shifted)
-                    val prefixOutcome = EditorBlockOps.tryApplyMarkdownPrefix(
-                        blocks = curBlocks,
-                        blockIndex = idx,
-                        newText = next.text,
-                        cursorOffset = next.selection.start,
-                    )
-                    if (prefixOutcome != null) {
-                        val before = EditorSnapshot(beforeBlocks, block.id, prev.selection.start)
-                        engine.applyOutcome(prefixOutcome, recordUndoBefore = before)
                         return@BasicTextField
                     }
+                    if (enableSlashShortcuts) {
+                        val current = before.blocks.toMutableList()
+                        current[idx] = liveDoc.copy(text = next.text, marks = nextMarks)
+                        val prefixOutcome = EditorBlockOps.tryApplyMarkdownPrefix(current, idx, next.text, next.selection.start)
+                        if (prefixOutcome != null) {
+                            engine.applyOutcome(prefixOutcome, recordUndoBefore = before)
+                            return@BasicTextField
+                        }
+                    }
                 }
 
-                val beforeSnapshot = EditorSnapshot(
-                    blocks = engine.blocksSnapshotWithOverride(block.id, prev.text, doc.marks),
-                    focusedBlockId = block.id,
-                    cursorOffset = prev.selection.start,
-                )
-                var nextMarks = adjustMarksForTextEdit(doc.marks, prev.text, next.text, next.selection.end)
-                if (engine.pendingTypingMarks.isNotEmpty() && next.text.length > prev.text.length) {
-                    val insertedLen = next.text.length - prev.text.length
-                    val insEnd = next.selection.start.coerceIn(0, next.text.length)
-                    val insStart = (insEnd - insertedLen).coerceAtLeast(0)
-                    if (insStart < insEnd) {
-                        val additions = engine.pendingTypingMarks.map { NoteTextMark(it, insStart, insEnd) }
+                if (engine.pendingTypingMarks.isNotEmpty()) {
+                    val insertedLen = next.text.length - (prev.text.length - (prev.selection.max - prev.selection.min))
+                    val composingRange = next.composition
+                    val markedRange = composingRange ?: if (insertedLen > 0) {
+                        TextRange((next.selection.end - insertedLen).coerceAtLeast(0), next.selection.end)
+                    } else null
+                    if (markedRange != null && !markedRange.collapsed) {
+                        val additions = engine.pendingTypingMarks.map { NoteTextMark(it, markedRange.min, markedRange.max) }
                         nextMarks = normalizeMarks(nextMarks + additions, next.text)
                     }
                 }
+                recordedCompositionEdit = next.composition != null
                 tfvState.value = next
-                block.text.edit {
+                liveBlock.replaceOriginal(liveDoc.copy(text = next.text, marks = nextMarks))
+                liveBlock.text.edit {
                     replace(0, length, next.text)
                     selection = clampSelection(next.selection, length)
                 }
-                if (idx >= 0) {
-                    engine.updateSingleBlock(idx, doc.copy(text = next.text, marks = nextMarks))
+                if (before != null) {
+                    val forceBreak = next.composition != null || next.text.length != prev.text.length + 1 ||
+                        next.text.getOrNull(next.selection.end - 1) in WORD_BOUNDARY_CHARS
+                    engine.undoStack.recordTypingChange(before, forceBreak = forceBreak, composing = next.composition != null)
+                    engine.refreshUndoFlags()
                 }
-                val forceBreak = next.text.length != prev.text.length + 1 ||
-                    next.text.lastOrNull() in WORD_BOUNDARY_CHARS
-                engine.undoStack.recordTypingChange(beforeSnapshot, forceBreak = forceBreak)
-                engine.refreshUndoFlags()
             },
             enabled = enabled,
             modifier = modifier
                 .onGloballyPositioned { coords ->
                     fieldCoords = coords
-                    if (coords.isAttached) attachedSet.add(block.id)
+                    if (coords.isAttached) {
+                        attachedSet.add(block.id)
+                        lastTextLayout?.let { onCursorLayout(coords, it, tfvState.value.selection.end) }
+                    }
                 }
                 .focusRequester(focusRequester)
-                .onFocusChanged { state -> onFocusChange(state.isFocused) }
+                .onFocusChanged { state ->
+                    onFocusChange(state.isFocused)
+                    if (!state.isFocused) {
+                        recordedCompositionEdit = false
+                        if (tfvState.value.composition != null) tfvState.value = tfvState.value.copy(composition = null)
+                    } else {
+                        val coords = fieldCoords
+                        val layout = lastTextLayout
+                        if (coords != null && coords.isAttached && layout != null) {
+                            onCursorLayout(coords, layout, tfvState.value.selection.end)
+                        }
+                    }
+                }
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val tfv = tfvState.value
@@ -2865,7 +2857,6 @@ private fun BlockBasicTextField(
 @Composable
 private fun ToggleTitleTextField(
     block: EditorBlock,
-    doc: NoteBlock,
     tfvState: MutableState<TextFieldValue>,
     textStyle: TextStyle,
     enabled: Boolean,
@@ -2880,12 +2871,14 @@ private fun ToggleTitleTextField(
     DisposableEffect(block.id) {
         onDispose { engine.attachedTitleFocusRequesters.remove(block.id) }
     }
-    val currentTfv by rememberUpdatedState(tfvState.value)
+    var recordedCompositionEdit by remember(block.id) { mutableStateOf(false) }
+    val currentTfvState by rememberUpdatedState(tfvState)
     val latestOnBackspace by rememberUpdatedState(onBackspaceAtStart)
     val latestOnEnter by rememberUpdatedState(onEnterKey)
     val interceptor = remember(block.id) {
         backspaceAtStartInterceptor(
             shouldTriggerBackspaceAtStart = {
+                val currentTfv = currentTfvState.value
                 currentTfv.composition == null &&
                     currentTfv.selection.collapsed &&
                     currentTfv.selection.start == 0
@@ -2898,40 +2891,59 @@ private fun ToggleTitleTextField(
         BasicTextField(
             value = tfvState.value,
             onValueChange = { next ->
+                val liveBlock = engine.blockForInput(block.id) ?: return@BasicTextField
+                if (liveBlock.type != "toggle") return@BasicTextField
                 val prev = tfvState.value
                 if (next.text == prev.text) {
+                    if (next.composition == null) recordedCompositionEdit = false
                     tfvState.value = next
                     return@BasicTextField
                 }
-                if (next.composition == null) {
-                    val splitAt = EditorBlockOps.isSingleNewlineInsertion(prev.text, next.text, next.selection)
+                // Undo/Redo or focus restores clear composition directly without passing through onValueChange.
+                if (prev.composition == null) recordedCompositionEdit = false
+                val before = if (!recordedCompositionEdit) engine.snapshot(block.id, true) else null
+                if (before != null && prev.composition == null && next.composition == null) {
+                    val splitAt = EditorBlockOps.isSingleNewlineInsertion(prev.text, next.text, prev.selection, next.selection)
                     if (splitAt != null) {
-                        val cleaned = next.text.removeRange(splitAt, splitAt + 1)
-                        tfvState.value = TextFieldValue(cleaned, TextRange(splitAt.coerceIn(0, cleaned.length)))
-                        latestOnEnter()
+                        val outcome = EditorBlockOps.applyEnter(
+                            blocks = before.blocks,
+                            blockIndex = engine.indexOfBlock(block.id),
+                            beforeCursor = next.text.substring(0, splitAt),
+                            afterCursor = next.text.substring(splitAt + 1),
+                            isToggleTitle = true,
+                        )
+                        engine.applyOutcome(outcome, recordUndoBefore = before)
                         return@BasicTextField
                     }
                 }
-                val idx = engine.indexOfBlock(block.id)
-                val beforeBlocks = engine.blocksSnapshotWithOverrideTitle(block.id, prev.text)
-                val before = EditorSnapshot(beforeBlocks, block.id, prev.selection.start, focusToggleTitle = true)
+                recordedCompositionEdit = next.composition != null
                 tfvState.value = next
-                if (idx >= 0) {
-                    engine.updateSingleBlock(idx, doc.withToggleState(title = next.text))
-                }
-                if (next.composition == null) {
-                    engine.undoStack.recordTypingChange(before)
+                liveBlock.replaceOriginal(liveBlock.documentBlock().withToggleState(title = next.text))
+                if (before != null) {
+                    engine.undoStack.recordTypingChange(
+                        before,
+                        forceBreak = next.composition != null,
+                        composing = next.composition != null,
+                    )
                     engine.refreshUndoFlags()
                 }
             },
             enabled = enabled,
             singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { latestOnEnter() }),
             modifier = modifier
                 .onGloballyPositioned { coords ->
                     if (coords.isAttached) engine.attachedTitleFocusRequesters.add(block.id)
                 }
                 .focusRequester(focusRequester)
-                .onFocusChanged { state -> onFocusChange(state.isFocused) }
+                .onFocusChanged { state ->
+                    if (!state.isFocused) {
+                        recordedCompositionEdit = false
+                        if (tfvState.value.composition != null) tfvState.value = tfvState.value.copy(composition = null)
+                    }
+                    onFocusChange(state.isFocused)
+                }
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val tfv = tfvState.value
@@ -2962,27 +2974,6 @@ private fun ToggleTitleTextField(
 }
 
 private val WORD_BOUNDARY_CHARS = setOf(' ', '，', '。', '！', '？', '.', ',', '\n')
-
-private fun EditorEngineState.blocksSnapshotWithOverride(
-    blockId: String,
-    textOverride: String,
-    marksOverride: List<NoteTextMark>,
-): List<NoteBlock> {
-    val cur = snapshot(blockId, false).blocks
-    return cur.map { blk ->
-        if (blk.id == blockId) blk.copy(text = textOverride, marks = marksOverride) else blk
-    }
-}
-
-private fun EditorEngineState.blocksSnapshotWithOverrideTitle(
-    blockId: String,
-    titleOverride: String,
-): List<NoteBlock> {
-    val cur = snapshot(blockId, true).blocks
-    return cur.map { blk ->
-        if (blk.id == blockId && blk.type == "toggle") blk.withToggleState(title = titleOverride) else blk
-    }
-}
 
 @Composable
 private fun blockTextStyle(doc: NoteBlock, scheme: ColorScheme): TextStyle {
@@ -3033,6 +3024,17 @@ private fun blockTextStyle(doc: NoteBlock, scheme: ColorScheme): TextStyle {
     }
 }
 
+private val BlockControlWidth = 30.dp
+private val BlockControlHeight = 28.dp
+private val BlockControlStartPadding = 4.dp
+private val BlockControlsWidth = BlockControlStartPadding + BlockControlWidth * 2
+
+@Composable
+private fun BlockTrailingControlsSpace() {
+    // Keep the same wrap width whether this row has its action and drag buttons or not.
+    Spacer(Modifier.width(BlockControlsWidth))
+}
+
 @Composable
 private fun BlockTrailingControls(
     blockId: String,
@@ -3041,15 +3043,13 @@ private fun BlockTrailingControls(
     menuOpen: Boolean,
     onOpenMenu: () -> Unit,
     menuContent: @Composable () -> Unit,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
+    dragHandlers: BlockDragHandlers,
 ) {
     val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
-            .padding(start = 4.dp)
+            .width(BlockControlsWidth)
+            .padding(start = BlockControlStartPadding)
             .clip(RoundedCornerShape(10.dp))
             .background(mintSecondaryFill(dark).copy(alpha = 0.8f)),
         verticalAlignment = Alignment.CenterVertically,
@@ -3057,7 +3057,7 @@ private fun BlockTrailingControls(
         Box {
             Box(
                 modifier = Modifier
-                    .size(width = 30.dp, height = 28.dp)
+                    .size(width = BlockControlWidth, height = BlockControlHeight)
                     .focusProperties { canFocus = false }
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -3080,60 +3080,76 @@ private fun BlockTrailingControls(
         }
         BlockDragOnlyHandle(
             dark = dark,
-            controlHeight = 28.dp,
-            onStartDrag = onStartDrag,
-            onDragDelta = onDragDelta,
-            onDragFinish = onDragFinish,
-            onDragCancel = onDragCancel,
+            dragHandlers = dragHandlers,
         )
     }
 }
 
 @Composable
 private fun Modifier.longPressBlockDrag(
+    dragHandlers: BlockDragHandlers,
     enabled: Boolean = true,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
 ): Modifier {
-    val latestEnabled by rememberUpdatedState(enabled)
-    val latestStart by rememberUpdatedState(onStartDrag)
-    val latestDelta by rememberUpdatedState(onDragDelta)
-    val latestFinish by rememberUpdatedState(onDragFinish)
-    val latestCancel by rememberUpdatedState(onDragCancel)
-    return pointerInput(enabled) {
-        if (!latestEnabled) return@pointerInput
-        detectDragGesturesAfterLongPress(
-            onDragStart = { startOffset -> latestStart(startOffset) },
-            onDragEnd = { latestFinish() },
-            onDragCancel = { latestCancel() },
-            onDrag = { change, dragAmount ->
-                change.consume()
-                latestDelta(dragAmount.y, change.position)
-            },
-        )
-    }
+    val latest by rememberUpdatedState(dragHandlers)
+    val container by rememberUpdatedState(LocalPinnableContainer.current)
+    var handleCoords by remember(dragHandlers.blockId) { mutableStateOf<LayoutCoordinates?>(null) }
+    val dragEnabled = enabled && dragHandlers.enabled
+    return onGloballyPositioned { handleCoords = it }
+        .pointerInput(dragHandlers.blockId, dragEnabled) {
+            if (!dragEnabled) return@pointerInput
+            var pin: PinnableContainer.PinnedHandle? = null
+            var started = false
+            fun rootY(position: Offset): Float? =
+                handleCoords?.takeIf { it.isAttached }?.localToRoot(position)?.y?.takeIf { it.isFinite() }
+
+            fun release() {
+                pin?.release()
+                pin = null
+                started = false
+            }
+            try {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { position ->
+                        rootY(position)?.let { y ->
+                            pin = container?.pin()
+                            started = true
+                            latest.onStartDrag(y)
+                        }
+                    },
+                    onDragEnd = {
+                        if (started) latest.onDragFinish()
+                        release()
+                    },
+                    onDragCancel = {
+                        if (started) latest.onDragCancel()
+                        release()
+                    },
+                    onDrag = { change, _ ->
+                        if (started) {
+                            rootY(change.position)?.let { latest.onDragDelta(it) }
+                            change.consume()
+                        }
+                    },
+                )
+            } finally {
+                if (started) latest.onDragCancel()
+                release()
+            }
+        }
 }
 
 @Composable
 private fun BlockDragOnlyHandle(
     dark: Boolean,
-    controlHeight: androidx.compose.ui.unit.Dp = 28.dp,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
+    controlHeight: androidx.compose.ui.unit.Dp = BlockControlHeight,
+    dragHandlers: BlockDragHandlers,
 ) {
     Box(
         modifier = Modifier
-            .size(width = 30.dp, height = controlHeight)
+            .size(width = BlockControlWidth, height = controlHeight)
             .focusProperties { canFocus = false }
             .longPressBlockDrag(
-                onStartDrag = onStartDrag,
-                onDragDelta = onDragDelta,
-                onDragFinish = onDragFinish,
-                onDragCancel = onDragCancel,
+                dragHandlers = dragHandlers,
             )
             .semantics { contentDescription = "长按拖动调整段落顺序" },
         contentAlignment = Alignment.Center,
@@ -3226,10 +3242,7 @@ private fun SelectionAwareBlockSlot(
     selected: Boolean,
     dark: Boolean,
     onToggleSelect: () -> Unit,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
+    dragHandlers: BlockDragHandlers,
     content: @Composable () -> Unit,
 ) {
     var lastRowDragEndedAtMs by remember { mutableLongStateOf(0L) }
@@ -3243,18 +3256,19 @@ private fun SelectionAwareBlockSlot(
                 Box(
                     modifier = Modifier
                         .matchParentSize()
+                        .focusProperties { canFocus = false }
                         .longPressBlockDrag(
                             enabled = selected,
-                            onStartDrag = onStartDrag,
-                            onDragDelta = onDragDelta,
-                            onDragFinish = {
-                                lastRowDragEndedAtMs = System.currentTimeMillis()
-                                onDragFinish()
-                            },
-                            onDragCancel = {
-                                lastRowDragEndedAtMs = System.currentTimeMillis()
-                                onDragCancel()
-                            },
+                            dragHandlers = dragHandlers.copy(
+                                onDragFinish = {
+                                    lastRowDragEndedAtMs = System.currentTimeMillis()
+                                    dragHandlers.onDragFinish()
+                                },
+                                onDragCancel = {
+                                    lastRowDragEndedAtMs = System.currentTimeMillis()
+                                    dragHandlers.onDragCancel()
+                                },
+                            ),
                         )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -3278,10 +3292,7 @@ private fun SelectionAwareBlockSlot(
                 selected = selected,
                 dark = dark,
                 onToggle = onToggleSelect,
-                onStartDrag = onStartDrag,
-                onDragDelta = onDragDelta,
-                onDragFinish = onDragFinish,
-                onDragCancel = onDragCancel,
+                dragHandlers = dragHandlers,
             )
         }
     }
@@ -3292,10 +3303,7 @@ private fun BlockSelectionTrailingControls(
     selected: Boolean,
     dark: Boolean,
     onToggle: () -> Unit,
-    onStartDrag: (Offset) -> Unit,
-    onDragDelta: (Float, Offset) -> Unit,
-    onDragFinish: () -> Unit,
-    onDragCancel: () -> Unit,
+    dragHandlers: BlockDragHandlers,
 ) {
     val scheme = MaterialTheme.colorScheme
     Row(
@@ -3340,17 +3348,16 @@ private fun BlockSelectionTrailingControls(
         }
         BlockDragOnlyHandle(
             dark = dark,
-            onStartDrag = onStartDrag,
-            onDragDelta = onDragDelta,
-            onDragFinish = onDragFinish,
-            onDragCancel = onDragCancel,
+            dragHandlers = dragHandlers,
         )
     }
 }
 
-private class BlockDragHandlers(
-    val onStartDrag: (Offset) -> Unit,
-    val onDragDelta: (Float, Offset) -> Unit,
+private data class BlockDragHandlers(
+    val blockId: String,
+    val enabled: Boolean,
+    val onStartDrag: (Float) -> Unit,
+    val onDragDelta: (Float) -> Unit,
     val onDragFinish: () -> Unit,
     val onDragCancel: () -> Unit,
 )
@@ -3364,18 +3371,19 @@ private fun WiredBlockContextMenu(
     session: EditorSession,
     engine: EditorEngineState,
     clipboard: androidx.compose.ui.platform.ClipboardManager,
-    snapshotToggleTitle: Boolean,
+    focusedBlockId: String?,
+    focusedIsToggleTitle: Boolean,
     onDismiss: () -> Unit,
     onEnterSelectionMode: () -> Unit,
     onCycleCalloutTone: (() -> Unit)? = null,
     onToggleDividerStyle: (() -> Unit)? = null,
 ) {
-    val focusAfterMove = if (doc.type == "divider") null else doc.id
+    val wasFocusedThisBlock = focusedBlockId == doc.id
     val moveTo: (Int) -> Unit = { targetIndex ->
         onDismiss()
-        val before = engine.snapshot(doc.id, snapshotToggleTitle)
+        val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
         val moved = EditorBlockOps.moveBlock(session.blocks.map { it.documentBlock() }, index, targetIndex)
-        engine.applyOutcome(BlockEditOutcome(moved, focusAfterMove, 0), recordUndoBefore = before)
+        engine.applyOutcome(BlockEditOutcome(moved, null, 0), recordUndoBefore = before)
     }
     BlockContextMenu(
         expanded = expanded,
@@ -3385,13 +3393,8 @@ private fun WiredBlockContextMenu(
         onDismiss = onDismiss,
         onConvert = { targetType, level ->
             onDismiss()
-            val before = engine.snapshot(doc.id, snapshotToggleTitle)
-            val outcome = EditorBlockOps.convertBlockType(
-                blocks = session.blocks.map { it.documentBlock() },
-                blockIndex = index,
-                targetType = targetType,
-                headingLevel = level,
-            )
+            val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+            val outcome = EditorBlockOps.convertFromControls(before, index, targetType, level)
             engine.applyOutcome(outcome, recordUndoBefore = before)
         },
         onCycleCalloutTone = onCycleCalloutTone,
@@ -3411,9 +3414,10 @@ private fun WiredBlockContextMenu(
         onMoveDown = { if (index < session.blocks.lastIndex) moveTo(index + 1) else onDismiss() },
         onDelete = {
             onDismiss()
-            val before = engine.snapshot(doc.id, snapshotToggleTitle)
+            val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
             val outcome = EditorBlockOps.deleteBlock(session.blocks.map { it.documentBlock() }, index)
-            engine.applyOutcome(outcome, recordUndoBefore = before)
+            val edit = if (wasFocusedThisBlock) outcome else BlockEditOutcome(outcome.blocks, null, 0)
+            engine.applyOutcome(edit, recordUndoBefore = before)
         },
     )
 }
@@ -3438,6 +3442,7 @@ private fun BlockContextMenu(
         expanded = expanded,
         onDismiss = onDismiss,
         tag = "block-context-menu",
+        focusable = false,
     ) {
         if (block.type != "paragraph") {
             ComposablesMenuItem(label = "转化为正文", icon = EditorIcons.TextFormat) { onConvert("paragraph", 1) }
@@ -3719,10 +3724,11 @@ private fun removeTriggerText(
     triggerIndex: Int,
     cursorIndex: Int,
 ) {
-    val tfvState = if (isToggleTitle && block.type == "toggle") {
-        engine.titleTfvStateFor(block)
+    val liveBlock = engine.blockForInput(block.id) ?: return
+    val tfvState = if (isToggleTitle && liveBlock.type == "toggle") {
+        engine.titleTfvStateFor(liveBlock)
     } else {
-        engine.tfvStateFor(block)
+        engine.tfvStateFor(liveBlock)
     }
     val current = tfvState.value
     if (current.composition != null) return
@@ -3731,18 +3737,16 @@ private fun removeTriggerText(
     val updatedText = text.removeRange(triggerIndex, cursorIndex)
     val nextCursor = triggerIndex.coerceIn(0, updatedText.length)
     tfvState.value = TextFieldValue(updatedText, TextRange(nextCursor))
-    val doc = block.documentBlock()
-    if (isToggleTitle && block.type == "toggle") {
-        val idx = engine.indexOfBlock(block.id)
-        if (idx >= 0) engine.updateSingleBlock(idx, doc.withToggleState(title = updatedText))
+    val doc = liveBlock.documentBlock()
+    if (isToggleTitle && doc.type == "toggle") {
+        liveBlock.replaceOriginal(doc.withToggleState(title = updatedText))
     } else {
-        block.text.edit {
+        val nextMarks = adjustMarksForTextEdit(doc.marks, text, updatedText, nextCursor)
+        liveBlock.replaceOriginal(doc.copy(text = updatedText, marks = nextMarks))
+        liveBlock.text.edit {
             replace(0, length, updatedText)
             selection = TextRange(nextCursor)
         }
-        val nextMarks = adjustMarksForTextEdit(doc.marks, text, updatedText, nextCursor)
-        val idx = engine.indexOfBlock(block.id)
-        if (idx >= 0) engine.updateSingleBlock(idx, doc.copy(text = updatedText, marks = nextMarks))
     }
 }
 
@@ -3753,26 +3757,10 @@ private fun clearPendingInlineTrigger(
 ) {
     if (pending == null) return
     val block = session.blocks.firstOrNull { it.id == pending.blockId && it.editable } ?: return
-    val tfvState = engine.tfvStateFor(block)
-    if (tfvState.value.composition != null) return
-    val currentText = tfvState.value.text
-    if (pending.start in 0..pending.end && pending.end <= currentText.length) {
-        val slice = currentText.substring(pending.start, pending.end)
-        if (slice.startsWith("@") || slice.startsWith("#")) {
-            val updatedText = currentText.removeRange(pending.start, pending.end)
-            val nextCursor = pending.start.coerceIn(0, updatedText.length)
-            tfvState.value = TextFieldValue(updatedText, TextRange(nextCursor))
-            block.text.edit {
-                replace(0, length, updatedText)
-                selection = TextRange(nextCursor)
-            }
-            val doc = block.documentBlock()
-            val nextMarks = adjustMarksForTextEdit(doc.marks, currentText, updatedText, nextCursor)
-            val idx = session.blocks.indexOf(block)
-            if (idx >= 0) {
-                engine.updateSingleBlock(idx, doc.copy(text = updatedText, marks = nextMarks))
-            }
-        }
+    if (pending.toggleTitle && block.type != "toggle") return
+    val tfv = if (pending.toggleTitle) engine.titleTfvStateFor(block).value else engine.tfvStateFor(block).value
+    if (tfv.composition == null && tfv.text.startsWith(pending.expectedText, pending.start)) {
+        removeTriggerText(block, engine, pending.toggleTitle, pending.start, pending.start + pending.expectedText.length)
     }
 }
 
@@ -4554,6 +4542,7 @@ private fun BatchActionBarButton(
         modifier = Modifier
             .defaultMinSize(minWidth = 52.dp, minHeight = 46.dp)
             .clip(RoundedCornerShape(12.dp))
+            .focusProperties { canFocus = false }
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
