@@ -121,3 +121,11 @@ data class BackupUiState(
         )
     }
 }
+
+internal data class ExternalImportUiState(
+    val busy: Boolean = false,
+    val preview: ExternalImportPreview? = null,
+    val skipDuplicates: Boolean = true,
+    val outcome: ExternalImportCommitResult? = null,
+    val error: String? = null,
+)

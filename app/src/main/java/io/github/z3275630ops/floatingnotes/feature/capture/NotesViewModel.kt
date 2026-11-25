@@ -1,7 +1,9 @@
 package io.github.z3275630ops.floatingnotes.feature.capture
 
 import android.app.Application
+import android.content.Context
 import android.content.pm.PackageManager
+import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import java.io.File
 import android.net.Uri
@@ -44,13 +46,20 @@ import io.github.z3275630ops.floatingnotes.data.agent.OpenAiToolDefinition
 import io.github.z3275630ops.floatingnotes.data.agent.analyzeDualCollisionWithByok
 import io.github.z3275630ops.floatingnotes.data.agent.cleanVoiceTranscriptWithByok
 import io.github.z3275630ops.floatingnotes.data.agent.normalizeChatCompletionsUrl
+import io.github.z3275630ops.floatingnotes.data.backup.BackupConstants
 import io.github.z3275630ops.floatingnotes.data.backup.BackupManager
 import io.github.z3275630ops.floatingnotes.data.backup.BackupUiState
+import io.github.z3275630ops.floatingnotes.data.backup.BackupValidationException
+import io.github.z3275630ops.floatingnotes.data.backup.ExternalImportUiState
+import io.github.z3275630ops.floatingnotes.data.backup.ExternalNoteImporter
 import io.github.z3275630ops.floatingnotes.data.backup.HistoryUiState
 import io.github.z3275630ops.floatingnotes.data.backup.MiniJson
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreMode
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.TrashPurgeImpact
+import io.github.z3275630ops.floatingnotes.data.discovery.CognitiveMapEngine
+import io.github.z3275630ops.floatingnotes.data.discovery.CognitiveMapMode
+import io.github.z3275630ops.floatingnotes.data.discovery.CognitiveMapPreferences
 import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryEngines
 import io.github.z3275630ops.floatingnotes.data.discovery.DiscoveryRepository
 import io.github.z3275630ops.floatingnotes.data.discovery.DualCollisionBridge
@@ -72,6 +81,7 @@ import io.github.z3275630ops.floatingnotes.feature.agent.AgentProgressStepUi
 import io.github.z3275630ops.floatingnotes.feature.agent.AgentUiState
 import io.github.z3275630ops.floatingnotes.feature.agent.AgentWorkspaceTab
 import io.github.z3275630ops.floatingnotes.feature.agent.AgentWriteProposalUi
+import io.github.z3275630ops.floatingnotes.feature.explore.CognitiveMapUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorDiscoveryState
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.WalkMode
@@ -380,6 +390,9 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     val organization = OrganizationRepository(database)
     val search by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SearchRepository(database) }
     val explorePreferences = ExplorePreferences(application)
+    internal val cognitiveMapPreferences by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        CognitiveMapPreferences(application.filesDir)
+    }
     internal val widgetPreferences by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { WidgetPreferences(application) }
     internal val discovery by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         DiscoveryRepository(database, repository, explorePreferences)
@@ -512,8 +525,14 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     private val _backupState = MutableStateFlow(BackupUiState())
     val backupState: StateFlow<BackupUiState> = _backupState.asStateFlow()
 
+    private val _externalImportState = MutableStateFlow(ExternalImportUiState())
+    val externalImportState: StateFlow<ExternalImportUiState> = _externalImportState.asStateFlow()
+
     private val _exploreState = MutableStateFlow(ExploreUiState())
     val exploreState: StateFlow<ExploreUiState> = _exploreState.asStateFlow()
+
+    private val _cognitiveMapState = MutableStateFlow(CognitiveMapUiState())
+    val cognitiveMapState: StateFlow<CognitiveMapUiState> = _cognitiveMapState.asStateFlow()
 
     private val _editorDiscoveryState = MutableStateFlow(
         EditorDiscoveryState(globalEchoEnabled = explorePreferences.edgeEchoEnabled),
@@ -524,6 +543,8 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     private var tagRecJob: Job? = null
     private var findSearchJob: Job? = null
     private var findSearchSeq = 0L
+    private var cognitiveMapJob: Job? = null
+    private var externalImportJob: Job? = null
 
     val captureDrafts = repository.captureDrafts.catch {
         error = "无法读取跨应用草稿"
@@ -2412,6 +2433,150 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         _backupState.update {
             it.copy(lastExportOutcome = null, lastRestoreOutcome = null, errorMessage = null)
         }
+        _externalImportState.update {
+            it.copy(outcome = null, error = null)
+        }
+    }
+
+    fun pickExternalImport(sourceUri: Uri, displayName: String = "") {
+        if (_externalImportState.value.busy || _backupState.value.busy) return
+        externalImportJob?.cancel()
+        _externalImportState.update {
+            it.copy(busy = true, preview = null, outcome = null, error = null)
+        }
+        externalImportJob = viewModelScope.launch {
+            var tempFile: File? = null
+            try {
+                val app = getApplication<Application>()
+                val preview = withContext(Dispatchers.IO) {
+                    val resolvedDisplayName = displayName.trim().ifEmpty {
+                        resolveExternalDocumentDisplayName(app, sourceUri)
+                    }
+                    val cacheRoot = File(app.cacheDir, "external-import").apply { mkdirs() }
+                    tempFile = File.createTempFile("import-", ".tmp", cacheRoot)
+                    val target = tempFile!!
+                    val input = app.contentResolver.openInputStream(sourceUri)
+                        ?: throw BackupValidationException("无法打开所选文件，请确认文件权限后重试")
+                    input.use { stream ->
+                        target.outputStream().use { output ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var total = 0L
+                            while (true) {
+                                currentCoroutineContext().ensureActive()
+                                val count = stream.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                if (total > BackupConstants.MAX_ENTRY_BYTES) {
+                                    throw BackupValidationException("导入文件过大（超过 128 MB 上限）")
+                                }
+                                output.write(buffer, 0, count)
+                            }
+                        }
+                    }
+                    val activeNotes = database.notes().allNotes().filter { it.deletedAt == null }
+                    val existingHashes = activeNotes.mapTo(HashSet()) { it.contentHash }
+                    val existingTexts = activeNotes.mapTo(HashSet()) { it.searchText }
+                    ExternalNoteImporter.previewImport(
+                        sourceFile = target,
+                        displayName = resolvedDisplayName,
+                        existingContentHashes = existingHashes,
+                        existingNormalizedTexts = existingTexts,
+                    )
+                }
+                _externalImportState.update {
+                    it.copy(busy = false, preview = preview, error = null)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (err: Exception) {
+                _externalImportState.update {
+                    it.copy(
+                        busy = false,
+                        preview = null,
+                        error = err.message ?: "无法解析导入文件，请确认格式为 Markdown / ZIP / flomo HTML / JSON",
+                    )
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    runCatching { tempFile?.delete() }
+                }
+            }
+        }
+    }
+
+    private fun resolveExternalDocumentDisplayName(context: Context, uri: Uri): String {
+        runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) {
+                        val name = cursor.getString(idx)?.trim()
+                        if (!name.isNullOrEmpty()) return name
+                    }
+                }
+            }
+        }
+        return uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "import"
+    }
+
+    fun toggleSkipDuplicateImports(skip: Boolean) {
+        _externalImportState.update { it.copy(skipDuplicates = skip) }
+    }
+
+    fun dismissExternalImport() {
+        _externalImportState.update { it.copy(preview = null, error = null) }
+    }
+
+    fun confirmExternalImport() {
+        val current = _externalImportState.value
+        val preview = current.preview ?: return
+        if (current.busy || _backupState.value.busy) return
+        _externalImportState.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        val result = withContext(Dispatchers.IO) {
+                            ExternalNoteImporter.commitImport(
+                                preview = preview,
+                                skipDuplicates = current.skipDuplicates,
+                                database = database,
+                            )
+                        }
+                        val cov = runCatching { discovery.ensureIndexFresh(forceRebuild = false) }.getOrNull()
+                        if (cov != null) {
+                            _exploreState.update { it.copy(coverage = cov) }
+                        }
+                        if (_cognitiveMapState.value.visible) {
+                            refreshCognitiveMap()
+                        }
+                        _externalImportState.update {
+                            it.copy(
+                                busy = false,
+                                preview = null,
+                                outcome = result,
+                                error = null,
+                            )
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (err: Exception) {
+                        _externalImportState.update {
+                            it.copy(
+                                busy = false,
+                                error = err.message ?: "导入笔记失败，现有笔记库未受影响",
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun clearExploreMessage() {
@@ -3010,6 +3175,109 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 throw cancelled
             } catch (_: Exception) {
                 _exploreState.update { it.copy(errorMessage = "保存双卡笔记失败，请重试") }
+            }
+        }
+    }
+
+    fun openCognitiveMap() {
+        _cognitiveMapState.update { it.copy(visible = true, errorMessage = null) }
+        refreshCognitiveMap()
+    }
+
+    fun closeCognitiveMap() {
+        cognitiveMapJob?.cancel()
+        _cognitiveMapState.update { it.copy(visible = false, loading = false) }
+    }
+
+    fun setCognitiveMapMode(mode: CognitiveMapMode) {
+        if (_cognitiveMapState.value.mode == mode) return
+        _cognitiveMapState.update { it.copy(mode = mode, errorMessage = null) }
+        refreshCognitiveMap()
+    }
+
+    fun setCognitiveMapMonthFilter(month: String?) {
+        if (_cognitiveMapState.value.activeMonthFilter == month) return
+        _cognitiveMapState.update { it.copy(activeMonthFilter = month, errorMessage = null) }
+        refreshCognitiveMap()
+    }
+
+    fun setCognitiveMapReclusterForMonth(recluster: Boolean) {
+        if (_cognitiveMapState.value.reclusterForMonth == recluster) return
+        _cognitiveMapState.update { it.copy(reclusterForMonth = recluster, errorMessage = null) }
+        refreshCognitiveMap()
+    }
+
+    fun renameCognitiveMapCluster(clusterId: String, customName: String) {
+        viewModelScope.launch {
+            runCatching {
+                val updatedNames = withContext(Dispatchers.IO) {
+                    cognitiveMapPreferences.renameCluster(clusterId, customName)
+                }
+                _cognitiveMapState.update { state ->
+                    val currentSnapshot = state.snapshot
+                    val patchedSnapshot = currentSnapshot?.copy(
+                        clusters = currentSnapshot.clusters.map { cluster ->
+                            if (cluster.clusterId == clusterId) {
+                                cluster.copy(displayLabel = updatedNames[clusterId] ?: cluster.machineLabel)
+                            } else {
+                                cluster
+                            }
+                        },
+                    )
+                    state.copy(
+                        customClusterNames = updatedNames,
+                        snapshot = patchedSnapshot,
+                        errorMessage = null,
+                    )
+                }
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _cognitiveMapState.update { s -> s.copy(errorMessage = "保存主题名称失败，请重试") }
+            }
+        }
+    }
+
+    private fun refreshCognitiveMap() {
+        cognitiveMapJob?.cancel()
+        _cognitiveMapState.update { it.copy(loading = true, errorMessage = null) }
+        cognitiveMapJob = viewModelScope.launch {
+            try {
+                val stateSnapshot = _cognitiveMapState.value
+                val (renames, snapshot) = withContext(Dispatchers.IO) {
+                    val loadedRenames = cognitiveMapPreferences.loadRenames()
+                    val allNotes = database.notes().allNotes()
+                    val orgDao = database.organization()
+                    val allTags = orgDao.tags()
+                    val allNoteTags = orgDao.noteTags()
+                    val allLinks = orgDao.noteLinks()
+                    val built = withContext(Dispatchers.Default) {
+                        CognitiveMapEngine.buildMap(
+                            notes = allNotes,
+                            tags = allTags,
+                            noteTags = allNoteTags,
+                            links = allLinks,
+                            customClusterNames = loadedRenames,
+                            mode = stateSnapshot.mode,
+                            activeMonthFilter = stateSnapshot.activeMonthFilter,
+                            reclusterForMonth = stateSnapshot.reclusterForMonth,
+                        )
+                    }
+                    loadedRenames to built
+                }
+                _cognitiveMapState.update {
+                    it.copy(
+                        loading = false,
+                        customClusterNames = renames,
+                        snapshot = snapshot,
+                        errorMessage = null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _cognitiveMapState.update {
+                    it.copy(loading = false, errorMessage = "构建认知地图失败，请重试")
+                }
             }
         }
     }

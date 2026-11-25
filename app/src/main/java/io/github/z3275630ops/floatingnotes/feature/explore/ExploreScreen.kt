@@ -114,6 +114,7 @@ internal fun ExploreScreen(
     selectedSectionIndex: Int? = null,
     onSelectSection: ((Int) -> Unit)? = null,
     onMarkReviewCardSeen: (String) -> Unit = {},
+    onOpenCognitiveMap: () -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
     var internalSectionIndex by rememberSaveable { mutableStateOf(0) }
@@ -137,15 +138,31 @@ internal fun ExploreScreen(
                 text = "$notesCount 篇 · $linksCount 条关联",
                 style = MaterialTheme.typography.labelMedium,
                 color = mintTertiaryTextColor(dark),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
-            MintChip(
-                label = "统计与热力图",
-                leadingIcon = MintIcons.Chart,
-                selected = false,
-                dark = dark,
-                modifier = Modifier.testTag("explore-open-stats"),
-                onClick = onOpenStats,
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MintChip(
+                    label = "认知地图",
+                    leadingIcon = MintIcons.Explore,
+                    selected = false,
+                    dark = dark,
+                    modifier = Modifier.testTag("explore-open-cognitive-map"),
+                    onClick = onOpenCognitiveMap,
+                )
+                MintChip(
+                    label = "统计与热力图",
+                    leadingIcon = MintIcons.Chart,
+                    selected = false,
+                    dark = dark,
+                    modifier = Modifier.testTag("explore-open-stats"),
+                    onClick = onOpenStats,
+                )
+            }
         }
         MintSegmentedBar(
             options = ExploreSection.entries.map { it.label },

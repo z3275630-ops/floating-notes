@@ -37,6 +37,7 @@ val hasReleaseSigning = releaseKeystoreFile?.isFile == true &&
     !releaseKeyPassword.isNullOrBlank()
 
 android {
+    val splitApks = project.findProperty("splitApks") == "true"
     namespace = "io.github.z3275630ops.floatingnotes"
     compileSdk = 35
     defaultConfig {
@@ -47,6 +48,7 @@ android {
         versionName = "0.2.8-splash-startup.1"
         buildConfigField("boolean", "MATERIAL_LAB", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        resourceConfigurations += listOf("zh", "zh-rCN", "en")
     }
     signingConfigs {
         if (hasReleaseSigning) {
@@ -63,12 +65,20 @@ android {
     }
     buildTypes {
         debug {
+            // AGP rejects configuring NDK ABI filters alongside ABI splits.
+            if (!splitApks) {
+                ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+            }
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             buildConfigField("boolean", "MATERIAL_LAB", "true")
         }
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
+            if (!splitApks) {
+                ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
@@ -80,6 +90,24 @@ android {
             buildConfigField("boolean", "MATERIAL_LAB", "true")
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
+        }
+    }
+    packaging {
+        jniLibs {
+            excludes += listOf("**/mips/**", "**/mips64/**", "**/armeabi/**", "**/x86/**")
+        }
+        resources {
+            excludes += listOf("META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/AL2.0", "META-INF/LGPL2.1", "DebugProbesKt.bin")
+        }
+    }
+    if (splitApks) {
+        splits {
+            abi {
+                isEnable = true
+                reset()
+                include("arm64-v8a", "armeabi-v7a")
+                isUniversalApk = false
+            }
         }
     }
     sourceSets.getByName("androidTest").assets.srcDir("schemas")

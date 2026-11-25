@@ -1,6 +1,8 @@
 package io.github.z3275630ops.floatingnotes.feature.explore
 
 import io.github.z3275630ops.floatingnotes.data.discovery.ActiveWalkSnapshot
+import io.github.z3275630ops.floatingnotes.data.discovery.CognitiveMapMode
+import io.github.z3275630ops.floatingnotes.data.discovery.CognitiveMapSnapshot
 import io.github.z3275630ops.floatingnotes.data.discovery.DailyReviewSnapshot
 import io.github.z3275630ops.floatingnotes.data.discovery.DualCollisionBridge
 import io.github.z3275630ops.floatingnotes.data.discovery.DualCollisionPair
@@ -56,4 +58,15 @@ internal data class EditorDiscoveryState(
     val lastAutoShownAtMs: Long = 0L,
     val dismissedNoteIds: Set<String> = emptySet(),
     val recommendedTags: List<TagRecommendation> = emptyList(),
+)
+
+internal data class CognitiveMapUiState(
+    val visible: Boolean = false,
+    val loading: Boolean = false,
+    val mode: CognitiveMapMode = CognitiveMapMode.TOPIC_MAP,
+    val activeMonthFilter: String? = null,
+    val reclusterForMonth: Boolean = false,
+    val customClusterNames: Map<String, String> = emptyMap(),
+    val snapshot: CognitiveMapSnapshot? = null,
+    val errorMessage: String? = null,
 )

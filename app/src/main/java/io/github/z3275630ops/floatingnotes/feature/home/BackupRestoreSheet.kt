@@ -20,6 +20,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.z3275630ops.floatingnotes.data.backup.BackupUiState
+import io.github.z3275630ops.floatingnotes.data.backup.ExternalImportCommitResult
+import io.github.z3275630ops.floatingnotes.data.backup.ExternalImportPreview
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreMode
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.RestorePreflight
@@ -55,11 +57,21 @@ internal fun BackupRestoreSheet(
     onConfirmRestore: () -> Unit,
     onDismissPreflight: () -> Unit,
     onClearOutcome: () -> Unit,
+    externalImportPreview: ExternalImportPreview? = null,
+    externalImportBusy: Boolean = false,
+    externalImportOutcome: ExternalImportCommitResult? = null,
+    externalImportError: String? = null,
+    skipDuplicateImports: Boolean = true,
+    onPickExternalImport: (Uri, String) -> Unit = { _, _ -> },
+    onToggleSkipDuplicateImports: (Boolean) -> Unit = {},
+    onConfirmExternalImport: () -> Unit = {},
+    onDismissExternalImport: () -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
     val scale = mintFontScale()
     val today = remember { LocalDate.now().toString() }
     var showMarkdownConfirm by remember { mutableStateOf(false) }
+    val anyBusy = state.busy || externalImportBusy
 
     val fullBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
@@ -73,14 +85,22 @@ internal fun BackupRestoreSheet(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri -> if (uri != null) onPreflightBackup(uri) }
 
+    val externalImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            onPickExternalImport(uri, "")
+        }
+    }
+
     MintBottomSheet(
-        onDismissRequest = { if (!state.busy) onDismiss() },
+        onDismissRequest = { if (!anyBusy) onDismiss() },
         dark = dark,
         backdrop = backdrop,
         title = "备份、恢复与导出",
         subtitle = "本机 ZIP 与 Markdown",
         leadingLabel = "关闭",
-        dismissOnClickOutside = !state.busy,
+        dismissOnClickOutside = !anyBusy,
         maxHeightFraction = 0.92f,
         modifier = Modifier.testTag("backup-restore-sheet"),
     ) {
@@ -92,7 +112,7 @@ internal fun BackupRestoreSheet(
                 .padding(top = 8.dp, bottom = 14.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            if (state.busy) {
+            if (anyBusy) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -106,7 +126,7 @@ internal fun BackupRestoreSheet(
                     ) {
                         MintActivityIndicator(color = scheme.primary)
                         Text(
-                            text = state.busyLabel ?: "正在处理本地备份…",
+                            text = if (externalImportBusy) "正在解析或导入外部笔记…" else (state.busyLabel ?: "正在处理本地备份…"),
                             style = MaterialTheme.typography.bodyMedium,
                             color = scheme.onSurface,
                         )
@@ -266,7 +286,7 @@ internal fun BackupRestoreSheet(
                         subtitle = "先预检版本号、校验和与冲突数量，确认后再执行写入",
                         leadingIcon = MintIcons.Restore,
                         showChevron = true,
-                        enabled = !state.busy,
+                        enabled = !anyBusy,
                         dark = dark,
                         modifier = Modifier.testTag("backup-import-zip"),
                         onClick = {
@@ -274,6 +294,56 @@ internal fun BackupRestoreSheet(
                             restorePickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
                         },
                     )
+                }
+            }
+
+            externalImportError?.let { err ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(mintDestructiveColor(dark).copy(alpha = 0.12f))
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .testTag("external-import-error"),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            text = err,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            color = mintDestructiveColor(dark),
+                        )
+                        Text(
+                            text = "现有笔记库与本地附件未作任何修改。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            externalImportOutcome?.let { outcome ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(scheme.primary.copy(alpha = if (dark) 0.18f else 0.10f))
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .testTag("external-import-outcome"),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            text = "迁移完成：导入 ${outcome.importedCount} 篇笔记，跳过重复 ${outcome.skippedDuplicates} 篇，新建标签 ${outcome.createdTagCount} 个。",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = scheme.primary,
+                        )
+                        outcome.warnings.forEach { warn ->
+                            Text(
+                                text = "• $warn",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -305,6 +375,33 @@ internal fun BackupRestoreSheet(
                             onClick = { onToggleTodoStartup(!todoStartupEnabled) },
                         )
                     }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "外部迁移",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = (14.5f * scale).sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+                MintGroupedSection(dark = dark) {
+                    MintGroupedRow(
+                        label = "从外部工具迁移（flomo / Markdown / JSON）",
+                        subtitle = "支持单篇 .md、Markdown .zip、flomo .html 与 .json，预览去重后再写入",
+                        leadingIcon = MintIcons.FileDown,
+                        showChevron = true,
+                        enabled = !anyBusy,
+                        dark = dark,
+                        modifier = Modifier.testTag("backup-import-external"),
+                        onClick = {
+                            onClearOutcome()
+                            externalImportLauncher.launch(arrayOf("*/*"))
+                        },
+                    )
                 }
             }
         }
@@ -339,6 +436,136 @@ internal fun BackupRestoreSheet(
             onConfirm = onConfirmRestore,
             onDismiss = onDismissPreflight,
         )
+    }
+
+    externalImportPreview?.let { preview ->
+        ExternalImportPreviewSheet(
+            preview = preview,
+            skipDuplicates = skipDuplicateImports,
+            busy = externalImportBusy,
+            backdrop = backdrop,
+            dark = dark,
+            onToggleSkipDuplicates = onToggleSkipDuplicateImports,
+            onConfirm = onConfirmExternalImport,
+            onDismiss = onDismissExternalImport,
+        )
+    }
+}
+
+@Composable
+private fun ExternalImportPreviewSheet(
+    preview: ExternalImportPreview,
+    skipDuplicates: Boolean,
+    busy: Boolean,
+    backdrop: GlassBackdrop,
+    dark: Boolean,
+    onToggleSkipDuplicates: (Boolean) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val scale = mintFontScale()
+    val importCount = if (skipDuplicates) preview.newCount else preview.totalParsed
+
+    MintBottomSheet(
+        onDismissRequest = { if (!busy) onDismiss() },
+        dark = dark,
+        backdrop = backdrop,
+        title = "外部迁移预检",
+        subtitle = "${preview.sourceName} · ${preview.format.displayName}",
+        leadingLabel = "取消",
+        trailingLabel = if (busy) "导入中…" else "导入",
+        onTrailingClick = onConfirm,
+        trailingEnabled = !busy && preview.totalParsed > 0,
+        dismissOnClickOutside = !busy,
+        maxHeightFraction = 0.92f,
+        modifier = Modifier.testTag("external-import-preview-sheet"),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .padding(top = 8.dp, bottom = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            MintGroupedSection(dark = dark) {
+                MintGroupedRow(
+                    label = "识别格式",
+                    trailingText = preview.format.displayName,
+                    dark = dark,
+                )
+                MintGroupedDivider(dark = dark)
+                MintGroupedRow(
+                    label = "解析笔记统计",
+                    subtitle = "共 ${preview.totalParsed} 篇 · 新增 ${preview.newCount} 篇 · 重复 ${preview.duplicateCount} 篇",
+                    dark = dark,
+                )
+                MintGroupedDivider(dark = dark)
+                MintGroupedRow(
+                    label = "识别标签",
+                    trailingText = "${preview.uniqueTagCount} 个",
+                    dark = dark,
+                )
+            }
+
+            if (preview.lossyWarnings.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "兼容性提示",
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontSize = (14.5f * scale).sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                    MintGroupedSection(dark = dark) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            preview.lossyWarnings.forEach { warn ->
+                                Text(
+                                    text = "• $warn",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            MintGroupedSection(dark = dark) {
+                MintGroupedRow(
+                    label = "跳过重复笔记",
+                    subtitle = "按内容哈希与标准化正文自动比对现有笔记库",
+                    dark = dark,
+                    trailingContent = {
+                        MintSwitch(
+                            checked = skipDuplicates,
+                            onCheckedChange = onToggleSkipDuplicates,
+                            dark = dark,
+                            modifier = Modifier.testTag("external-import-skip-duplicates"),
+                        )
+                    },
+                    onClick = { onToggleSkipDuplicates(!skipDuplicates) },
+                )
+            }
+
+            MintPillButton(
+                label = if (busy) "正在导入…" else "确认导入 $importCount 篇笔记",
+                icon = MintIcons.FileDown,
+                primary = true,
+                enabled = !busy && preview.totalParsed > 0,
+                dark = dark,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("external-import-confirm"),
+                onClick = onConfirm,
+            )
+        }
     }
 }
 

@@ -77,6 +77,7 @@ import io.github.z3275630ops.floatingnotes.feature.capture.EditorUndoHandle
 import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
 import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
 import io.github.z3275630ops.floatingnotes.feature.capture.rememberEditorUndoHandle
+import io.github.z3275630ops.floatingnotes.feature.explore.CognitiveMapSheet
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreScreen
 import io.github.z3275630ops.floatingnotes.feature.share.ShareCardSheet
 import io.github.z3275630ops.floatingnotes.feature.stats.StatsSheet
@@ -184,7 +185,9 @@ internal fun NotesShell(
         val historyState by model.historyState.collectAsStateWithLifecycle()
         val trashPurgeImpact by model.trashPurgeImpact.collectAsStateWithLifecycle()
         val backupState by model.backupState.collectAsStateWithLifecycle()
+        val externalImportState by model.externalImportState.collectAsStateWithLifecycle()
         val exploreState by model.exploreState.collectAsStateWithLifecycle()
+        val cognitiveMapState by model.cognitiveMapState.collectAsStateWithLifecycle()
         val agentState by model.agentState.collectAsStateWithLifecycle()
         val aiSettingsState by model.aiSettingsState.collectAsStateWithLifecycle()
         val attachmentStorageBytes by model.attachmentStorageBytes.collectAsStateWithLifecycle()
@@ -644,6 +647,15 @@ internal fun NotesShell(
             onConfirmRestore = { model.confirmRestoreFromPreflight() },
             onDismissPreflight = { model.dismissRestorePreflight() },
             onClearOutcome = { model.clearBackupOutcome() },
+            externalImportPreview = externalImportState.preview,
+            externalImportBusy = externalImportState.busy,
+            externalImportOutcome = externalImportState.outcome,
+            externalImportError = externalImportState.error,
+            skipDuplicateImports = externalImportState.skipDuplicates,
+            onPickExternalImport = { uri, name -> model.pickExternalImport(uri, name) },
+            onToggleSkipDuplicateImports = { skip -> model.toggleSkipDuplicateImports(skip) },
+            onConfirmExternalImport = { model.confirmExternalImport() },
+            onDismissExternalImport = { model.dismissExternalImport() },
         )
     }
 
@@ -726,6 +738,29 @@ internal fun NotesShell(
                 selectedNotebook = null
                 descendants = true
                 page = Page.Library
+            },
+        )
+    }
+
+    if (cognitiveMapState.visible) {
+        CognitiveMapSheet(
+            state = cognitiveMapState,
+            dark = dark,
+            backdrop = backdrop,
+            onDismiss = { model.closeCognitiveMap() },
+            onSelectMode = { mode -> model.setCognitiveMapMode(mode) },
+            onSelectMonth = { month -> model.setCognitiveMapMonthFilter(month) },
+            onToggleRecluster = { recluster -> model.setCognitiveMapReclusterForMonth(recluster) },
+            onRenameCluster = { clusterId, customName -> model.renameCognitiveMapCluster(clusterId, customName) },
+            onOpenNote = { noteId ->
+                model.closeCognitiveMap()
+                launchEditor(noteId = noteId)
+            },
+            onStartWalkFromNote = { noteId ->
+                model.closeCognitiveMap()
+                exploreSectionIndex = 2
+                page = Page.Explore
+                model.startWalk(seedNoteId = noteId, seedTagId = null)
             },
         )
     }
@@ -1360,6 +1395,7 @@ internal fun NotesShell(
                                                 selectedSectionIndex = exploreSectionIndex,
                                                 onSelectSection = { exploreSectionIndex = it },
                                                 onMarkReviewCardSeen = { model.markReviewCardSeen(it) },
+                                                onOpenCognitiveMap = { model.openCognitiveMap() },
                                             )
                                         }
                                     }
