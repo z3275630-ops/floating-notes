@@ -42,6 +42,8 @@ class MainActivity : ComponentActivity() {
     private val notes by viewModels<NotesViewModel>()
     private var deepLinkSeq by mutableLongStateOf(0L)
     private var deepLinkRequest by mutableStateOf<ShellDeepLinkRequest?>(null)
+    private var pendingVoiceStartOnPermission by mutableStateOf(false)
+    private var pendingVoiceStartOnForeground by mutableStateOf(false)
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -49,9 +51,34 @@ class MainActivity : ComponentActivity() {
         // Capability checks in UI automatically refresh on ON_RESUME.
     }
 
+    private val recordAudioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { allowed ->
+        val shouldStart = pendingVoiceStartOnPermission
+        pendingVoiceStartOnPermission = false
+        val session = notes.editor ?: return@registerForActivityResult
+        if (allowed && shouldStart) {
+            if (notes.isForeground) {
+                notes.startRecording(session)
+            } else {
+                pendingVoiceStartOnForeground = true
+            }
+        } else if (!allowed) {
+            session.voiceStatus = "麦克风权限未开启，可在系统设置授权后重试"
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         notes.onForeground()
+        if (pendingVoiceStartOnForeground) {
+            pendingVoiceStartOnForeground = false
+            notes.editor?.let { session ->
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    notes.startRecording(session)
+                }
+            }
+        }
     }
 
     override fun onStop() {
@@ -76,20 +103,35 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             var lab by rememberSaveable { mutableStateOf<Lab?>(null) }
+            val appPrefs by notes.appPreferencesSnapshot.collectAsStateWithLifecycle()
             val pendingTasksCount by notes.pendingTasksCount.collectAsStateWithLifecycle()
             val todoFilterNoteIds by notes.todoFilterNoteIds.collectAsStateWithLifecycle()
             val noteDueBadges by notes.noteDueBadges.collectAsStateWithLifecycle()
             val initialStartOnTasks = remember {
-                val initialNoteId = intent?.getStringExtra(ReminderScheduler.EXTRA_NOTE_ID)?.takeIf { it.isNotBlank() }
-                val initialOpenTasks = intent?.getBooleanExtra(ReminderScheduler.EXTRA_OPEN_TASKS, false) == true
-                initialNoteId == null && (initialOpenTasks || notes.taskPreferences.todoStartupEnabled)
+                val action = intent?.action
+                val hasShortcutCaptureOrVoice = action == WidgetContract.ACTION_SHORTCUT_CAPTURE ||
+                    action == WidgetContract.ACTION_SHORTCUT_VOICE
+                val hasWidgetAction = !intent?.getStringExtra(WidgetContract.EXTRA_WIDGET_ACTION).isNullOrBlank()
+                val initialNoteId = (
+                    intent?.getStringExtra(ReminderScheduler.EXTRA_NOTE_ID)
+                        ?: intent?.getStringExtra(WidgetContract.EXTRA_NOTE_ID)
+                    )?.takeIf { it.isNotBlank() }
+                    ?: intent?.data?.takeIf { it.scheme == "floatingnotes" && it.host == "task" }
+                        ?.pathSegments?.getOrNull(0)?.takeIf { it.isNotBlank() }
+                val initialOpenTasks = intent?.getBooleanExtra(ReminderScheduler.EXTRA_OPEN_TASKS, false) == true ||
+                    action == WidgetContract.ACTION_SHORTCUT_TASKS ||
+                    intent?.data?.let { it.scheme == "floatingnotes" && it.host == "tasks" } == true
+                !hasShortcutCaptureOrVoice &&
+                    !hasWidgetAction &&
+                    initialNoteId == null &&
+                    (initialOpenTasks || notes.appPreferences.openTasksFirst)
             }
 
             if (deepLinkRequest != null && lab != null) {
                 lab = null
             }
 
-            FloatingNotesTheme {
+            FloatingNotesTheme(fontScaleMultiplier = appPrefs.fontScaleTier.multiplier) {
                 BackHandler(enabled = lab != null) { lab = null }
                 when (lab) {
                     Lab.Material -> MaterialLab { lab = null }
@@ -124,6 +166,7 @@ class MainActivity : ComponentActivity() {
                         deepLinkRequest = deepLinkRequest,
                         onConsumeDeepLink = { deepLinkRequest = null },
                         onRequestNotificationPermission = ::requestNotificationPermission,
+                        onRequestVoiceCapture = ::requestVoiceCapture,
                     )
                 }
             }
@@ -132,15 +175,33 @@ class MainActivity : ComponentActivity() {
 
     private fun extractDeepLink(intent: Intent?): ShellDeepLinkRequest? {
         intent ?: return null
+        val shortcutAction = intent.action?.takeIf {
+            it == WidgetContract.ACTION_SHORTCUT_CAPTURE ||
+                it == WidgetContract.ACTION_SHORTCUT_VOICE ||
+                it == WidgetContract.ACTION_SHORTCUT_TASKS
+        }
+        val dataUri = intent.data?.takeIf { it.scheme == "floatingnotes" }
+        val uriHost = dataUri?.host
+        val uriSegments = dataUri?.pathSegments.orEmpty()
+        val uriNoteId = if (uriHost == "task") uriSegments.getOrNull(0)?.takeIf { it.isNotBlank() } else null
+        val uriBlockId = if (uriHost == "task") uriSegments.getOrNull(1)?.takeIf { it.isNotBlank() } else null
+        val uriOpenTasks = uriHost == "tasks" || uriHost == "task"
+
         val widgetAction = intent.getStringExtra(WidgetContract.EXTRA_WIDGET_ACTION)?.takeIf { it.isNotBlank() }
         val sessionId = intent.getStringExtra(WidgetContract.EXTRA_REVIEW_SESSION_ID)?.takeIf { it.isNotBlank() }
         val noteId = (
             intent.getStringExtra(ReminderScheduler.EXTRA_NOTE_ID)
                 ?: intent.getStringExtra(WidgetContract.EXTRA_NOTE_ID)
+                ?: uriNoteId
             )?.takeIf { it.isNotBlank() }
-        val blockId = intent.getStringExtra(ReminderScheduler.EXTRA_BLOCK_ID)?.takeIf { it.isNotBlank() }
-        val openTasks = intent.getBooleanExtra(ReminderScheduler.EXTRA_OPEN_TASKS, false)
-        if (!openTasks && noteId == null && widgetAction == null) return null
+        val blockId = (
+            intent.getStringExtra(ReminderScheduler.EXTRA_BLOCK_ID)
+                ?: uriBlockId
+            )?.takeIf { it.isNotBlank() }
+        val openTasks = intent.getBooleanExtra(ReminderScheduler.EXTRA_OPEN_TASKS, false) ||
+            shortcutAction == WidgetContract.ACTION_SHORTCUT_TASKS ||
+            uriOpenTasks
+        if (!openTasks && noteId == null && widgetAction == null && shortcutAction == null) return null
         deepLinkSeq += 1L
         return ShellDeepLinkRequest(
             seq = deepLinkSeq,
@@ -149,7 +210,23 @@ class MainActivity : ComponentActivity() {
             blockId = blockId,
             widgetAction = widgetAction,
             reviewSessionId = sessionId,
+            shortcutAction = shortcutAction,
         )
+    }
+
+    private fun requestVoiceCapture() {
+        val session = notes.editor ?: return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            if (notes.isForeground) {
+                pendingVoiceStartOnForeground = false
+                notes.startRecording(session)
+            } else {
+                pendingVoiceStartOnForeground = true
+            }
+        } else {
+            pendingVoiceStartOnPermission = true
+            recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     private fun requestNotificationPermission() {
@@ -172,11 +249,14 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun FloatingNotesTheme(content: @Composable () -> Unit) {
+fun FloatingNotesTheme(
+    fontScaleMultiplier: Float = 1.0f,
+    content: @Composable () -> Unit,
+) {
     val dark = isSystemInDarkTheme()
     MaterialTheme(
         colorScheme = mintColorScheme(dark),
-        typography = mintTypography(),
+        typography = mintTypography(fontScaleMultiplier),
         content = content,
     )
 }

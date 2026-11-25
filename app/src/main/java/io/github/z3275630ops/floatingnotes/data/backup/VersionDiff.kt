@@ -1,5 +1,13 @@
 package io.github.z3275630ops.floatingnotes.data.backup
 
+import io.github.z3275630ops.floatingnotes.core.model.safeUtf16Slice
+
+internal data class ParsedDocMark(
+    val type: String,
+    val start: Int,
+    val end: Int,
+)
+
 internal data class ParsedDocBlock(
     val id: String,
     val type: String,
@@ -13,6 +21,13 @@ internal data class ParsedDocBlock(
     val referenceEnd: Int?,
     val referenceLabel: String?,
     val raw: Map<String, Any?>,
+    val level: Int = 1,
+    val indent: Int = 0,
+    val tone: String? = null,
+    val title: String? = null,
+    val collapsed: Boolean = false,
+    val dividerStyle: String? = null,
+    val marks: List<ParsedDocMark> = emptyList(),
 )
 
 internal object VersionDiff {
@@ -40,13 +55,31 @@ internal object VersionDiff {
             }
             val type = obj.reqString("type")
             val label = obj.optString("label")
-            val text = if (type == "reference") label.orEmpty() else obj.optString("text").orEmpty()
+            val text = when (type) {
+                "reference" -> label.orEmpty()
+                "divider" -> ""
+                else -> obj.optString("text").orEmpty()
+            }
             val checked = (obj["checked"] as? Boolean) ?: false
             val attachmentId = if (type in MEDIA_TYPES) obj.optString("attachment_id")?.takeIf { it.isNotBlank() } else null
             val refTarget = if (type == "reference") obj.optString("target_note_id")?.takeIf { it.isNotBlank() } else null
             val refBlockId = if (type == "reference") obj.optString("target_block_id")?.takeIf { it.isNotBlank() } else null
             val refStart = if (type == "reference") obj.optLong("start")?.toInt()?.takeIf { it >= 0 } else null
             val refEnd = if (type == "reference") obj.optLong("end")?.toInt()?.takeIf { it >= 0 } else null
+            val level = (obj.optLong("level")?.toInt() ?: 1).coerceIn(1, 3)
+            val indent = (obj.optLong("indent")?.toInt() ?: 0).coerceIn(0, 4)
+            val tone = if (type == "callout") obj.optString("tone")?.takeIf { it.isNotBlank() } else null
+            val title = if (type == "toggle") obj.optString("title") else null
+            val collapsed = if (type == "toggle") ((obj["collapsed"] as? Boolean) ?: false) else false
+            val dividerStyle = if (type == "divider") obj.optString("style")?.takeIf { it.isNotBlank() } else null
+            val rawMarks = (obj["marks"] as? List<*>)?.mapNotNull { entry ->
+                @Suppress("UNCHECKED_CAST")
+                val m = entry as? Map<String, Any?> ?: return@mapNotNull null
+                val mType = m["type"] as? String ?: return@mapNotNull null
+                val mStart = (m["start"] as? Number)?.toInt() ?: return@mapNotNull null
+                val mEnd = (m["end"] as? Number)?.toInt() ?: return@mapNotNull null
+                if (mStart >= 0 && mEnd > mStart) ParsedDocMark(mType, mStart, mEnd) else null
+            }.orEmpty()
             ParsedDocBlock(
                 id = id,
                 type = type,
@@ -60,6 +93,13 @@ internal object VersionDiff {
                 referenceEnd = refEnd,
                 referenceLabel = label,
                 raw = obj,
+                level = level,
+                indent = indent,
+                tone = tone,
+                title = title,
+                collapsed = collapsed,
+                dividerStyle = dividerStyle,
+                marks = rawMarks,
             )
         }
     }
@@ -151,6 +191,7 @@ internal object VersionDiff {
         val firstLine = title?.trim()?.takeIf { it.isNotEmpty() }
             ?: blocks.firstNotNullOfOrNull { block ->
                 when {
+                    block.type == "toggle" && !block.title.isNullOrBlank() -> block.title.trim()
                     block.text.isNotBlank() -> block.text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()
                     block.attachmentId != null -> when (block.type) {
                         "image" -> "[图片附件]"
@@ -158,6 +199,7 @@ internal object VersionDiff {
                         "video" -> "[视频附件]"
                         else -> "[附件]"
                     }
+                    block.type == "divider" -> "[分割线]"
                     else -> null
                 }
             }
@@ -230,13 +272,80 @@ internal object VersionDiff {
         attachmentLabels: Map<String, String>,
     ): List<String> {
         val lines = mutableListOf<String>()
+        val numberedCounters = IntArray(5)
         for (block in blocks) {
+            if (block.type != "numbered") {
+                val resetFrom = if (block.type == "bullet" || block.type == "checkbox") {
+                    block.indent.coerceIn(0, 4)
+                } else {
+                    0
+                }
+                for (i in resetFrom until numberedCounters.size) {
+                    numberedCounters[i] = 0
+                }
+            }
+            val indentPrefix = if (block.indent > 0) "  ".repeat(block.indent.coerceIn(0, 4)) else ""
+            val markTag = formatMarksBadge(block.text, block.marks)
             when (block.type) {
+                "heading" -> {
+                    val body = block.text.trim()
+                    if (body.isNotEmpty() || markTag.isNotEmpty()) {
+                        lines.add("$indentPrefix${"#".repeat(block.level.coerceIn(1, 3))} $body$markTag")
+                    }
+                }
+                "bullet" -> {
+                    val body = block.text.trim()
+                    if (body.isNotEmpty() || markTag.isNotEmpty()) {
+                        lines.add("$indentPrefix• $body$markTag")
+                    }
+                }
+                "numbered" -> {
+                    val d = block.indent.coerceIn(0, 4)
+                    numberedCounters[d] += 1
+                    for (i in (d + 1) until numberedCounters.size) numberedCounters[i] = 0
+                    val body = block.text.trim()
+                    if (body.isNotEmpty() || markTag.isNotEmpty()) {
+                        lines.add("$indentPrefix${numberedCounters[d]}. $body$markTag")
+                    }
+                }
                 "checkbox" -> {
                     val mark = if (block.checked) "[✓]" else "[ ]"
                     val due = block.dueDate?.let { "（截止 $it）" }.orEmpty()
                     val body = block.text.trim().ifEmpty { "未命名待办" }
-                    lines.add("$mark $body$due")
+                    lines.add("$indentPrefix$mark $body$due$markTag")
+                }
+                "quote" -> {
+                    val body = block.text.trim()
+                    if (body.isNotEmpty() || markTag.isNotEmpty()) {
+                        lines.add("$indentPrefix> $body$markTag")
+                    }
+                }
+                "callout" -> {
+                    val toneLabel = when (block.tone) {
+                        "tip" -> "技巧"
+                        "warn" -> "提醒"
+                        "important" -> "重点"
+                        else -> "信息"
+                    }
+                    val body = block.text.trim().ifEmpty { "提示内容" }
+                    lines.add("$indentPrefix[提示($toneLabel)] $body$markTag")
+                }
+                "toggle" -> {
+                    val arrow = if (block.collapsed) "▸" else "▾"
+                    val title = block.title?.trim().orEmpty().ifEmpty { "未命名折叠块" }
+                    lines.add("$indentPrefix[折叠$arrow] $title")
+                    var firstBody = true
+                    block.text.lines().forEach { line ->
+                        if (line.isNotBlank()) {
+                            val suffix = if (firstBody) markTag else ""
+                            firstBody = false
+                            lines.add("$indentPrefix  $line$suffix")
+                        }
+                    }
+                }
+                "divider" -> {
+                    val styleLabel = if (block.dividerStyle == "dashed") "虚线" else "实线"
+                    lines.add("——— 分割线（$styleLabel）———")
                 }
                 in MEDIA_TYPES -> {
                     val kindLabel = when (block.type) {
@@ -256,14 +365,38 @@ internal object VersionDiff {
                     if (block.text.isEmpty()) {
                         // Ignore trailing blank editing line so diffs stay focused on content.
                     } else {
+                        var first = true
                         block.text.lines().forEach { line ->
-                            if (line.isNotBlank()) lines.add(line)
+                            if (line.isNotBlank()) {
+                                val lineOut = buildString {
+                                    append(indentPrefix)
+                                    append(line)
+                                    if (first) append(markTag)
+                                }
+                                first = false
+                                lines.add(lineOut)
+                            }
                         }
                     }
                 }
             }
         }
         return if (lines.isEmpty()) listOf("（空内容）") else lines
+    }
+
+    private fun formatMarksBadge(text: String, marks: List<ParsedDocMark>): String {
+        if (marks.isEmpty() || text.isEmpty()) return ""
+        val parts = marks.mapNotNull { mark ->
+            val label = when (mark.type) {
+                "bold" -> "加粗"
+                "highlight" -> "高亮"
+                "italic" -> "斜体"
+                else -> null
+            } ?: return@mapNotNull null
+            val snippet = safeUtf16Slice(text, mark.start, mark.end).trim()
+            if (snippet.isEmpty()) null else "$label「${safeUtf16Slice(snippet, 0, 16)}」"
+        }.distinct()
+        return if (parts.isEmpty()) "" else " · [${parts.joinToString("、")}]"
     }
 
     private fun computeLineDiff(

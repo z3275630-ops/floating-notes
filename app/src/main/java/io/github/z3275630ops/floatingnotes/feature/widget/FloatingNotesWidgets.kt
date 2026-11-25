@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.z3275630ops.floatingnotes.MainActivity
 import io.github.z3275630ops.floatingnotes.R
 import io.github.z3275630ops.floatingnotes.data.local.NotesDatabase
@@ -85,7 +86,7 @@ class FloatingNotesQuickCaptureWidgetProvider : AppWidgetProvider() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 val activeCount = runCatching {
-                    NotesDatabase.open(context).notes().allNotes().count { it.deletedAt == null }
+                    NotesDatabase.open(context).notes().countActiveNotes()
                 }.getOrDefault(0)
                 val privacyOn = WidgetPreferences(context).privacyModeEnabled
                 for (widgetId in appWidgetIds) {
@@ -219,7 +220,10 @@ class WidgetConfigActivity : ComponentActivity() {
                     )
                     Text(
                         text = "为保护隐私，默认在桌面和锁屏状态下隐藏正文摘要；点击小组件卡片才会打开浮记查看同一回顾会话。",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp,
+                        ),
                         color = scheme.onSurfaceVariant,
                     )
                     MintGroupedSection(dark = dark) {

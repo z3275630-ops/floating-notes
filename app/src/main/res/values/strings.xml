@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">浮记</string>
     <string name="prototype_notice">工程样例 · 内容仅存内存，关闭后不会保存</string>
@@ -7,4 +8,11 @@
     <string name="widget_quick_capture_desc">一键开启快速记笔记、探索回顾或本机 Agent 助手</string>
     <string name="widget_daily_review_label">浮记 · 每日回顾</string>
     <string name="widget_daily_review_desc">展示每日回顾入口（默认开启锁屏与桌面隐私保护，可点开原会话）</string>
+    <string name="shortcut_quick_capture_short">快速记笔记</string>
+    <string name="shortcut_quick_capture_long">快速新建一条笔记</string>
+    <string name="shortcut_voice_capture_short">语音速记</string>
+    <string name="shortcut_voice_capture_long">立即开始语音记录</string>
+    <string name="shortcut_open_tasks_short">待办清单</string>
+    <string name="shortcut_open_tasks_long">打开今日待办与提醒</string>
+    <string name="shortcut_disabled">快捷方式暂不可用</string>
 </resources>

@@ -18,6 +18,10 @@ internal object WidgetContract {
     const val ACTION_OPEN_AGENT = "open_agent"
     const val ACTION_OPEN_REVIEW_SESSION = "open_review_session"
     const val ACTION_REFRESH_WIDGET = "io.github.z3275630ops.floatingnotes.ACTION_REFRESH_WIDGET"
+
+    const val ACTION_SHORTCUT_CAPTURE = "io.github.z3275630ops.floatingnotes.ACTION_SHORTCUT_CAPTURE"
+    const val ACTION_SHORTCUT_VOICE = "io.github.z3275630ops.floatingnotes.ACTION_SHORTCUT_VOICE"
+    const val ACTION_SHORTCUT_TASKS = "io.github.z3275630ops.floatingnotes.ACTION_SHORTCUT_TASKS"
 }
 
 internal data class ReviewWidgetSnapshot(

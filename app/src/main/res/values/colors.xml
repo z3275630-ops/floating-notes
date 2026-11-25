@@ -2,4 +2,15 @@
 <resources>
     <color name="window_canvas">#F6F4EF</color>
     <color name="window_mint">#F6F4EF</color>
+    <color name="widget_surface_start">#F3FBF6</color>
+    <color name="widget_surface_end">#E6F4EC</color>
+    <color name="widget_surface_stroke">#C7E3D2</color>
+    <color name="widget_pill_primary">#187D52</color>
+    <color name="widget_pill_primary_text">#FFFFFF</color>
+    <color name="widget_pill_secondary">#FFFFFF</color>
+    <color name="widget_pill_secondary_stroke">#D2E6DA</color>
+    <color name="widget_text_primary">#11281E</color>
+    <color name="widget_text_secondary">#476154</color>
+    <color name="widget_text_muted">#5C7A6B</color>
+    <color name="widget_accent_text">#187D52</color>
 </resources>

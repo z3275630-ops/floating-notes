@@ -108,18 +108,18 @@ internal fun StatsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 540.dp)
+                .heightIn(max = 580.dp)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             // 1. Source composition & scope filter (Q039)
             MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -169,8 +169,8 @@ internal fun StatsSheet(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -484,8 +484,8 @@ private fun StatMetricBox(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
             .background(mintSecondaryFill(dark))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
             text = title,
@@ -517,6 +517,7 @@ private fun WeeksHeatmapGrid(
     val weekColumns = remember(cells) { cells.chunked(7) }
     val scrollState = rememberScrollState(initial = Int.MAX_VALUE)
     val weekdayLabels = listOf("一", "二", "三", "四", "五", "六", "日")
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 14.sp)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -524,12 +525,12 @@ private fun WeeksHeatmapGrid(
         verticalAlignment = Alignment.Bottom,
     ) {
         Column(
-            modifier = Modifier.padding(top = 18.dp),
+            modifier = Modifier.padding(top = 21.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             weekdayLabels.forEach { label ->
-                Box(modifier = Modifier.size(width = 16.dp, height = 14.dp), contentAlignment = Alignment.Center) {
-                    Text(label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp), color = mintTertiaryTextColor(dark))
+                Box(modifier = Modifier.size(width = 18.dp, height = 14.dp), contentAlignment = Alignment.Center) {
+                    Text(label, style = labelStyle, color = mintTertiaryTextColor(dark))
                 }
             }
         }
@@ -548,11 +549,11 @@ private fun WeeksHeatmapGrid(
                     "${firstDay.monthValue}月"
                 } else ""
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Box(modifier = Modifier.height(15.dp), contentAlignment = Alignment.CenterStart) {
+                    Box(modifier = Modifier.height(18.dp), contentAlignment = Alignment.CenterStart) {
                         if (monthLabel.isNotEmpty()) {
                             Text(
                                 text = monthLabel,
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                style = labelStyle,
                                 color = mintTertiaryTextColor(dark),
                                 maxLines = 1,
                                 softWrap = false,

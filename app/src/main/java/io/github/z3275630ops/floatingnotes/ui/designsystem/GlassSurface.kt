@@ -1,7 +1,5 @@
 package io.github.z3275630ops.floatingnotes.ui.designsystem
 
-import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
 import androidx.annotation.RequiresApi
@@ -12,7 +10,6 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -26,6 +23,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RenderEffect as ComposeRenderEffect
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -90,26 +88,44 @@ fun GlassSurface(
     val effective = tier.supportedOn(Build.VERSION.SDK_INT)
     val density = LocalDensity.current
     val radius = shapeRadius
-    var position by remember { mutableStateOf(Offset.Zero) }
-    var viewport by remember { mutableStateOf(IntSize.Zero) }
-    val effect = remember(effective, dark, viewport, density, radius) {
-        if (effective == GlassTier.Reduced || viewport == IntSize.Zero || Build.VERSION.SDK_INT < 31) {
+    val blurPx = with(density) {
+        when (effective) {
+            GlassTier.Enhanced -> 16.dp
+            else -> 22.dp
+        }.toPx()
+    }
+    val radiusPx = with(density) { radius.toPx() }
+    val amplitudePx = with(density) { 4.dp.toPx() }
+    val bandPx = with(density) { 15.dp.toPx() }
+    val effectHolder: GlassEffectHolder? = remember(effective) {
+        if (effective == GlassTier.Reduced || Build.VERSION.SDK_INT < 31) {
             null
-        } else with(density) {
-            val blur = when (effective) {
-                GlassTier.Enhanced -> 16.dp
-                else -> 22.dp
-            }.toPx()
-            val blurred = RenderEffect.createBlurEffect(blur, blur, Shader.TileMode.CLAMP)
-            if (effective == GlassTier.Enhanced && Build.VERSION.SDK_INT >= 33) {
-                refract(viewport, radius.toPx(), 4.dp.toPx(), 15.dp.toPx(), blurred)
-            } else {
-                blurred.asComposeRenderEffect()
-            }
+        } else {
+            createApi31GlassEffectHolder()
         }
     }
+    var position by remember { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+    val effect: ComposeRenderEffect? = remember(
+        effectHolder,
+        effective,
+        viewport,
+        blurPx,
+        radiusPx,
+        amplitudePx,
+        bandPx,
+    ) {
+        effectHolder?.resolve(
+            effective = effective,
+            viewport = viewport,
+            blurPx = blurPx,
+            radiusPx = radiusPx,
+            amplitudePx = amplitudePx,
+            bandPx = bandPx,
+        )
+    }
     val tint = if (dark) {
-        if (elevatedModal) Color(0xFF1C1C1A) else Color(0xFF1C1C1A)
+        if (elevatedModal) Color(0xFF252421) else Color(0xFF1C1C1A)
     } else {
         if (elevatedModal) Color(0xFFFFFFFF) else Color(0xFFFCFBF8)
     }
@@ -186,31 +202,100 @@ fun GlassSurface(
     }
 }
 
-@RequiresApi(33)
-private fun refract(size: IntSize, radius: Float, amplitude: Float, band: Float, blurred: RenderEffect) =
-    RuntimeShader("""
-        uniform shader content;
-        uniform float2 resolution;
-        uniform float radius;
-        uniform float amplitude;
-        uniform float band;
+private interface GlassEffectHolder {
+    fun resolve(
+        effective: GlassTier,
+        viewport: IntSize,
+        blurPx: Float,
+        radiusPx: Float,
+        amplitudePx: Float,
+        bandPx: Float,
+    ): ComposeRenderEffect?
+}
 
-        half4 main(float2 p) {
-            float2 halfSize = resolution * 0.5;
-            float2 local = p - halfSize;
-            float2 q = abs(local) - halfSize + radius;
-            float distanceToEdge = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
-            float edge = 1.0 - smoothstep(0.0, band, -distanceToEdge);
-            float2 direction = local / max(length(local), 0.001);
-            float2 sampleAt = clamp(p - direction * amplitude * edge, float2(0.0), resolution - 0.5);
-            return content.eval(sampleAt);
+@RequiresApi(31)
+private fun createApi31GlassEffectHolder(): GlassEffectHolder = Api31GlassEffectHolder()
+
+@RequiresApi(31)
+private interface Api33RefractBridge {
+    fun chainRefract(
+        size: IntSize,
+        radius: Float,
+        amplitude: Float,
+        band: Float,
+        blurred: android.graphics.RenderEffect,
+    ): ComposeRenderEffect
+}
+
+@RequiresApi(33)
+private fun createApi33RefractBridge(): Api33RefractBridge = Api33RefractHelper()
+
+@RequiresApi(31)
+private class Api31GlassEffectHolder : GlassEffectHolder {
+    private var cachedBlurPx: Float = -1f
+    private var cachedBlur: android.graphics.RenderEffect? = null
+    private var refractHelper: Api33RefractBridge? = null
+
+    override fun resolve(
+        effective: GlassTier,
+        viewport: IntSize,
+        blurPx: Float,
+        radiusPx: Float,
+        amplitudePx: Float,
+        bandPx: Float,
+    ): ComposeRenderEffect? {
+        if (effective == GlassTier.Reduced || viewport == IntSize.Zero) return null
+        val blur = cachedBlur?.takeIf { cachedBlurPx == blurPx }
+            ?: android.graphics.RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP).also {
+                cachedBlurPx = blurPx
+                cachedBlur = it
+            }
+        return if (effective == GlassTier.Enhanced && Build.VERSION.SDK_INT >= 33) {
+            val helper = refractHelper ?: createApi33RefractBridge().also { refractHelper = it }
+            helper.chainRefract(viewport, radiusPx, amplitudePx, bandPx, blur)
+        } else {
+            blur.asComposeRenderEffect()
         }
-    """).run {
-        setFloatUniform("resolution", size.width.toFloat(), size.height.toFloat())
-        setFloatUniform("radius", radius)
-        setFloatUniform("amplitude", amplitude)
-        setFloatUniform("band", band)
-        RenderEffect.createChainEffect(
-            RenderEffect.createRuntimeShaderEffect(this, "content"), blurred,
+    }
+}
+
+@RequiresApi(33)
+private class Api33RefractHelper : Api33RefractBridge {
+    private val shader = android.graphics.RuntimeShader(REFRACT_SHADER_SOURCE)
+
+    override fun chainRefract(
+        size: IntSize,
+        radius: Float,
+        amplitude: Float,
+        band: Float,
+        blurred: android.graphics.RenderEffect,
+    ): ComposeRenderEffect {
+        shader.setFloatUniform("resolution", size.width.toFloat(), size.height.toFloat())
+        shader.setFloatUniform("radius", radius)
+        shader.setFloatUniform("amplitude", amplitude)
+        shader.setFloatUniform("band", band)
+        return android.graphics.RenderEffect.createChainEffect(
+            android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "content"),
+            blurred,
         ).asComposeRenderEffect()
     }
+}
+
+private const val REFRACT_SHADER_SOURCE = """
+    uniform shader content;
+    uniform float2 resolution;
+    uniform float radius;
+    uniform float amplitude;
+    uniform float band;
+
+    half4 main(float2 p) {
+        float2 halfSize = resolution * 0.5;
+        float2 local = p - halfSize;
+        float2 q = abs(local) - halfSize + radius;
+        float distanceToEdge = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+        float edge = 1.0 - smoothstep(0.0, band, -distanceToEdge);
+        float2 direction = local / max(length(local), 0.001);
+        float2 sampleAt = clamp(p - direction * amplitude * edge, float2(0.0), resolution - 0.5);
+        return content.eval(sampleAt);
+    }
+"""

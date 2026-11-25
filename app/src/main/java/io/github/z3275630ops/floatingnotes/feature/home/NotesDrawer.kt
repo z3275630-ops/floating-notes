@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,6 +30,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.z3275630ops.floatingnotes.data.local.NotebookEntity
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
 import io.github.z3275630ops.floatingnotes.data.local.tagPath
@@ -36,9 +38,11 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedDivider
+import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedItemSlot
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintGroupedSection
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintFontScale
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
 
@@ -98,10 +102,13 @@ internal fun NotesDrawer(
                     .only(WindowInsetsSides.Vertical + WindowInsetsSides.Start)
                     .add(WindowInsets(left = 16.dp, top = 14.dp, right = 16.dp, bottom = 14.dp))
                     .asPaddingValues(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                item {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)) {
+                item(key = "drawer-header") {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 16.dp),
+                    ) {
                         Text(
                             text = "文件夹",
                             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
@@ -115,8 +122,12 @@ internal fun NotesDrawer(
                         )
                     }
                 }
-                item {
-                    MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                item(key = "drawer-main-group") {
+                    MintGroupedSection(
+                        dark = dark,
+                        containerColor = mintCardSurface(dark),
+                        modifier = Modifier.padding(bottom = 10.dp),
+                    ) {
                         DrawerRow(
                             title = "全部笔记",
                             selected = allSelected,
@@ -172,52 +183,72 @@ internal fun NotesDrawer(
                     }
                 }
                 if (notebooks.isNotEmpty()) {
-                    item(key = "drawer-notebooks-group") {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            DrawerHeading("笔记本")
-                            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
-                                notebooks.forEachIndexed { index, notebook ->
-                                    if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
-                                    DrawerRow(
-                                        title = notebook.name,
-                                        selected = filter.notebook == notebook.id,
-                                        dark = dark,
-                                        tag = "drawer-notebook",
-                                        icon = MintIcons.Folder,
-                                        count = notebookCounts[notebook.id],
-                                    ) {
-                                        onLibrary(LibraryFilter(notebook = notebook.id))
-                                    }
-                                }
+                    item(key = "drawer-notebooks-heading") {
+                        DrawerHeading("笔记本", modifier = Modifier.padding(bottom = 6.dp))
+                    }
+                    itemsIndexed(
+                        items = notebooks,
+                        key = { _, notebook -> "drawer-nb-${notebook.id}" },
+                    ) { index, notebook ->
+                        val isLast = index == notebooks.lastIndex
+                        MintGroupedItemSlot(
+                            index = index,
+                            totalCount = notebooks.size,
+                            dark = dark,
+                            dividerStartIndent = 46.dp,
+                            containerColor = mintCardSurface(dark),
+                            modifier = Modifier.padding(bottom = if (isLast) 10.dp else 0.dp),
+                        ) {
+                            DrawerRow(
+                                title = notebook.name,
+                                selected = filter.notebook == notebook.id,
+                                dark = dark,
+                                tag = "drawer-notebook",
+                                icon = MintIcons.Folder,
+                                count = notebookCounts[notebook.id],
+                            ) {
+                                onLibrary(LibraryFilter(notebook = notebook.id))
                             }
                         }
                     }
                 }
                 if (sortedTags.isNotEmpty()) {
-                    item(key = "drawer-tags-group") {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            DrawerHeading("标签")
-                            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
-                                sortedTags.forEachIndexed { index, tag ->
-                                    if (index > 0) MintGroupedDivider(dark = dark, startIndent = 46.dp)
-                                    DrawerRow(
-                                        title = paths.getValue(tag.id),
-                                        selected = filter.tag == tag.id,
-                                        dark = dark,
-                                        tag = "drawer-tag",
-                                        icon = MintIcons.Tag,
-                                        count = tagCounts[tag.id],
-                                    ) {
-                                        onLibrary(LibraryFilter(tag = tag.id))
-                                    }
-                                }
+                    item(key = "drawer-tags-heading") {
+                        DrawerHeading("标签", modifier = Modifier.padding(bottom = 6.dp))
+                    }
+                    itemsIndexed(
+                        items = sortedTags,
+                        key = { _, tag -> "drawer-tag-${tag.id}" },
+                    ) { index, tag ->
+                        val isLast = index == sortedTags.lastIndex
+                        MintGroupedItemSlot(
+                            index = index,
+                            totalCount = sortedTags.size,
+                            dark = dark,
+                            dividerStartIndent = 46.dp,
+                            containerColor = mintCardSurface(dark),
+                            modifier = Modifier.padding(bottom = if (isLast) 10.dp else 0.dp),
+                        ) {
+                            DrawerRow(
+                                title = paths.getValue(tag.id),
+                                selected = filter.tag == tag.id,
+                                dark = dark,
+                                tag = "drawer-tag",
+                                icon = MintIcons.Tag,
+                                count = tagCounts[tag.id],
+                            ) {
+                                onLibrary(LibraryFilter(tag = tag.id))
                             }
                         }
                     }
                 }
                 if (onOpenStats != null || onOpenBackup != null) {
                     item(key = "drawer-backup-group") {
-                        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                        MintGroupedSection(
+                            dark = dark,
+                            containerColor = mintCardSurface(dark),
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        ) {
                             if (onOpenStats != null) {
                                 DrawerRow(
                                     title = "记录统计与热力图",
@@ -249,29 +280,34 @@ internal fun NotesDrawer(
                 if (labs != null || debugSampleSlot != null) {
                     item(key = "drawer-dev-group") {
                         MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
+                            val devScale = mintFontScale()
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .defaultMinSize(minHeight = 48.dp)
+                                    .defaultMinSize(minHeight = 52.dp)
                                     .testTag("drawer-dev-section")
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null,
                                         role = Role.Button,
                                     ) { devExpanded = !devExpanded }
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 Icon(
                                     imageVector = MintIcons.DevTools,
                                     contentDescription = null,
                                     tint = scheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp),
+                                    modifier = Modifier.size(20.dp),
                                 )
                                 Text(
                                     text = "开发与实验",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontSize = (15.5f * devScale).sp,
+                                        lineHeight = (21f * devScale).sp,
+                                        fontWeight = FontWeight.Medium,
+                                    ),
                                     color = scheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f),
                                 )
@@ -310,12 +346,17 @@ internal fun NotesDrawer(
 }
 
 @Composable
-private fun DrawerHeading(title: String) {
+private fun DrawerHeading(title: String, modifier: Modifier = Modifier) {
+    val scale = mintFontScale()
     Text(
         text = title,
-        modifier = Modifier.padding(start = 6.dp, top = 6.dp),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.outline,
+        modifier = modifier.padding(start = 6.dp, top = 6.dp),
+        style = MaterialTheme.typography.labelMedium.copy(
+            fontSize = (14f * scale).sp,
+            lineHeight = (19f * scale).sp,
+            fontWeight = FontWeight.SemiBold,
+        ),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -331,6 +372,7 @@ private fun DrawerRow(
     onClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val scale = mintFontScale()
     val highlight = if (selected) {
         Modifier
             .padding(horizontal = 6.dp, vertical = 3.dp)
@@ -343,7 +385,7 @@ private fun DrawerRow(
         modifier = Modifier
             .fillMaxWidth()
             .then(highlight)
-            .defaultMinSize(minHeight = 48.dp)
+            .defaultMinSize(minHeight = 52.dp)
             .testTag(tag)
             .selectable(
                 selected = selected,
@@ -352,7 +394,7 @@ private fun DrawerRow(
                 role = Role.Tab,
                 onClick = onClick,
             )
-            .padding(horizontal = if (selected) 10.dp else 14.dp, vertical = 10.dp),
+            .padding(horizontal = if (selected) 12.dp else 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -360,13 +402,15 @@ private fun DrawerRow(
             imageVector = icon,
             contentDescription = null,
             tint = if (selected) scheme.primary else scheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(20.dp),
         )
         Text(
             text = title,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium.copy(
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = (16.5f * scale).sp,
+                lineHeight = (22.5f * scale).sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             ),
             color = if (selected) scheme.onPrimaryContainer else scheme.onSurface,
             maxLines = 1,
@@ -375,7 +419,11 @@ private fun DrawerRow(
         if (count != null) {
             Text(
                 text = count.toString(),
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = (14f * scale).sp,
+                    lineHeight = (19f * scale).sp,
+                    fontWeight = FontWeight.Medium,
+                ),
                 color = if (selected) scheme.primary else mintTertiaryTextColor(dark),
             )
         }

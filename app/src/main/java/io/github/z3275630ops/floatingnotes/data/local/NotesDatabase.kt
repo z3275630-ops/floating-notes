@@ -100,6 +100,12 @@ internal interface NotesDao {
     @Query("SELECT * FROM notes WHERE id = :id")
     suspend fun note(id: String): NoteEntity?
 
+    @Query("SELECT * FROM notes WHERE id IN (:ids)")
+    suspend fun notesByIds(ids: List<String>): List<NoteEntity>
+
+    @Query("SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL")
+    suspend fun countActiveNotes(): Int
+
     @Query("SELECT * FROM drafts WHERE slot = :slot")
     suspend fun draft(slot: String): DraftEntity?
 

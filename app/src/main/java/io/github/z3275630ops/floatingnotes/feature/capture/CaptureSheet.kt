@@ -46,7 +46,6 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
-import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCanvasColor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -297,7 +296,7 @@ internal fun BoxScope.CaptureSheet(
                         )
                         Text(
                             text = dismissLabel,
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                             color = scheme.onSurfaceVariant,
                         )
                     }
@@ -337,7 +336,7 @@ internal fun BoxScope.CaptureSheet(
                     ) {
                         Text(
                             text = dismissLabel,
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal),
+                            style = MaterialTheme.typography.bodyLarge,
                             color = scheme.onSurfaceVariant,
                         )
                     }
@@ -372,8 +371,8 @@ internal fun BoxScope.CaptureSheet(
     }
 
     if (fullScreen) {
-        val solidCanvas = mintCanvasColor(dark)
-        Box(modifier = panelModifier.background(solidCanvas)) {
+        val editorPaper = if (dark) Color(0xFF121214) else Color.White
+        Box(modifier = panelModifier.background(editorPaper)) {
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -396,7 +395,7 @@ internal fun BoxScope.CaptureSheet(
             shapeRadius = 28.dp,
             elevatedModal = true,
             shape = sheetShape,
-            showBorder = true,
+            showBorder = dark,
             showShadow = true,
             content = panelBody,
         )

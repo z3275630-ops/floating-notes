@@ -10,6 +10,7 @@ class LocalRecordingTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun saveMixedDocumentReopenAndAutosaveEdit() {
+        await(hasTestTag("new-note"))
         compose.onNodeWithTag("new-note").performClick()
         await(hasTestTag("capture-editor"))
         compose.onNodeWithTag("capture-editor").performTextReplacement("本机记录验证")
@@ -48,11 +49,13 @@ class LocalRecordingTest {
         val source = "带引用的测试笔记-$suffix"
         val targetCard = hasTestTag("saved-note") and hasText(target)
         val sourceCard = hasTestTag("saved-note") and hasText(source, substring = true)
+        await(hasTestTag("new-note"))
         compose.onNodeWithTag("new-note").performClick()
         await(hasTestTag("capture-editor"))
         compose.onNodeWithTag("capture-editor").performTextReplacement(target)
         compose.onNodeWithText("保存").performClick()
         await(targetCard)
+        await(hasTestTag("new-note"))
         compose.onNodeWithTag("new-note").performClick()
         await(hasText("@ 引用"))
         compose.onNodeWithTag("capture-editor").performTextReplacement(source)

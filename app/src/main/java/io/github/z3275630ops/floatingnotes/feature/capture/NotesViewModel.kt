@@ -38,6 +38,10 @@ import io.github.z3275630ops.floatingnotes.feature.agent.AgentUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorDiscoveryState
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreUiState
 import io.github.z3275630ops.floatingnotes.feature.explore.WalkMode
+import io.github.z3275630ops.floatingnotes.feature.home.AppPreferences
+import io.github.z3275630ops.floatingnotes.feature.home.AppPreferencesSnapshot
+import io.github.z3275630ops.floatingnotes.feature.home.FontScaleTier
+import io.github.z3275630ops.floatingnotes.feature.home.NoteSortOrder
 import io.github.z3275630ops.floatingnotes.feature.widget.WidgetPreferences
 import io.github.z3275630ops.floatingnotes.feature.widget.WidgetUpdater
 import io.github.z3275630ops.floatingnotes.data.local.AttachmentImportException
@@ -79,20 +83,21 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.ZoneId
 
-internal class EditorBlock(private val original: NoteBlock) {
-    val id = original.id
-    val type = original.type
-    val editable = original.editable
-    val text = TextFieldState(original.text)
-    var checked by mutableStateOf(original.checked)
-    var dueDate by mutableStateOf(original.dueDate)
-    var reminderId by mutableStateOf(original.reminderId)
-    var occurrenceId by mutableStateOf(original.occurrenceId)
-    var syncedText: String = original.text
-    var syncedChecked: Boolean = original.checked
-    var syncedDueDate: String? = original.dueDate
-    var syncedReminderId: String? = original.reminderId
-    var syncedOccurrenceId: String? = original.occurrenceId
+internal class EditorBlock(initialOriginal: NoteBlock) {
+    private var original by mutableStateOf(initialOriginal)
+    val id = initialOriginal.id
+    val type = initialOriginal.type
+    val editable = initialOriginal.editable
+    val text = TextFieldState(initialOriginal.text)
+    var checked by mutableStateOf(initialOriginal.checked)
+    var dueDate by mutableStateOf(initialOriginal.dueDate)
+    var reminderId by mutableStateOf(initialOriginal.reminderId)
+    var occurrenceId by mutableStateOf(initialOriginal.occurrenceId)
+    var syncedText: String = initialOriginal.text
+    var syncedChecked: Boolean = initialOriginal.checked
+    var syncedDueDate: String? = initialOriginal.dueDate
+    var syncedReminderId: String? = initialOriginal.reminderId
+    var syncedOccurrenceId: String? = initialOriginal.occurrenceId
     var reminderLocalTime by mutableStateOf<String?>(null)
     var recurrenceRule by mutableStateOf(RecurrenceRule.NONE)
     var reminderPolicy by mutableStateOf(ReminderPolicy.FOLLOW_LOCAL)
@@ -105,6 +110,10 @@ internal class EditorBlock(private val original: NoteBlock) {
     val referenceTargetBlockId get() = original.referenceTargetBlockId
     val referenceStart get() = original.referenceStart
     val referenceEnd get() = original.referenceEnd
+
+    fun replaceOriginal(block: NoteBlock) {
+        original = block
+    }
 
     fun markSyncedWith(block: NoteBlock? = null) {
         syncedText = block?.text ?: text.text.toString()
@@ -132,6 +141,9 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
     var draft by mutableStateOf(initialDraft)
     val blocks = mutableStateListOf<EditorBlock>().apply { addAll(document.blocks.map(::EditorBlock)) }
     val pendingTagIds = mutableStateListOf<String>()
+    internal val syncedDocumentBlocks = HashMap<String, NoteBlock>().apply {
+        document.blocks.forEach { put(it.id, it) }
+    }
     var focusBlockId by mutableStateOf<String?>(null)
     var status by mutableStateOf(if (initialDraft.editSeq > 0) "草稿已恢复" else "")
     var writing by mutableStateOf(false)
@@ -152,6 +164,11 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
     private var sequence = initialDraft.editSeq
     private var trackedDocument = document
 
+    fun setSyncedBaseline(baselineBlocks: List<NoteBlock>) {
+        syncedDocumentBlocks.clear()
+        baselineBlocks.forEach { syncedDocumentBlocks[it.id] = it }
+    }
+
     fun document() = NoteDocument(blocks.map { it.documentBlock() })
 
     fun sequenceFor(document: NoteDocument): Long {
@@ -167,8 +184,11 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         trackedDocument = document()
         checkpointSeq = sequence
         committedSeq = sequence
+        syncedDocumentBlocks.clear()
         blocks.forEach { block ->
-            block.markSyncedWith()
+            val docBlock = block.documentBlock()
+            block.markSyncedWith(docBlock)
+            syncedDocumentBlocks[docBlock.id] = docBlock
         }
     }
 
@@ -186,6 +206,7 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         )
         blocks.clear()
         blocks.addAll(restoredDoc.blocks.map(::EditorBlock))
+        setSyncedBaseline(restoredDoc.blocks)
         pendingTagIds.clear()
         onPendingExtrasChanged?.invoke()
         trackedDocument = restoredDoc
@@ -230,7 +251,7 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
                 ),
             ),
         )
-        blocks.add(EditorBlock(NoteBlock.paragraph()))
+        ensureTailEditableBlock()
     }
 
     fun insertTranscript(block: EditorBlock, text: String): Boolean {
@@ -273,6 +294,13 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     private val database = NotesDatabase.open(application)
     internal val repository = NotesRepository(database)
     val taskPreferences = TaskPreferences(application)
+    internal val appPreferences by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { AppPreferences(application) }
+    val appPreferencesSnapshot: StateFlow<AppPreferencesSnapshot> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        appPreferences.observeSnapshot()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), appPreferences.snapshot())
+    }
+    private val _attachmentStorageBytes = MutableStateFlow(0L)
+    val attachmentStorageBytes: StateFlow<Long> = _attachmentStorageBytes.asStateFlow()
     val attachments = AttachmentStore(application)
     internal val backupManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         BackupManager(application, database, attachments)
@@ -291,6 +319,55 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     val agentState: StateFlow<AgentUiState> = _agentState.asStateFlow()
     private var agentJob: Job? = null
     private var agentRunsObserved = false
+
+    fun refreshAttachmentStorageBytes() {
+        viewModelScope.launch {
+            _attachmentStorageBytes.value = runCatching { attachments.totalStorageBytes() }.getOrDefault(0L)
+        }
+    }
+
+    fun setFontScaleTier(tier: FontScaleTier) {
+        appPreferences.fontScaleTier = tier
+    }
+
+    fun setNoteSortOrder(order: NoteSortOrder) {
+        appPreferences.noteSortOrder = order
+    }
+
+    fun setEnableSlashShortcuts(enabled: Boolean) {
+        appPreferences.enableSlashShortcuts = enabled
+    }
+
+    fun setTrashRetentionDays(days: Int) {
+        appPreferences.trashRetentionDays = days
+    }
+
+    fun setOpenTasksFirst(enabled: Boolean) {
+        appPreferences.openTasksFirst = enabled
+    }
+
+    fun setStrongAlarmEnabled(enabled: Boolean) {
+        val previous = appPreferences.strongAlarmEnabled
+        appPreferences.strongAlarmEnabled = enabled
+        if (previous != enabled) {
+            rescheduleActiveReminders()
+        }
+    }
+
+    private fun rescheduleActiveReminders() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val nowMs = System.currentTimeMillis()
+                val app = getApplication<Application>()
+                repository.activeReminders().forEach { reminder ->
+                    val triggerMs = reminder.triggerInstantMs
+                    if (triggerMs != null && triggerMs > nowMs) {
+                        ReminderScheduler.scheduleReminder(app, reminder)
+                    }
+                }
+            }
+        }
+    }
 
     fun ensureAgentRunsObserved() {
         if (agentRunsObserved) return
@@ -390,6 +467,9 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     private var expiredTrashPurged = false
     private var pendingFocusBlockId: String? = null
 
+    val isForeground: Boolean
+        get() = foreground
+
     fun queueFocusBlock(blockId: String?) {
         pendingFocusBlockId = blockId
     }
@@ -415,6 +495,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     runCatching {
                         val openNoteId = editor?.draft?.noteId
                         val result = repository.purgeExpiredTrash(
+                            retentionDays = appPreferences.trashRetentionDays,
                             excludeNoteIds = setOfNotNull(openNoteId),
                         )
                         if (result.deletedNoteIds.isNotEmpty()) {
@@ -422,6 +503,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             val app = getApplication<Application>()
                             result.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
                             attachments.collectUnreferenced(database, backupManager.activeLeaseIds())
+                            _attachmentStorageBytes.value = runCatching { attachments.totalStorageBytes() }.getOrDefault(0L)
                         }
                     }.onFailure {
                         expiredTrashPurged = false
@@ -588,6 +670,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 try {
                     val recoveredRestore = backupManager.recoverInterruptedRestoreIfNeeded()
                     attachments.recover(database, backupManager.activeLeaseIds())
+                    _attachmentStorageBytes.value = runCatching { attachments.totalStorageBytes() }.getOrDefault(0L)
                     if (recoveredRestore) {
                         runCatching { reconcileTimeChange() }
                     }
@@ -662,7 +745,13 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 try {
                     watcher?.cancelAndJoin()
                     stopCheckpoint?.cancelAndJoin()
-                    val document = NoteDocument(session.document().blocks + block)
+                    val appendedBlocks = buildList {
+                        add(block)
+                        if (!block.editable) {
+                            add(NoteBlock.paragraph())
+                        }
+                    }
+                    val document = NoteDocument(session.document().blocks + appendedBlocks)
                     val sequence = session.sequenceFor(document)
                     try {
                         repository.checkpoint(encode(session, document, sequence))
@@ -671,8 +760,9 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             "无法保存附件到草稿，请检查本机空间后重试",
                         )
                     }
-                    session.blocks.add(EditorBlock(block))
+                    appendedBlocks.forEach { session.blocks.add(EditorBlock(it)) }
                     session.checkpointSeq = sequence
+                    _attachmentStorageBytes.value = runCatching { attachments.totalStorageBytes() }.getOrDefault(0L)
                 } finally {
                     session.writing = session.closing
                     if (!session.closing && editor === session) watch(session)
@@ -690,7 +780,8 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         val current = editor
         val requestedDifferentTarget = current != null && (
             (noteId != null && current.draft.noteId != noteId) ||
-                (captureSlot != null && current.draft.slot != captureSlot)
+                (captureSlot != null && current.draft.slot != captureSlot) ||
+                (noteId == null && captureSlot == null && current.draft.slot != "manual")
             )
         if (current != null && !requestedDifferentTarget) {
             if (noteId != null && current.draft.noteId == noteId && resolvedFocusBlockId != null) {
@@ -719,7 +810,10 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             } else {
                 emptyList()
             }
-            startEditor(draft, note != null, resolvedFocusBlockId, preloadedTasks)
+            val baselineBlocks = note?.let {
+                runCatching { NoteDocument.decode(it.documentJson).blocks }.getOrNull()
+            }
+            startEditor(draft, note != null, resolvedFocusBlockId, preloadedTasks, baselineBlocks)
             error = null
             true
         } catch (cancelled: CancellationException) {
@@ -845,10 +939,14 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         existingNote: Boolean,
         focusBlockId: String? = null,
         preloadedTasks: List<TaskItemProjection> = emptyList(),
+        baselineBlocks: List<NoteBlock>? = null,
     ) {
         val session = EditorSession(draft, NoteDocument.decode(draft.documentJson), existingNote).apply {
             this.focusBlockId = focusBlockId
             this.onPendingExtrasChanged = { saveDraftExtras(this) }
+            if (baselineBlocks != null) {
+                setSyncedBaseline(baselineBlocks)
+            }
         }
         val sourceItems = if (preloadedTasks.isNotEmpty()) preloadedTasks else taskItems.value
         applyTaskMetadataToSession(session, sourceItems)
@@ -893,51 +991,61 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         val freshById = freshDoc.blocks.associateBy(NoteBlock::id)
         val sessionById = session.blocks.associateBy(EditorBlock::id)
 
+        val mergedById = LinkedHashMap<String, NoteBlock>(freshDoc.blocks.size)
         for (freshBlock in freshDoc.blocks) {
             val local = sessionById[freshBlock.id] ?: return null
-            val localText = local.text.text.toString()
-            val extTextChanged = freshBlock.text != local.syncedText
-            val localTextChanged = localText != local.syncedText
-            if (extTextChanged && localTextChanged) return null
-            if (local.type == "checkbox") {
-                val extTaskChanged = freshBlock.checked != local.syncedChecked ||
-                    freshBlock.dueDate != local.syncedDueDate ||
-                    freshBlock.reminderId != local.syncedReminderId ||
-                    freshBlock.occurrenceId != local.syncedOccurrenceId
-                val localTaskChanged = local.checked != local.syncedChecked ||
-                    local.pendingScheduleChanged ||
-                    local.dueDate != local.syncedDueDate
-                if (extTaskChanged && localTaskChanged) return null
-            }
+            val localBlock = local.documentBlock()
+            val synced = session.syncedDocumentBlocks[freshBlock.id]
+            val merged = mergeExternalBlockUpdate(
+                synced = synced,
+                fresh = freshBlock,
+                local = localBlock,
+                localFallbackText = local.syncedText,
+                localFallbackChecked = local.syncedChecked,
+                localFallbackDueDate = local.syncedDueDate,
+                localFallbackReminderId = local.syncedReminderId,
+                localFallbackOccurrenceId = local.syncedOccurrenceId,
+                localPendingSchedule = local.pendingScheduleChanged,
+            ) ?: return null
+            mergedById[freshBlock.id] = merged
         }
         for (local in session.blocks) {
-            if (local.id !in freshById && local.syncedText.isNotEmpty()) {
-                return null
+            if (local.id !in freshById) {
+                val existedBefore = local.id in session.syncedDocumentBlocks || local.syncedText.isNotEmpty()
+                if (existedBefore) return null
             }
         }
 
         for (freshBlock in freshDoc.blocks) {
             val local = sessionById[freshBlock.id] ?: continue
-            val localText = local.text.text.toString()
-            if (freshBlock.text != local.syncedText && localText == local.syncedText) {
-                local.text.edit { replace(0, length, freshBlock.text) }
-            }
-            if (local.type == "checkbox") {
-                val extTaskChanged = freshBlock.checked != local.syncedChecked ||
-                    freshBlock.dueDate != local.syncedDueDate ||
-                    freshBlock.reminderId != local.syncedReminderId ||
-                    freshBlock.occurrenceId != local.syncedOccurrenceId
-                val localTaskChanged = local.checked != local.syncedChecked ||
-                    local.pendingScheduleChanged ||
-                    local.dueDate != local.syncedDueDate
-                if (extTaskChanged && !localTaskChanged) {
-                    local.checked = freshBlock.checked
-                    local.dueDate = freshBlock.dueDate
-                    local.reminderId = freshBlock.reminderId
-                    local.occurrenceId = freshBlock.occurrenceId
+            val merged = mergedById[freshBlock.id] ?: continue
+            val localBlock = local.documentBlock()
+            if (merged != localBlock) {
+                if (merged.type != local.type) {
+                    val idx = session.blocks.indexOf(local)
+                    if (idx >= 0) {
+                        session.blocks[idx] = local.withUpdatedDocumentBlock(merged).apply {
+                            dueDate = merged.dueDate
+                            reminderId = merged.reminderId
+                            occurrenceId = merged.occurrenceId
+                            markSyncedWith(freshBlock)
+                        }
+                    }
+                } else {
+                    local.replaceOriginal(merged)
+                    if (local.text.text.toString() != merged.text) {
+                        local.text.edit { replace(0, length, merged.text) }
+                    }
+                    local.checked = merged.checked
+                    local.dueDate = merged.dueDate
+                    local.reminderId = merged.reminderId
+                    local.occurrenceId = merged.occurrenceId
+                    local.markSyncedWith(freshBlock)
                 }
+            } else {
+                local.markSyncedWith(freshBlock)
             }
-            local.markSyncedWith(freshBlock)
+            session.syncedDocumentBlocks[freshBlock.id] = freshBlock
         }
         val sourceItems = runCatching { repository.observeTaskItems().first() }.getOrDefault(taskItems.value)
         applyTaskMetadataToSession(session, sourceItems)
@@ -1183,12 +1291,27 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         saveDraftExtras(session)
                         return@withLock
                     }
-                    repository.checkpoint(encode(session, document, sequence))
-                    session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
-                    saveDraftExtras(session)
+                    try {
+                        repository.checkpoint(encode(session, document, sequence))
+                        session.checkpointSeq = maxOf(session.checkpointSeq, sequence)
+                        saveDraftExtras(session)
+                    } catch (stale: StaleDraftException) {
+                        if (session.existingNote) {
+                            val merged = tryMergeExternalUpdateAndRetryCommitLocked(session)
+                            if (merged != null) {
+                                session.status = "已保存到本机"
+                            } else {
+                                throw stale
+                            }
+                        } else {
+                            throw stale
+                        }
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (_: StaleDraftException) {
+                session.status = "检测到外部修改，已保留草稿，请核对后重存"
             } catch (_: Exception) {
                 session.status = "草稿写入失败，正文仍保留"
             }
@@ -1546,6 +1669,142 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         block.markSyncedWith(synced)
     }
 
+    fun setNoteAiPolicy(noteId: String, aiPolicy: String) {
+        val validated = NotesRepository.validateAiPolicy(aiPolicy)
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        val activeSession = editor
+                        if (activeSession != null && activeSession.draft.noteId == noteId) {
+                            flushOpenEditorLocked()
+                        }
+                        repository.setAiPolicy(noteId, validated)
+                        val updated = repository.loadNote(noteId)
+                        if (updated != null) {
+                            if (activeSession != null && activeSession.draft.noteId == noteId) {
+                                activeSession.draft = activeSession.draft.copy(
+                                    baseRevision = maxOf(activeSession.draft.baseRevision, updated.revision),
+                                )
+                            }
+                            runCatching { discovery.syncChunksForNote(updated) }
+                        }
+                        WidgetUpdater.requestRefreshAll(getApplication())
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "更新 AI 参与设置失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
+    fun batchAddTag(noteIds: Collection<String>, tagId: String) {
+        val normalized = NotesRepository.normalizeBatchNoteIds(noteIds)
+        if (normalized.isEmpty()) return
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        organization.batchAddTag(normalized, tagId)
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "批量添加标签失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
+    fun batchAssignNotebook(noteIds: Collection<String>, notebookId: String?) {
+        val normalized = NotesRepository.normalizeBatchNoteIds(noteIds)
+        if (normalized.isEmpty()) return
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        organization.batchAssignNotebook(normalized, notebookId)
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "批量移动笔记本失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
+    fun batchSetArchived(noteIds: Collection<String>, archived: Boolean) {
+        val normalized = NotesRepository.normalizeBatchNoteIds(noteIds)
+        if (normalized.isEmpty()) return
+        val idSet = normalized.toSet()
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        val activeSession = editor
+                        if (activeSession != null && activeSession.draft.noteId in idSet) {
+                            flushOpenEditorLocked()
+                        }
+                        repository.batchSetArchived(normalized, archived)
+                        if (activeSession != null && activeSession.draft.noteId in idSet) {
+                            repository.loadNote(activeSession.draft.noteId)?.let { updated ->
+                                activeSession.draft = activeSession.draft.copy(
+                                    baseRevision = maxOf(activeSession.draft.baseRevision, updated.revision),
+                                )
+                            }
+                        }
+                        WidgetUpdater.requestRefreshAll(getApplication())
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "批量归档操作失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
+    fun batchSoftDelete(noteIds: Collection<String>) {
+        val normalized = NotesRepository.normalizeBatchNoteIds(noteIds)
+        if (normalized.isEmpty()) return
+        val idSet = normalized.toSet()
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                persistenceMutex.withLock {
+                    try {
+                        val activeSession = editor
+                        if (activeSession != null && activeSession.draft.noteId in idSet) {
+                            stopActiveRecorderBeforeClose(activeSession)
+                            flushOpenEditorLocked()
+                            deleteDraftExtras(activeSession.draft.id)
+                        }
+                        closeEditorIfMatchingLocked(idSet)
+                        val reminderIds = repository.batchSoftDelete(normalized)
+                        runCatching { discovery.removeChunksForNoteIds(normalized) }
+                        val app = getApplication<Application>()
+                        reminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
+                        if (_historyState.value.noteId in idSet) {
+                            _historyState.value = HistoryUiState()
+                        }
+                        WidgetUpdater.requestRefreshAll(app)
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "批量移入回收站失败，请重试"
+                    }
+                }
+            }
+        }
+    }
+
     fun pin(note: NoteEntity) = changeMetadata { repository.setPinned(note.id, !note.pinned) }
     fun archive(note: NoteEntity) = changeMetadata { repository.setArchived(note.id, note.archivedAt == null) }
 
@@ -1647,6 +1906,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         val app = getApplication<Application>()
                         result.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
                         attachments.collectUnreferenced(database, backupManager.activeLeaseIds())
+                        _attachmentStorageBytes.value = runCatching { attachments.totalStorageBytes() }.getOrDefault(0L)
                         _trashPurgeImpact.value = null
                         error = null
                     } catch (cancelled: CancellationException) {
@@ -1673,6 +1933,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         val app = getApplication<Application>()
                         result.cancelledReminderIds.forEach { ReminderScheduler.cancelReminder(app, it) }
                         attachments.collectUnreferenced(database, backupManager.activeLeaseIds())
+                        _attachmentStorageBytes.value = runCatching { attachments.totalStorageBytes() }.getOrDefault(0L)
                         _trashPurgeImpact.value = null
                         error = null
                     } catch (cancelled: CancellationException) {
@@ -2005,6 +2266,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             }
                             _historyState.value = HistoryUiState()
                             _trashPurgeImpact.value = null
+                            _attachmentStorageBytes.value = runCatching { attachments.totalStorageBytes() }.getOrDefault(0L)
                         }
 
                         _backupState.update {
@@ -2064,7 +2326,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun setWidgetPrivacyModeEnabled(enabled: Boolean) {
-        widgetPreferences.privacyModeEnabled = enabled
+        appPreferences.widgetPrivacyMask = enabled
         WidgetUpdater.requestRefreshAll(getApplication())
     }
 
@@ -3028,7 +3290,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun setEdgeEchoGlobalEnabled(enabled: Boolean) {
-        explorePreferences.edgeEchoEnabled = enabled
+        appPreferences.edgeEchoEnabled = enabled
         if (!enabled) edgeEchoJob?.cancel()
         _editorDiscoveryState.update {
             it.copy(
@@ -3127,6 +3389,140 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         withContext(Dispatchers.Default) {
             session.draft.copy(documentJson = document.encode(), editSeq = sequence)
         }
+}
+
+internal fun mergeExternalBlockUpdate(
+    synced: NoteBlock?,
+    fresh: NoteBlock,
+    local: NoteBlock,
+    localFallbackText: String = local.text,
+    localFallbackChecked: Boolean = local.checked,
+    localFallbackDueDate: String? = local.dueDate,
+    localFallbackReminderId: String? = local.reminderId,
+    localFallbackOccurrenceId: String? = local.occurrenceId,
+    localPendingSchedule: Boolean = false,
+): NoteBlock? {
+    if (synced == null) {
+        val extTextChanged = fresh.text != localFallbackText
+        val localTextChanged = local.text != localFallbackText
+        if (extTextChanged && localTextChanged) return null
+        val extTaskChanged = fresh.checked != localFallbackChecked ||
+            fresh.dueDate != localFallbackDueDate ||
+            fresh.reminderId != localFallbackReminderId ||
+            fresh.occurrenceId != localFallbackOccurrenceId
+        val localTaskChanged = localPendingSchedule ||
+            local.checked != localFallbackChecked ||
+            local.dueDate != localFallbackDueDate
+        if (extTaskChanged && localTaskChanged) return null
+        val metaDiffers = fresh.type != local.type ||
+            fresh.level != local.level ||
+            fresh.indent != local.indent ||
+            fresh.marks != local.marks ||
+            fresh.tone != local.tone ||
+            fresh.title != local.title ||
+            fresh.collapsed != local.collapsed ||
+            fresh.dividerStyle != local.dividerStyle
+        if (metaDiffers) return null
+        val base = if (extTaskChanged && !localTaskChanged) fresh else local
+        val merged = base.copy(
+            text = if (extTextChanged && !localTextChanged) fresh.text else local.text,
+            checked = if (extTaskChanged && !localTaskChanged) fresh.checked else local.checked,
+        )
+        return if (merged.type == "checkbox") {
+            merged.withTaskSchedule(
+                dueDate = if (extTaskChanged && !localTaskChanged) fresh.dueDate else local.dueDate,
+                reminderId = if (extTaskChanged && !localTaskChanged) fresh.reminderId else local.reminderId,
+                occurrenceId = if (extTaskChanged && !localTaskChanged) fresh.occurrenceId else local.occurrenceId,
+            )
+        } else {
+            merged
+        }
+    }
+
+    val extTypeChanged = fresh.type != synced.type
+    val localTypeChanged = local.type != synced.type
+    if (extTypeChanged && localTypeChanged && fresh.type != local.type) return null
+
+    val extTextChanged = fresh.text != synced.text
+    val localTextChanged = local.text != synced.text
+    if (extTextChanged && localTextChanged && fresh.text != local.text) return null
+
+    val extTitleChanged = fresh.title != synced.title
+    val localTitleChanged = local.title != synced.title
+    if (extTitleChanged && localTitleChanged && fresh.title != local.title) return null
+
+    val extMarksChanged = fresh.marks != synced.marks
+    val localMarksChanged = local.marks != synced.marks
+    if ((extTextChanged || extMarksChanged) && (localTextChanged || localMarksChanged)) {
+        if (fresh.text != local.text || fresh.marks != local.marks) return null
+    }
+
+    val extTaskChanged = fresh.checked != synced.checked ||
+        fresh.dueDate != synced.dueDate ||
+        fresh.reminderId != synced.reminderId ||
+        fresh.occurrenceId != synced.occurrenceId
+    val localTaskChanged = localPendingSchedule ||
+        local.checked != synced.checked ||
+        local.dueDate != synced.dueDate ||
+        local.reminderId != synced.reminderId ||
+        local.occurrenceId != synced.occurrenceId
+    if (extTaskChanged && localTaskChanged) return null
+
+    val extLevelChanged = fresh.level != synced.level
+    val localLevelChanged = local.level != synced.level
+    if (extLevelChanged && localLevelChanged && fresh.level != local.level) return null
+
+    val extIndentChanged = fresh.indent != synced.indent
+    val localIndentChanged = local.indent != synced.indent
+    if (extIndentChanged && localIndentChanged && fresh.indent != local.indent) return null
+
+    val extToneChanged = fresh.tone != synced.tone
+    val localToneChanged = local.tone != synced.tone
+    if (extToneChanged && localToneChanged && fresh.tone != local.tone) return null
+
+    val extCollapsedChanged = fresh.collapsed != synced.collapsed
+    val localCollapsedChanged = local.collapsed != synced.collapsed
+    if (extCollapsedChanged && localCollapsedChanged && fresh.collapsed != local.collapsed) return null
+
+    val extDividerChanged = fresh.dividerStyle != synced.dividerStyle
+    val localDividerChanged = local.dividerStyle != synced.dividerStyle
+    if (extDividerChanged && localDividerChanged && fresh.dividerStyle != local.dividerStyle) return null
+
+    val extAnyFieldChanged = extTextChanged || extTitleChanged || extMarksChanged || extTaskChanged ||
+        extLevelChanged || extIndentChanged || extToneChanged || extCollapsedChanged || extDividerChanged
+    val localAnyFieldChanged = localTextChanged || localTitleChanged || localMarksChanged || localTaskChanged ||
+        localLevelChanged || localIndentChanged || localToneChanged || localCollapsedChanged || localDividerChanged
+    if (extTypeChanged && localAnyFieldChanged) return null
+    if (localTypeChanged && extAnyFieldChanged) return null
+
+    val base = when {
+        extTypeChanged -> fresh
+        localTypeChanged -> local
+        extTaskChanged -> fresh
+        else -> local
+    }
+    val mergedText = if (extTextChanged) fresh.text else local.text
+    val mergedMarks = if (extMarksChanged || extTextChanged) fresh.marks else local.marks
+    val merged = base.copy(
+        text = mergedText,
+        checked = if (extTaskChanged) fresh.checked else local.checked,
+        level = if (extLevelChanged) fresh.level else local.level,
+        indent = if (extIndentChanged) fresh.indent else local.indent,
+        marks = mergedMarks,
+        tone = if (extToneChanged) fresh.tone else local.tone,
+        title = if (extTitleChanged) fresh.title else local.title,
+        collapsed = if (extCollapsedChanged) fresh.collapsed else local.collapsed,
+        dividerStyle = if (extDividerChanged) fresh.dividerStyle else local.dividerStyle,
+    )
+    return if (merged.type == "checkbox") {
+        merged.withTaskSchedule(
+            dueDate = if (extTaskChanged) fresh.dueDate else local.dueDate,
+            reminderId = if (extTaskChanged) fresh.reminderId else local.reminderId,
+            occurrenceId = if (extTaskChanged) fresh.occurrenceId else local.occurrenceId,
+        )
+    } else {
+        merged
+    }
 }
 
 private fun buildNoteDueBadges(items: List<TaskItemProjection>): Map<String, String> {

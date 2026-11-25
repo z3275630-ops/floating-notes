@@ -520,9 +520,61 @@ internal object LocalTextIntelligence {
                             if (trimmed.isEmpty()) continue
                             val key = normalizeForComparison(trimmed).ifEmpty { trimmed.lowercase(Locale.ROOT) }
                             if (seenParagraphKeys.add(key)) {
-                                blocks.add(NoteBlock.paragraph(trimmed))
+                                blocks.add(NoteBlock.paragraph(trimmed, indent = raw.indent))
                             }
                         }
+                    }
+                    "heading" -> {
+                        val trimmed = raw.text.trim()
+                        if (trimmed.isNotEmpty()) {
+                            val key = normalizeForComparison(trimmed).ifEmpty { trimmed.lowercase(Locale.ROOT) }
+                            if (seenParagraphKeys.add(key)) {
+                                blocks.add(NoteBlock.heading(level = raw.level, text = trimmed, indent = raw.indent))
+                            }
+                        }
+                    }
+                    "bullet", "numbered", "quote" -> {
+                        for (rawLine in raw.text.lines()) {
+                            val trimmed = rawLine.trim()
+                            if (trimmed.isEmpty()) continue
+                            val key = normalizeForComparison(trimmed).ifEmpty { trimmed.lowercase(Locale.ROOT) }
+                            if (seenParagraphKeys.add(key)) {
+                                val preserved = when (raw.type) {
+                                    "bullet" -> NoteBlock.bullet(trimmed, indent = raw.indent)
+                                    "numbered" -> NoteBlock.numbered(trimmed, indent = raw.indent)
+                                    else -> NoteBlock.quote(trimmed, indent = raw.indent)
+                                }
+                                blocks.add(preserved)
+                            }
+                        }
+                    }
+                    "callout" -> {
+                        val trimmed = raw.text.trim()
+                        if (trimmed.isNotEmpty()) {
+                            val key = normalizeForComparison(trimmed).ifEmpty { trimmed.lowercase(Locale.ROOT) }
+                            if (seenParagraphKeys.add(key)) {
+                                blocks.add(NoteBlock.callout(text = trimmed, tone = raw.tone, indent = raw.indent))
+                            }
+                        }
+                    }
+                    "toggle" -> {
+                        val combined = raw.searchableText.trim()
+                        if (combined.isNotEmpty()) {
+                            val key = normalizeForComparison(combined).ifEmpty { combined.lowercase(Locale.ROOT) }
+                            if (seenParagraphKeys.add(key)) {
+                                blocks.add(
+                                    NoteBlock.toggle(
+                                        title = raw.title.trim(),
+                                        text = raw.text.trim(),
+                                        collapsed = raw.collapsed,
+                                        indent = raw.indent,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                    "divider" -> {
+                        // Decorative dividers carry no text content for duplicate merging.
                     }
                     "checkbox" -> {
                         val trimmed = raw.text.trim().ifEmpty { "未命名待办" }
@@ -583,6 +635,13 @@ internal object LocalTextIntelligence {
 
         val previewLines = blocks.map { block ->
             when (block.type) {
+                "heading" -> "${"#".repeat(block.level)} ${block.text}"
+                "bullet" -> "• ${block.text}"
+                "numbered" -> "1. ${block.text}"
+                "quote" -> "> ${block.text}"
+                "callout" -> "[提示] ${block.text}"
+                "toggle" -> if (block.text.isNotBlank()) "▸ ${block.title}\n${block.text}" else "▸ ${block.title}"
+                "divider" -> "---"
                 "checkbox" -> buildString {
                     append(if (block.checked) "☑ " else "☐ ")
                     append(block.text)
@@ -621,11 +680,22 @@ internal object LocalTextIntelligence {
         labels
     }.getOrDefault(emptyMap())
 
+    private val TEXT_BEARING_BLOCK_TYPES = setOf(
+        "paragraph",
+        "heading",
+        "bullet",
+        "numbered",
+        "checkbox",
+        "quote",
+        "callout",
+        "toggle",
+    )
+
     private fun extractNoteParagraphLines(note: NoteEntity): List<String> {
         val fromDocument = runCatching {
             NoteDocument.decode(note.documentJson).blocks
-                .filter { it.type == "paragraph" || it.type == "checkbox" }
-                .flatMap { it.text.lines() }
+                .filter { it.type in TEXT_BEARING_BLOCK_TYPES }
+                .flatMap { it.searchableText.lines() }
         }.getOrNull() ?: runCatching {
             val root = MiniJson.parseObject(note.documentJson)
             if ((root["document_schema_version"] as? Number)?.toInt() != 1) return@runCatching null
@@ -633,11 +703,17 @@ internal object LocalTextIntelligence {
             val rawBlocks = root["blocks"] as? List<*> ?: return@runCatching null
             rawBlocks
                 .mapNotNull { it as? Map<String, Any?> }
-                .filter { block ->
-                    val type = block["type"]?.toString()
-                    type == "paragraph" || type == "checkbox"
+                .filter { block -> block["type"]?.toString() in TEXT_BEARING_BLOCK_TYPES }
+                .flatMap { block ->
+                    if (block["type"]?.toString() == "toggle") {
+                        listOfNotNull(
+                            block["title"]?.toString(),
+                            block["text"]?.toString(),
+                        ).flatMap { it.lines() }
+                    } else {
+                        block["text"]?.toString().orEmpty().lines()
+                    }
                 }
-                .flatMap { block -> block["text"]?.toString().orEmpty().lines() }
         }.getOrNull()
 
         return fromDocument ?: note.searchText.lines()

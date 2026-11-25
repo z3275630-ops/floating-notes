@@ -63,11 +63,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
@@ -114,17 +120,31 @@ internal fun MintGroupedSection(
     dark: Boolean,
     modifier: Modifier = Modifier,
     shapeRadius: Dp = 16.dp,
-    containerColor: Color = mintCardSurface(dark),
+    containerColor: Color = if (dark) mintCardSurface(true) else Color.White,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(shapeRadius)
-    val hairline = mintDividerColor(dark)
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(containerColor, shape)
-            .border(0.6.dp, hairline, shape),
+            .then(
+                if (dark) {
+                    Modifier
+                        .clip(shape)
+                        .background(containerColor, shape)
+                        .border(0.5.dp, mintDividerColor(true), shape)
+                } else {
+                    Modifier
+                        .shadow(
+                            elevation = 1.dp,
+                            shape = shape,
+                            ambientColor = Color(0x0A000000),
+                            spotColor = Color(0x0D000000),
+                        )
+                        .clip(shape)
+                        .background(containerColor, shape)
+                }
+            ),
         content = content,
     )
 }
@@ -132,15 +152,91 @@ internal fun MintGroupedSection(
 @Composable
 internal fun MintGroupedDivider(
     dark: Boolean,
-    startIndent: Dp = 16.dp,
+    startIndent: Dp = 18.dp,
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = startIndent)
             .height(0.5.dp)
-            .background(mintDividerColor(dark)),
+            .background(if (dark) mintDividerColor(true) else Color(0xFFE5E5EA)),
     )
+}
+
+@Composable
+internal fun MintGroupedItemSlot(
+    index: Int,
+    totalCount: Int,
+    dark: Boolean,
+    modifier: Modifier = Modifier,
+    shapeRadius: Dp = 16.dp,
+    dividerStartIndent: Dp = 18.dp,
+    containerColor: Color = if (dark) mintCardSurface(true) else Color.White,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val isFirst = index == 0
+    val isLast = index >= totalCount - 1
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) shapeRadius else 0.dp,
+        topEnd = if (isFirst) shapeRadius else 0.dp,
+        bottomStart = if (isLast) shapeRadius else 0.dp,
+        bottomEnd = if (isLast) shapeRadius else 0.dp,
+    )
+    val hairline = if (dark) mintDividerColor(true) else Color(0x0D000000)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(containerColor, shape)
+            .then(
+                if (dark) {
+                    Modifier.drawWithContent {
+                        drawContent()
+                        val strokePx = 0.5.dp.toPx()
+                        val half = strokePx / 2f
+                        val r = shapeRadius.toPx()
+                        when {
+                            isFirst && isLast -> drawRoundRect(
+                                color = hairline,
+                                topLeft = Offset(half, half),
+                                size = Size(size.width - strokePx, size.height - strokePx),
+                                cornerRadius = CornerRadius(r, r),
+                                style = Stroke(strokePx),
+                            )
+                            isFirst -> clipRect {
+                                drawRoundRect(
+                                    color = hairline,
+                                    topLeft = Offset(half, half),
+                                    size = Size(size.width - strokePx, size.height + r),
+                                    cornerRadius = CornerRadius(r, r),
+                                    style = Stroke(strokePx),
+                                )
+                            }
+                            isLast -> clipRect {
+                                drawRoundRect(
+                                    color = hairline,
+                                    topLeft = Offset(half, -r),
+                                    size = Size(size.width - strokePx, size.height + r - half),
+                                    cornerRadius = CornerRadius(r, r),
+                                    style = Stroke(strokePx),
+                                )
+                            }
+                            else -> {
+                                drawLine(hairline, Offset(half, 0f), Offset(half, size.height), strokeWidth = strokePx)
+                                drawLine(hairline, Offset(size.width - half, 0f), Offset(size.width - half, size.height), strokeWidth = strokePx)
+                            }
+                        }
+                    }
+                } else {
+                    Modifier
+                }
+            ),
+    ) {
+        if (!isFirst) {
+            MintGroupedDivider(dark = dark, startIndent = dividerStartIndent)
+        }
+        content()
+    }
 }
 
 @Composable
@@ -170,7 +266,7 @@ internal fun MintGroupedRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 50.dp)
+            .defaultMinSize(minHeight = 56.dp)
             .background(rowBg)
             .then(
                 if (onClick != null) {
@@ -183,7 +279,7 @@ internal fun MintGroupedRow(
                     )
                 } else Modifier
             )
-            .padding(horizontal = 16.dp, vertical = 11.dp),
+            .padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -196,24 +292,30 @@ internal fun MintGroupedRow(
                     selected -> scheme.primary
                     else -> scheme.onSurfaceVariant
                 },
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(20.dp),
             )
         }
+        val scale = mintFontScale()
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = (16.5f * scale).sp,
+                    lineHeight = (23f * scale).sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 ),
                 color = titleColor,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             if (!subtitle.isNullOrBlank()) {
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(3.dp))
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = (14f * scale).sp,
+                        lineHeight = (20f * scale).sp,
+                    ),
                     color = scheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -223,7 +325,10 @@ internal fun MintGroupedRow(
         if (!trailingText.isNullOrBlank()) {
             Text(
                 text = trailingText,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = (14f * scale).sp,
+                    lineHeight = (19f * scale).sp,
+                ),
                 color = mintTertiaryTextColor(dark),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -306,9 +411,10 @@ internal fun MintBottomSheet(
                 backdrop = backdrop,
                 tier = GlassTier.Reduced,
                 dark = dark,
-                shapeRadius = 22.dp,
-                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+                shapeRadius = 24.dp,
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 elevatedModal = true,
+                showBorder = dark,
                 modifier = modifier
                     .align(Alignment.BottomCenter)
                     .widthIn(max = maxWidth)
@@ -318,6 +424,7 @@ internal fun MintBottomSheet(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .background(mintCanvasColor(dark))
                         .padding(horizontal = 18.dp)
                         .padding(top = 8.dp, bottom = 18.dp),
                 ) {
@@ -329,10 +436,11 @@ internal fun MintBottomSheet(
                             .clip(RoundedCornerShape(50))
                             .background(scheme.onSurfaceVariant.copy(alpha = 0.28f)),
                     )
+                    val headerScale = mintFontScale()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .defaultMinSize(minHeight = 48.dp),
+                            .defaultMinSize(minHeight = 50.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
@@ -346,7 +454,10 @@ internal fun MintBottomSheet(
                                 ) {
                                     Text(
                                         text = leadingLabel,
-                                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp),
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontSize = (16f * headerScale).sp,
+                                            lineHeight = (22f * headerScale).sp,
+                                        ),
                                         color = scheme.onSurfaceVariant,
                                         maxLines = 1,
                                     )
@@ -359,8 +470,9 @@ internal fun MintBottomSheet(
                         ) {
                             Text(
                                 text = title,
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontSize = 17.sp,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontSize = (20f * headerScale).sp,
+                                    lineHeight = (26f * headerScale).sp,
                                     fontWeight = FontWeight.SemiBold,
                                     letterSpacing = (-0.2).sp,
                                 ),
@@ -372,7 +484,10 @@ internal fun MintBottomSheet(
                             if (!subtitle.isNullOrBlank()) {
                                 Text(
                                     text = subtitle,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = (14f * headerScale).sp,
+                                        lineHeight = (19f * headerScale).sp,
+                                    ),
                                     color = scheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -395,7 +510,11 @@ internal fun MintBottomSheet(
                                 ) {
                                     Text(
                                         text = trailingLabel,
-                                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontSize = (16f * headerScale).sp,
+                                            lineHeight = (22f * headerScale).sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        ),
                                         color = when {
                                             !trailingEnabled -> scheme.onSurfaceVariant.copy(alpha = 0.45f)
                                             trailingDestructive -> mintDestructiveColor(dark)
@@ -832,7 +951,7 @@ internal fun MintSelectionRow(
 
     val rowModifier = modifier
         .fillMaxWidth()
-        .defaultMinSize(minHeight = 48.dp)
+        .defaultMinSize(minHeight = 56.dp)
         .background(fillColor)
         .then(
             if (semanticsRole == Role.Checkbox) {
@@ -853,38 +972,44 @@ internal fun MintSelectionRow(
                 )
             }
         )
-        .padding(horizontal = 16.dp, vertical = 11.dp)
+        .padding(horizontal = 18.dp, vertical = 14.dp)
 
     Row(
         modifier = rowModifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (leadingIcon != null) {
             Icon(
                 imageVector = leadingIcon,
                 contentDescription = null,
                 tint = if (selected) scheme.primary else scheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(20.dp),
             )
         }
+        val scale = mintFontScale()
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = (16.5f * scale).sp,
+                    lineHeight = (23f * scale).sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 ),
                 color = if (selected) scheme.onSurface else scheme.onSurface.copy(alpha = 0.92f),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             if (!subtitle.isNullOrBlank()) {
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(3.dp))
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = (14f * scale).sp,
+                        lineHeight = (20f * scale).sp,
+                    ),
                     color = scheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -960,7 +1085,7 @@ internal fun MintChip(
 
     Box(
         modifier = modifier
-            .defaultMinSize(minHeight = 40.dp)
+            .defaultMinSize(minHeight = 44.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -1064,13 +1189,13 @@ internal fun MintSegmentedBar(
 
     Box(
         modifier = modifier
-            .defaultMinSize(minHeight = 36.dp)
+            .defaultMinSize(minHeight = 44.dp)
             .clip(RoundedCornerShape(50))
             .background(trackColor, RoundedCornerShape(50))
             .padding(3.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(30.dp)) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(38.dp)) {
             val count = options.size
             val segmentWidth = maxWidth / count
             val safeIndex = selectedIndex.coerceIn(0, count - 1)
@@ -1116,9 +1241,12 @@ internal fun MintSegmentedBar(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        val segScale = mintFontScale()
                         Text(
                             text = label,
                             style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = (14.5f * segScale).sp,
+                                lineHeight = (20f * segScale).sp,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                             ),
                             color = if (selected) scheme.onSurface else scheme.onSurfaceVariant,
@@ -1349,9 +1477,9 @@ internal fun MintActivityIndicator(
     sizeDp: androidx.compose.ui.unit.Dp = 18.dp,
 ) {
     val animEnabled = mintAnimatorsEnabled()
-    val step = if (animEnabled) {
+    val phaseState = if (animEnabled) {
         val transition = rememberInfiniteTransition(label = "mint-spinner")
-        val phase by transition.animateFloat(
+        transition.animateFloat(
             initialValue = 0f,
             targetValue = 12f,
             animationSpec = infiniteRepeatable(
@@ -1360,11 +1488,11 @@ internal fun MintActivityIndicator(
             ),
             label = "mint-spinner-step",
         )
-        phase.toInt() % 12
     } else {
-        0
+        null
     }
     Canvas(modifier = modifier.size(sizeDp)) {
+        val step = (phaseState?.value?.toInt() ?: 0) % 12
         val count = 12
         val cx = size.width / 2f
         val cy = size.height / 2f

@@ -91,6 +91,7 @@ internal class NotesRepository(private val database: NotesDatabase) {
 
     suspend fun loadNote(id: String): NoteEntity? = dao.note(id)
     suspend fun loadDraft(slot: String): DraftEntity? = dao.draft(slot)
+    suspend fun countActiveNotes(): Int = dao.countActiveNotes()
 
     fun newDraft(slot: String, note: NoteEntity? = null): DraftEntity = DraftEntity(
         id = newId(),
@@ -987,6 +988,50 @@ internal class NotesRepository(private val database: NotesDatabase) {
             else it.copy(archivedAt = if (archived) now() else null)
         }
 
+    suspend fun setAiPolicy(noteId: String, aiPolicy: String) {
+        val validated = validateAiPolicy(aiPolicy)
+        changeMetadata(noteId) {
+            if (it.aiPolicy == validated) it else it.copy(aiPolicy = validated)
+        }
+    }
+
+    suspend fun batchSetArchived(noteIds: Collection<String>, archived: Boolean) = database.withTransaction {
+        val ids = normalizeBatchNoteIds(noteIds)
+        if (ids.isEmpty()) return@withTransaction
+        val ts = now()
+        for (id in ids) {
+            val previous = dao.note(id) ?: continue
+            if (previous.deletedAt != null) continue
+            if ((previous.archivedAt != null) == archived) continue
+            writeRevision(
+                previous.copy(
+                    archivedAt = if (archived) ts else null,
+                    revision = previous.revision + 1L,
+                    updatedAt = ts,
+                ),
+                "metadata",
+            )
+        }
+    }
+
+    suspend fun batchSoftDelete(noteIds: Collection<String>): List<String> = database.withTransaction {
+        val ids = normalizeBatchNoteIds(noteIds)
+        if (ids.isEmpty()) return@withTransaction emptyList()
+        val ts = now()
+        val cancelledReminders = mutableListOf<String>()
+        for (id in ids) {
+            val previous = dao.note(id) ?: continue
+            if (previous.deletedAt != null) continue
+            dao.deleteDraftsForNote(id)
+            writeRevision(
+                previous.copy(revision = previous.revision + 1L, updatedAt = ts, deletedAt = ts),
+                "trash",
+            )
+            cancelledReminders.addAll(taskDao.remindersForNote(id).map { it.id })
+        }
+        cancelledReminders.distinct()
+    }
+
     suspend fun listTrashedNotes(): List<NoteEntity> = dao.trashedNotes()
 
     suspend fun moveToTrash(id: String): List<String> = database.withTransaction {
@@ -1069,6 +1114,16 @@ internal class NotesRepository(private val database: NotesDatabase) {
         val trashedIds = dao.trashedNotes().map { it.id }
         permanentlyDeleteNotesLocked(trashedIds)
     }
+
+    suspend fun purgeExpiredTrash(
+        retentionDays: Int,
+        now: Instant = Instant.now(),
+        excludeNoteIds: Set<String> = emptySet(),
+    ): PermanentDeleteResult = purgeExpiredTrash(
+        now = now,
+        retentionDays = retentionDays.toLong(),
+        excludeNoteIds = excludeNoteIds,
+    )
 
     suspend fun purgeExpiredTrash(
         now: Instant = Instant.now(),
@@ -1288,5 +1343,14 @@ internal class NotesRepository(private val database: NotesDatabase) {
 
     companion object {
         const val TRASH_RETENTION_DAYS = 30L
+        val ALLOWED_AI_POLICIES: Set<String> = setOf("inherit", "exclude", "allow")
+
+        fun validateAiPolicy(aiPolicy: String): String {
+            require(aiPolicy in ALLOWED_AI_POLICIES) { "不支持的 AI 策略: $aiPolicy" }
+            return aiPolicy
+        }
+
+        fun normalizeBatchNoteIds(noteIds: Collection<String>): List<String> =
+            noteIds.asSequence().map { it.trim() }.filter { it.isNotEmpty() }.distinct().toList()
     }
 }

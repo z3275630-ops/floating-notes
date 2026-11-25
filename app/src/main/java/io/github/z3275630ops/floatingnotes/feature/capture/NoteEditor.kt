@@ -7,65 +7,119 @@ import android.os.Build
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.input.TextFieldDecorator
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
+import io.github.z3275630ops.floatingnotes.core.model.NoteMarkType
+import io.github.z3275630ops.floatingnotes.core.model.NoteTextMark
+import io.github.z3275630ops.floatingnotes.core.model.adjustMarksForTextEdit
 import io.github.z3275630ops.floatingnotes.core.model.clampUtf16Range
+import io.github.z3275630ops.floatingnotes.core.model.normalizeMarks
 import io.github.z3275630ops.floatingnotes.core.model.safeUtf16Slice
+import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
+import io.github.z3275630ops.floatingnotes.data.discovery.LocalFuzzyMatcher
+import io.github.z3275630ops.floatingnotes.data.discovery.TagRecommendation
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotebookEntity
 import io.github.z3275630ops.floatingnotes.data.local.RecurrenceRule
 import io.github.z3275630ops.floatingnotes.data.local.ReminderStatus
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
-import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
-import io.github.z3275630ops.floatingnotes.data.discovery.LocalFuzzyMatcher
-import io.github.z3275630ops.floatingnotes.data.discovery.TagRecommendation
 import io.github.z3275630ops.floatingnotes.feature.explore.EdgeEchoPreviewSheet
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorEdgeEchoStrip
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorRelatedNotesSheet
@@ -73,6 +127,8 @@ import io.github.z3275630ops.floatingnotes.feature.tasks.ReminderScheduler
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskRecurrence
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskScheduleModal
 import io.github.z3275630ops.floatingnotes.feature.tasks.TasksScheduleDraft
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenu
+import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesMenuItem
 import io.github.z3275630ops.floatingnotes.ui.designsystem.ComposablesSearchField
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
@@ -88,14 +144,21 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintAiAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintCardSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDividerColor
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintElevatedSurface
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintLinkAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTodoAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 internal enum class InlineTriggerKind { TAG, REFERENCE }
 
@@ -139,8 +202,8 @@ internal fun detectInlineTrigger(
     return null
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Suppress("UNUSED_PARAMETER")
+@OptIn(ExperimentalLayoutApi::class, ExperimentalComposeUiApi::class)
+@Suppress("UNUSED_PARAMETER", "DEPRECATION")
 @Composable
 internal fun ColumnScope.NoteEditor(
     session: EditorSession,
@@ -164,15 +227,25 @@ internal fun ColumnScope.NoteEditor(
     onStartWalkFromNote: ((String) -> Unit)? = null,
     trashedNoteIds: Set<String> = emptySet(),
     trashedNotes: List<NoteEntity> = emptyList(),
+    enableSlashShortcuts: Boolean = true,
+    isAiExcluded: Boolean = activeNote?.aiPolicy == "exclude",
+    onToggleAiExcluded: (() -> Unit)? = null,
+    undoHandle: EditorUndoHandle? = null,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
     val localBackdrop = backdrop ?: rememberGlassBackdrop()
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    val engine = rememberEditorEngineState(session)
+    val listState = rememberLazyListState()
 
     val liveTags by model.organization.tags.collectAsStateWithLifecycle(initialValue = emptyList())
     val availableTags = if (tags.isNotEmpty()) tags else liveTags
@@ -219,14 +292,57 @@ internal fun ColumnScope.NoteEditor(
         if (allowed) model.startRecording(session)
         else session.voiceStatus = "麦克风权限未开启，可在系统设置授权后重试"
     }
+
     var picker by remember { mutableStateOf<String?>(null) }
     var tagPickerOpen by remember { mutableStateOf(false) }
     var scheduleBlockId by remember { mutableStateOf<String?>(null) }
     var focusedBlockId by remember(session.draft.id) { mutableStateOf<String?>(null) }
+    var focusedIsToggleTitle by remember(session.draft.id) { mutableStateOf(false) }
     var excerptTarget by remember { mutableStateOf<NoteEntity?>(null) }
     var pendingTriggerReplace by remember { mutableStateOf<PendingTriggerReplace?>(null) }
     var showRelatedSheet by remember { mutableStateOf(false) }
     var echoPreviewHit by remember { mutableStateOf<EvidenceHit?>(null) }
+    var formatPanelOpen by remember(session.draft.id) { mutableStateOf(false) }
+    var batchFormatSheetOpen by remember { mutableStateOf(false) }
+    var moreInsertMenuOpen by remember { mutableStateOf(false) }
+    var openBlockMenuId by remember { mutableStateOf<String?>(null) }
+    var isSelectionMode by remember(session.draft.id) { mutableStateOf(false) }
+    var selectedBlockIds by remember(session.draft.id) { mutableStateOf<Set<String>>(emptySet()) }
+
+    fun enterSelectionMode(initialBlockId: String) {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+        formatPanelOpen = false
+        moreInsertMenuOpen = false
+        openBlockMenuId = null
+        isSelectionMode = true
+        selectedBlockIds = setOf(initialBlockId)
+    }
+
+    fun exitSelectionMode() {
+        isSelectionMode = false
+        selectedBlockIds = emptySet()
+        batchFormatSheetOpen = false
+    }
+
+    val performUndoAction: () -> Unit = {
+        engine.performUndo(focusedBlockId, focusedIsToggleTitle)
+    }
+    val performRedoAction: () -> Unit = {
+        engine.performRedo(focusedBlockId, focusedIsToggleTitle)
+    }
+    SideEffect {
+        undoHandle?.bind(
+            canUndo = engine.canUndo && !session.closing,
+            canRedo = engine.canRedo && !session.closing,
+            onUndo = performUndoAction,
+            onRedo = performRedoAction,
+        )
+    }
+    DisposableEffect(undoHandle) {
+        onDispose { undoHandle?.unbind() }
+    }
 
     val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
         model.importAttachments(session, it)
@@ -237,54 +353,112 @@ internal fun ColumnScope.NoteEditor(
         if (showImport) space = model.attachments.availableSpace()
     }
 
+    LaunchedEffect(engine.transientHint) {
+        if (engine.transientHint != null) {
+            delay(1_800)
+            engine.transientHint = null
+        }
+    }
+
+    val liveCharCount = session.blocks.sumOf { block ->
+        val doc = block.documentBlock()
+        if (doc.type == "toggle") doc.title.length + doc.text.length else block.text.text.length
+    }
+
     if (session.existingNote) {
         EditorHeaderMetadata(
             activeNote = activeNote,
             notebook = notebooks.firstOrNull { it.id == noteNotebookId },
+            charCount = liveCharCount,
             availableTags = availableTags,
             noteTagIds = noteTagIds,
             pendingTagIds = session.pendingTagIds,
             backlinksCount = backlinks.size,
-            relatedCount = discoveryState.relatedNotes.size,
             dark = dark,
+            isAiExcluded = isAiExcluded,
+            onToggleAiExcluded = onToggleAiExcluded,
+            showInlineUndoRedo = undoHandle == null,
+            canUndo = engine.canUndo && !session.closing,
+            canRedo = engine.canRedo && !session.closing,
+            onUndo = performUndoAction,
+            onRedo = performRedoAction,
             onOpenOrganize = onOpenOrganize,
             onOpenTagPicker = { tagPickerOpen = true },
             onRemovePendingTag = session::removePendingTag,
             onOpenBacklinks = { picker = "引用此笔记的记录" },
-            onOpenRelatedNotes = {
-                model.refreshEditorRelatedNotes(session.draft.noteId)
-                showRelatedSheet = true
-            },
         )
-    } else if (session.pendingTagIds.isNotEmpty() || noteTagIds.isNotEmpty() || backlinks.isNotEmpty()) {
-        FlowRow(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            for (tagId in (noteTagIds + session.pendingTagIds)) {
-                val tag = availableTags.firstOrNull { it.id == tagId } ?: continue
-                MintChip(
-                    label = "#${tag.name}",
-                    selected = true,
-                    style = MintChipStyle.Selected,
-                    dark = dark,
-                    removable = tagId in session.pendingTagIds,
-                    onClick = {
-                        if (tagId in session.pendingTagIds) session.removePendingTag(tagId)
-                        else tagPickerOpen = true
-                    },
+    } else {
+        if (undoHandle == null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "$liveCharCount 字",
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.5.sp),
+                    color = mintTertiaryTextColor(dark),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                InlineUndoRedoButtons(
+                    canUndo = engine.canUndo && !session.closing,
+                    canRedo = engine.canRedo && !session.closing,
+                    onUndo = performUndoAction,
+                    onRedo = performRedoAction,
                 )
             }
-            if (backlinks.isNotEmpty()) {
-                TextButton(
-                    onClick = { picker = "引用此笔记的记录" },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                ) {
-                    Text("反链 ${backlinks.size}")
+        }
+        if (session.pendingTagIds.isNotEmpty() || noteTagIds.isNotEmpty() || backlinks.isNotEmpty() || isAiExcluded) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (isAiExcluded) {
+                    MintChip(
+                        label = "已排除 AI 整理",
+                        selected = true,
+                        leadingIcon = MintIcons.Lock,
+                        style = MintChipStyle.Standard,
+                        dark = dark,
+                        onClick = { onToggleAiExcluded?.invoke() },
+                    )
+                }
+                for (tagId in (noteTagIds + session.pendingTagIds)) {
+                    val tag = availableTags.firstOrNull { it.id == tagId } ?: continue
+                    MintChip(
+                        label = "#${tag.name}",
+                        selected = true,
+                        style = MintChipStyle.Selected,
+                        dark = dark,
+                        removable = tagId in session.pendingTagIds,
+                        onClick = {
+                            if (tagId in session.pendingTagIds) session.removePendingTag(tagId)
+                            else tagPickerOpen = true
+                        },
+                    )
+                }
+                if (backlinks.isNotEmpty()) {
+                    TextButton(
+                        onClick = { picker = "引用此笔记的记录" },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text("反链 ${backlinks.size}")
+                    }
                 }
             }
         }
+    }
+
+    AnimatedVisibility(visible = isSelectionMode) {
+        BlockSelectionTopBanner(
+            selectedCount = selectedBlockIds.size,
+            dark = dark,
+            onDone = { exitSelectionMode() },
+        )
     }
 
     if (session.recording) {
@@ -327,252 +501,909 @@ internal fun ColumnScope.NoteEditor(
 
     val focusBlockRequesters = remember(session.draft.id) { mutableMapOf<String, BringIntoViewRequester>() }
     val blockFocusRequesters = remember(session.draft.id) { mutableMapOf<String, FocusRequester>() }
+    val titleFocusRequesters = remember(session.draft.id) { mutableMapOf<String, FocusRequester>() }
 
-    fun focusEditableBlock(targetId: String, moveToEnd: Boolean = false) {
+    fun focusEditableBlock(
+        targetId: String,
+        moveToEnd: Boolean = false,
+        cursorOffset: Int? = null,
+        toggleTitle: Boolean = false,
+    ) {
         val targetBlock = session.blocks.firstOrNull { it.id == targetId && it.editable } ?: return
+        val docBlock = targetBlock.documentBlock()
+        val effectiveTitle = toggleTitle && docBlock.type == "toggle"
+        val targetText = if (effectiveTitle) docBlock.title else docBlock.text
+        val resolvedCursor = when {
+            cursorOffset != null -> cursorOffset.coerceIn(0, targetText.length)
+            moveToEnd -> targetText.length
+            else -> 0
+        }
+        if (effectiveTitle) {
+            val state = engine.titleTfvStateFor(targetBlock)
+            state.value = TextFieldValue(targetText, TextRange(resolvedCursor))
+        } else {
+            val state = engine.tfvStateFor(targetBlock)
+            state.value = TextFieldValue(targetText, TextRange(resolvedCursor))
+            targetBlock.text.edit {
+                selection = TextRange(resolvedCursor.coerceIn(0, length))
+            }
+        }
         focusedBlockId = targetBlock.id
-        if (moveToEnd) {
-            val end = targetBlock.text.text.length
-            targetBlock.text.edit { selection = TextRange(end) }
-        }
-        runCatching {
-            blockFocusRequesters[targetBlock.id]?.requestFocus()
-        }
-        keyboard?.show()
-        view.post {
-            val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
-        }
+        focusedIsToggleTitle = effectiveTitle
+        engine.requestFocus(targetBlock.id, resolvedCursor, effectiveTitle)
     }
 
     LaunchedEffect(session.focusBlockId) {
         val targetId = session.focusBlockId ?: return@LaunchedEffect
-        withFrameNanos { }
-        focusBlockRequesters[targetId]?.bringIntoView()
-        focusEditableBlock(targetId, moveToEnd = true)
+        val targetBlock = session.blocks.firstOrNull { it.id == targetId }
+        if (targetBlock == null) {
+            session.focusBlockId = null
+            return@LaunchedEffect
+        }
+        if (targetBlock.editable) {
+            val doc = targetBlock.documentBlock()
+            val focusTitle = doc.type == "toggle" && doc.collapsed
+            val textLen = if (focusTitle) doc.title.length else doc.text.length
+            focusEditableBlock(targetId, cursorOffset = textLen, toggleTitle = focusTitle)
+        } else {
+            val idx = session.blocks.indexOf(targetBlock)
+            if (idx >= 0) runCatching { listState.scrollToItem(idx) }
+        }
         session.focusBlockId = null
     }
 
+    LaunchedEffect(engine.pendingFocus?.token) {
+        val req = engine.pendingFocus ?: return@LaunchedEffect
+        val targetIndex = session.blocks.indexOfFirst { it.id == req.blockId && it.editable }
+        if (targetIndex < 0) {
+            engine.pendingFocus = null
+            return@LaunchedEffect
+        }
+        val attachedSet = if (req.toggleTitle) {
+            engine.attachedTitleFocusRequesters
+        } else {
+            engine.attachedFocusRequesters
+        }
+        val requesterMap = if (req.toggleTitle) titleFocusRequesters else blockFocusRequesters
+
+        if (req.blockId !in attachedSet) {
+            runCatching { listState.scrollToItem(targetIndex) }
+        }
+        var waitFrames = 0
+        while (req.blockId !in attachedSet && waitFrames < 14) {
+            withFrameNanos { }
+            waitFrames++
+        }
+        if (req.blockId !in attachedSet) {
+            runCatching { listState.animateScrollToItem(targetIndex) }
+            var retryFrames = 0
+            while (req.blockId !in attachedSet && retryFrames < 8) {
+                withFrameNanos { }
+                retryFrames++
+            }
+        }
+        if (req.blockId in attachedSet) {
+            focusBlockRequesters[req.blockId]?.bringIntoView()
+            val requested = runCatching { requesterMap[req.blockId]?.requestFocus() }.isSuccess
+            if (!requested) {
+                withFrameNanos { }
+                runCatching { requesterMap[req.blockId]?.requestFocus() }
+            }
+            focusedBlockId = req.blockId
+            focusedIsToggleTitle = req.toggleTitle
+            keyboard?.show()
+            view.post {
+                val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+        if (engine.pendingFocus?.token == req.token) {
+            engine.pendingFocus = null
+        }
+    }
+
     LaunchedEffect(session.draft.id, autoFocusKeyboard) {
-        if (autoFocusKeyboard && !session.existingNote && !session.writing) {
+        if (autoFocusKeyboard && !session.existingNote && !session.closing) {
             val firstEditable = session.blocks.firstOrNull { it.editable } ?: return@LaunchedEffect
             withFrameNanos { }
-            kotlinx.coroutines.delay(90)
+            delay(90)
             focusEditableBlock(firstEditable.id, moveToEnd = false)
         }
     }
 
-    Column(
+    val edgeThresholdPx = with(density) { 64.dp.toPx() }
+    val maxScrollStepPx = with(density) { 12.dp.toPx() }
+    LaunchedEffect(engine.dragController.isDragging) {
+        if (engine.dragController.isDragging) {
+            autoScrollDuringBlockDrag(
+                dragController = engine.dragController,
+                listState = listState,
+                blockCount = session.blocks.size,
+                edgeThresholdPx = edgeThresholdPx,
+                maxStepPx = maxScrollStepPx,
+            )
+        }
+    }
+
+    val docBlocks = session.blocks.map { it.documentBlock() }
+    val listNumbers = remember(docBlocks) { EditorBlockOps.computeListNumbers(docBlocks) }
+
+    var editorBoxHeightPx by remember { mutableIntStateOf(0) }
+    var editorBoxTopInRootPx by remember { mutableFloatStateOf(0f) }
+    var cursorAnchorBottomPx by remember { mutableFloatStateOf(Float.NaN) }
+    var cursorAnchorTopPx by remember { mutableFloatStateOf(Float.NaN) }
+
+    fun updateCursorAnchor(blockId: String, fieldCoords: LayoutCoordinates, layout: TextLayoutResult, cursorIdx: Int) {
+        if (focusedBlockId == blockId) {
+            val rect = layout.getCursorRect(cursorIdx.coerceIn(0, layout.layoutInput.text.length))
+            val rootTop = fieldCoords.localToRoot(Offset.Zero).y
+            cursorAnchorTopPx = rootTop + rect.top - editorBoxTopInRootPx
+            cursorAnchorBottomPx = rootTop + rect.bottom - editorBoxTopInRootPx
+        }
+    }
+
+    fun buildDragHandlers(
+        block: EditorBlock,
+        index: Int,
+        itemCoords: LayoutCoordinates?,
+        itemHeightPx: Int,
+        snapshotFocusedId: String?,
+        snapshotToggleTitle: Boolean,
+    ): BlockDragHandlers = BlockDragHandlers(
+        onStartDrag = { pointerOffset ->
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            focusManager.clearFocus(force = true)
+            keyboard?.hide()
+            val rootY = itemCoords?.takeIf { it.isAttached }?.localToRoot(pointerOffset)?.y ?: Float.NaN
+            engine.dragController.start(block.id, index, itemHeightPx, rootY)
+        },
+        onDragDelta = { deltaY, pointerPos ->
+            val rootY = itemCoords?.takeIf { it.isAttached }?.localToRoot(pointerPos)?.y ?: Float.NaN
+            engine.dragController.updateDrag(deltaY, rootY, listState, session.blocks.size)
+        },
+        onDragFinish = {
+            val swap = engine.dragController.finish()
+            if (swap != null) {
+                val before = engine.snapshot(snapshotFocusedId, snapshotToggleTitle)
+                val moved = EditorBlockOps.moveBlock(
+                    session.blocks.map { it.documentBlock() },
+                    swap.first,
+                    swap.second,
+                )
+                engine.applyOutcome(BlockEditOutcome(moved, null, 0), recordUndoBefore = before)
+            }
+        },
+        onDragCancel = { engine.dragController.cancel() },
+    )
+
+    fun handleBackspaceAtStart(blockId: String, isToggleTitle: Boolean): Boolean {
+        val idx = session.blocks.indexOfFirst { it.id == blockId }
+        if (idx < 0) return false
+        val currentBlocks = session.blocks.map { it.documentBlock() }
+        val before = engine.snapshot(blockId, isToggleTitle)
+        val outcome = EditorBlockOps.applyBackspaceAtStart(currentBlocks, idx, isToggleTitle) ?: return false
+        engine.applyOutcome(outcome, recordUndoBefore = before)
+        return true
+    }
+
+    fun handleEnterKey(blockId: String, isToggleTitle: Boolean): Boolean {
+        val idx = session.blocks.indexOfFirst { it.id == blockId }
+        if (idx < 0) return false
+        val block = session.blocks[idx]
+        val tfvState = if (isToggleTitle) engine.titleTfvStateFor(block) else engine.tfvStateFor(block)
+        val tfv = tfvState.value
+        if (tfv.composition != null) return false
+        val start = tfv.selection.start.coerceIn(0, tfv.text.length)
+        val end = tfv.selection.end.coerceIn(start, tfv.text.length)
+        val beforeCursor = tfv.text.substring(0, start)
+        val afterCursor = tfv.text.substring(end)
+        val beforeSnapshot = engine.snapshot(blockId, isToggleTitle)
+        val currentBlocks = session.blocks.map { it.documentBlock() }
+        val outcome = EditorBlockOps.applyEnter(
+            blocks = currentBlocks,
+            blockIndex = idx,
+            beforeCursor = beforeCursor,
+            afterCursor = afterCursor,
+            isToggleTitle = isToggleTitle,
+        )
+        engine.applyOutcome(outcome, recordUndoBefore = beforeSnapshot)
+        return true
+    }
+
+    val highlightBg = if (dark) Color(0xFF4F4216) else Color(0xFFFFF0A3)
+    val highlightFg = if (dark) Color(0xFFFFF1B8) else Color(0xFF2B2200)
+
+    val goldDropIndicator = if (dark) Color(0xFFF2C14E) else Color(0xFFD99B16)
+    val swipeTriggerPx = with(density) { 26.dp.toPx() }
+    val swipeReleaseTriggerPx = with(density) { 18.dp.toPx() }
+    val swipeMaxVisualPx = with(density) { 44.dp.toPx() }
+    val swipeTriggerVisualPx = (swipeTriggerPx * 0.55f).coerceAtLeast(1f)
+    val latestSelectionMode by rememberUpdatedState(isSelectionMode)
+    val latestSessionClosing by rememberUpdatedState(session.closing)
+    val latestEnterSelectionMode by rememberUpdatedState<(String) -> Unit>({ blockId -> enterSelectionMode(blockId) })
+    val selectedCardBg = if (dark) Color(0xFF3B3118) else Color(0xFFFFF2C6)
+    val selectedCardBorder = if (dark) Color(0xFFE5B84B).copy(alpha = 0.45f) else Color(0xFFE2B94B).copy(alpha = 0.7f)
+
+    Box(
         modifier = Modifier
             .weight(1f)
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(
-                horizontal = if (session.existingNote) 20.dp else 14.dp,
-                vertical = if (session.existingNote) 8.dp else 6.dp,
-            ),
-        verticalArrangement = Arrangement.spacedBy(if (session.existingNote) 8.dp else 6.dp),
+            .onSizeChanged { editorBoxHeightPx = it.height }
+            .onGloballyPositioned { coords ->
+                if (coords.isAttached) {
+                    val topY = coords.localToRoot(Offset.Zero).y
+                    editorBoxTopInRootPx = topY
+                    engine.dragController.listTopInRootPx = topY
+                }
+            },
     ) {
-        session.blocks.forEachIndexed { index, block ->
-            key(block.id) {
-                val requester = remember(block.id) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                top = 10.dp,
+                bottom = 28.dp,
+            ),
+        ) {
+            itemsIndexed(
+                items = session.blocks,
+                key = { _, item -> item.id },
+            ) { index, block ->
+                val doc = block.documentBlock()
+                val bringIntoViewReq = remember(block.id) {
                     focusBlockRequesters.getOrPut(block.id) { BringIntoViewRequester() }
                 }
                 val blockFocusReq = remember(block.id) {
                     blockFocusRequesters.getOrPut(block.id) { FocusRequester() }
                 }
+                val titleFocusReq = remember(block.id) {
+                    titleFocusRequesters.getOrPut(block.id) { FocusRequester() }
+                }
+                val isDraggingThis = engine.dragController.draggingBlockId == block.id
+                val showDropBefore = engine.dragController.isDragging &&
+                    !isDraggingThis &&
+                    engine.dragController.targetDropIndex == index &&
+                    engine.dragController.draggingIndex > index
+                val showDropAfter = engine.dragController.isDragging &&
+                    !isDraggingThis &&
+                    engine.dragController.targetDropIndex == index &&
+                    engine.dragController.draggingIndex < index
+                val isBlockSelected = isSelectionMode && block.id in selectedBlockIds
+                val swipeOffsetX = remember(block.id) { Animatable(0f) }
+                val animatedRowBg by animateColorAsState(
+                    targetValue = if (isBlockSelected) selectedCardBg else Color.Transparent,
+                    label = "block-selection-bg",
+                )
+
+                var itemCoords by remember(block.id) { mutableStateOf<LayoutCoordinates?>(null) }
+                var itemHeightPx by remember(block.id) { mutableIntStateOf(0) }
+
+                val topSpacing = when {
+                    index == 0 -> 0.dp
+                    doc.type == "heading" -> 14.dp
+                    doc.type in LIST_BLOCK_TYPES && session.blocks.getOrNull(index - 1)?.type in LIST_BLOCK_TYPES -> 1.dp
+                    else -> 2.dp
+                }
+                val bottomSpacing = when {
+                    doc.type == "heading" -> 4.dp
+                    doc.type in LIST_BLOCK_TYPES -> 1.dp
+                    else -> 1.dp
+                }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .bringIntoViewRequester(requester),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 44.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (block.type == "checkbox") {
-                            MintCheckbox(
-                                checked = block.checked,
-                                enabled = block.editable && !session.writing,
-                                onCheckedChange = { checked -> model.toggleEditorTask(session, block, checked) },
-                                dark = dark,
-                                modifier = Modifier.testTag("checkbox-$index"),
-                            )
+                        .zIndex(if (isDraggingThis) 10f else 0f)
+                        .onGloballyPositioned { coords -> itemCoords = coords }
+                        .onSizeChanged { itemHeightPx = it.height }
+                        .pointerInput(block.id) {
+                            val touchSlop = viewConfiguration.touchSlop
+                            val lockSlop = touchSlop * 0.55f
+                            awaitEachGesture {
+                                val down = awaitFirstDown(
+                                    requireUnconsumed = false,
+                                    pass = PointerEventPass.Initial,
+                                )
+                                if (latestSelectionMode || latestSessionClosing || engine.dragController.isDragging) {
+                                    return@awaitEachGesture
+                                }
+                                val startX = down.position.x
+                                val startY = down.position.y
+                                var horizontalLocked = false
+                                var selectionTriggered = false
+                                var lastDx = 0f
+                                try {
+                                    while (true) {
+                                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!change.pressed) {
+                                            if (horizontalLocked) {
+                                                change.consume()
+                                                if (!selectionTriggered && lastDx >= swipeReleaseTriggerPx) {
+                                                    selectionTriggered = true
+                                                    latestEnterSelectionMode(block.id)
+                                                }
+                                            }
+                                            break
+                                        }
+                                        if (engine.dragController.isDragging) break
+                                        val dx = change.position.x - startX
+                                        val dy = change.position.y - startY
+                                        lastDx = dx
+                                        if (!horizontalLocked) {
+                                            if (change.isConsumed) break
+                                            if (abs(dy) > touchSlop && abs(dy) > abs(dx) * 1.15f) break
+                                            if (dx < -touchSlop) break
+                                            if (dx > lockSlop && dx > abs(dy) * 1.15f) {
+                                                horizontalLocked = true
+                                            }
+                                        }
+                                        if (horizontalLocked) {
+                                            change.consume()
+                                            val targetVisual = (dx * 0.55f).coerceIn(0f, swipeMaxVisualPx)
+                                            scope.launch { swipeOffsetX.snapTo(targetVisual) }
+                                            if (!selectionTriggered && dx >= swipeTriggerPx) {
+                                                selectionTriggered = true
+                                                latestEnterSelectionMode(block.id)
+                                            }
+                                        }
+                                    }
+                                } finally {
+                                    if (horizontalLocked || swipeOffsetX.value > 0f) {
+                                        scope.launch {
+                                            swipeOffsetX.animateTo(
+                                                targetValue = 0f,
+                                                animationSpec = spring(
+                                                    dampingRatio = 0.78f,
+                                                    stiffness = 520f,
+                                                ),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        if (block.editable) {
-                            val isHeroTitle = index == 0 && block.type == "paragraph"
-                            val blockTextStyle = when {
-                                isHeroTitle && session.existingNote -> MaterialTheme.typography.headlineSmall.copy(
-                                    fontSize = 24.sp,
-                                    lineHeight = 32.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = (-0.3).sp,
-                                    color = scheme.onSurface,
-                                    textDecoration = if (block.checked) TextDecoration.LineThrough else null,
-                                )
-                                isHeroTitle -> MaterialTheme.typography.titleMedium.copy(
-                                    fontSize = 18.sp,
-                                    lineHeight = 26.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = scheme.onSurface,
-                                    textDecoration = if (block.checked) TextDecoration.LineThrough else null,
-                                )
-                                else -> MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = 17.sp,
-                                    lineHeight = 28.sp,
-                                    color = if (block.checked) scheme.onSurfaceVariant else scheme.onSurface,
-                                    textDecoration = if (block.checked) TextDecoration.LineThrough else null,
-                                )
-                            }
-                            BasicTextField(
-                                state = block.text,
-                                enabled = !session.writing,
+                        .padding(horizontal = 20.dp)
+                        .bringIntoViewRequester(bringIntoViewReq)
+                        .padding(top = topSpacing, bottom = bottomSpacing),
+                ) {
+                    if (showDropBefore) {
+                        DragInsertionIndicator(color = goldDropIndicator)
+                    }
+
+                    val isFocusedRow = focusedBlockId == block.id
+                    val indentDp = (doc.indent.coerceIn(0, NoteBlock.MAX_INDENT) * 20).dp
+                    val isInteractiveDoc = doc.type == "callout" || doc.type == "toggle" || doc.type == "divider" || doc.editable
+                    val effectiveRowClosing = session.closing || isSelectionMode
+                    val dragHandlers = remember(block.id, index, itemHeightPx, itemCoords, focusedBlockId, focusedIsToggleTitle) {
+                        buildDragHandlers(
+                            block = block,
+                            index = index,
+                            itemCoords = itemCoords,
+                            itemHeightPx = itemHeightPx,
+                            snapshotFocusedId = if (isInteractiveDoc) block.id else focusedBlockId,
+                            snapshotToggleTitle = if (doc.type == "toggle") focusedIsToggleTitle else (!isInteractiveDoc && focusedIsToggleTitle),
+                        )
+                    }
+
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        if (swipeOffsetX.value > 1f) {
+                            val progress = (swipeOffsetX.value / swipeTriggerVisualPx).coerceIn(0f, 1f)
+                            val reached = progress >= 1f
+                            Box(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .focusRequester(blockFocusReq)
-                                    .onFocusChanged { focusState ->
-                                        if (focusState.isFocused) {
-                                            focusedBlockId = block.id
+                                    .align(Alignment.CenterStart)
+                                    .size(20.dp)
+                                    .alpha(progress)
+                                    .clip(CircleShape)
+                                    .then(
+                                        if (reached) {
+                                            Modifier.background(goldDropIndicator, CircleShape)
+                                        } else {
+                                            Modifier.border(1.5.dp, goldDropIndicator, CircleShape)
                                         }
-                                    }
-                                    .padding(vertical = 8.dp, horizontal = 2.dp)
-                                    .testTag(if (index == 0) "capture-editor" else "block-editor-$index"),
-                                textStyle = blockTextStyle,
-                                cursorBrush = SolidColor(scheme.primary),
-                                decorator = TextFieldDecorator { inner ->
-                                    Box(Modifier.fillMaxWidth()) {
-                                        if (block.text.text.isEmpty()) {
-                                            val placeholder = when {
-                                                block.type == "checkbox" -> "待办事项"
-                                                index == 0 && session.blocks.size == 1 -> "写点什么…  #标签 @引用"
-                                                else -> ""
-                                            }
-                                            if (placeholder.isNotEmpty()) {
-                                                Text(
-                                                    text = placeholder,
-                                                    color = scheme.onSurfaceVariant.copy(alpha = 0.72f),
-                                                    style = blockTextStyle.copy(fontWeight = FontWeight.Normal),
-                                                )
-                                            }
-                                        }
-                                        inner()
-                                    }
-                                },
-                            )
-                        } else if (block.attachmentId != null) {
-                            AttachmentRow(
-                                model.attachments,
-                                requireNotNull(block.attachmentId),
-                                !session.writing && !session.voiceBusy,
-                                insertTranscript = { text -> session.insertTranscript(block, text) },
+                                    ),
+                                contentAlignment = Alignment.Center,
                             ) {
-                                session.removeAttachment(block)
+                                if (reached) {
+                                    Icon(
+                                        imageVector = MintIcons.Check,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp),
+                                    )
+                                }
                             }
-                        } else if (block.referenceTarget != null) {
-                            val rawTarget = notes.firstOrNull { it.id == block.referenceTarget }
-                            val trashedMatch = trashedNotes.firstOrNull { it.id == block.referenceTarget }
-                            val targetTrashed = block.referenceTarget in trashedNoteIds || trashedMatch != null
-                            val target = rawTarget?.takeUnless { targetTrashed }
-                            ReferenceBlockCard(
-                                block = block,
-                                target = target,
-                                trashedTarget = targetTrashed,
-                                trashedTitle = (trashedMatch ?: rawTarget?.takeIf { targetTrashed })?.let(::referenceLabel),
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer {
+                                    translationX = swipeOffsetX.value
+                                    if (isDraggingThis) {
+                                        translationY = engine.dragController.dragOffsetY
+                                        alpha = 0.88f
+                                        scaleX = 1.02f
+                                        scaleY = 1.02f
+                                    }
+                                }
+                                .then(
+                                    when {
+                                        isDraggingThis -> Modifier
+                                            .shadow(12.dp, RoundedCornerShape(14.dp))
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(mintElevatedSurface(dark), RoundedCornerShape(14.dp))
+                                        isBlockSelected -> Modifier
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(animatedRowBg, RoundedCornerShape(14.dp))
+                                            .border(0.8.dp, selectedCardBorder, RoundedCornerShape(14.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        animatedRowBg != Color.Transparent -> Modifier
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(animatedRowBg, RoundedCornerShape(14.dp))
+                                        else -> Modifier
+                                    }
+                                ),
+                        ) {
+                            SelectionAwareBlockSlot(
+                                isSelectionMode = isSelectionMode,
+                                selected = isBlockSelected,
                                 dark = dark,
-                                enabled = !session.writing,
-                                onOpen = if (target != null && onOpenRelated != null) {
-                                    { onOpenRelated(target.id) }
-                                } else null,
-                                onRemove = { session.removeReference(block) },
-                            )
-                        } else {
-                            Text(
-                                text = block.text.text.toString().ifBlank { "只读区块 · ${block.type}" },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = scheme.onSurfaceVariant,
-                            )
+                                onToggleSelect = {
+                                    selectedBlockIds = EditorBlockOps.toggleBlockSelection(selectedBlockIds, block.id)
+                                },
+                                onStartDrag = dragHandlers.onStartDrag,
+                                onDragDelta = dragHandlers.onDragDelta,
+                                onDragFinish = dragHandlers.onDragFinish,
+                                onDragCancel = dragHandlers.onDragCancel,
+                            ) {
+                        when {
+                            doc.type == "callout" -> {
+                                val cycleTone = {
+                                    openBlockMenuId = null
+                                    val tones = NoteBlock.CALLOUT_TONES
+                                    val nextTone = tones[(tones.indexOf(doc.tone) + 1) % tones.size]
+                                    val before = engine.snapshot(block.id, false)
+                                    engine.undoStack.recordStructuralChange(before)
+                                    engine.updateSingleBlock(index, doc.withCalloutTone(nextTone))
+                                    engine.refreshUndoFlags()
+                                }
+                                CalloutBlockRow(
+                                    block = block,
+                                    doc = doc,
+                                    index = index,
+                                    indentDp = indentDp,
+                                    isFocused = isFocusedRow && !isSelectionMode,
+                                    dark = dark,
+                                    sessionClosing = effectiveRowClosing,
+                                    engine = engine,
+                                    focusRequester = blockFocusReq,
+                                    highlightBg = highlightBg,
+                                    highlightFg = highlightFg,
+                                    enableSlashShortcuts = enableSlashShortcuts,
+                                    openBlockMenuId = openBlockMenuId,
+                                    onOpenBlockMenu = { openBlockMenuId = it },
+                                    onFocusChange = { focused ->
+                                        if (focused) {
+                                            focusedBlockId = block.id
+                                            focusedIsToggleTitle = false
+                                        }
+                                    },
+                                    onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
+                                    onBackspaceAtStart = { handleBackspaceAtStart(block.id, isToggleTitle = false) },
+                                    onEnterKey = { handleEnterKey(block.id, isToggleTitle = false) },
+                                    onCycleTone = cycleTone,
+                                    blockMenuContent = {
+                                        WiredBlockContextMenu(
+                                            expanded = openBlockMenuId == block.id,
+                                            doc = doc,
+                                            index = index,
+                                            session = session,
+                                            engine = engine,
+                                            clipboard = clipboard,
+                                            snapshotToggleTitle = false,
+                                            onDismiss = { openBlockMenuId = null },
+                                            onEnterSelectionMode = { enterSelectionMode(block.id) },
+                                            onCycleCalloutTone = cycleTone,
+                                        )
+                                    },
+                                    onStartDrag = dragHandlers.onStartDrag,
+                                    onDragDelta = dragHandlers.onDragDelta,
+                                    onDragFinish = dragHandlers.onDragFinish,
+                                    onDragCancel = dragHandlers.onDragCancel,
+                                )
+                            }
+
+                            doc.type == "toggle" -> {
+                                ToggleBlockRow(
+                                    block = block,
+                                    doc = doc,
+                                    index = index,
+                                    indentDp = indentDp,
+                                    isFocused = isFocusedRow && !isSelectionMode,
+                                    dark = dark,
+                                    sessionClosing = effectiveRowClosing,
+                                    engine = engine,
+                                    titleFocusRequester = titleFocusReq,
+                                    bodyFocusRequester = blockFocusReq,
+                                    highlightBg = highlightBg,
+                                    highlightFg = highlightFg,
+                                    openBlockMenuId = openBlockMenuId,
+                                    onOpenBlockMenu = { openBlockMenuId = it },
+                                    onToggleCollapse = {
+                                        val before = engine.snapshot(block.id, focusedIsToggleTitle)
+                                        engine.undoStack.recordStructuralChange(before)
+                                        val nextCollapsed = !doc.collapsed
+                                        engine.updateSingleBlock(index, doc.withToggleState(collapsed = nextCollapsed))
+                                        engine.refreshUndoFlags()
+                                        if (nextCollapsed && focusedBlockId == block.id && !focusedIsToggleTitle) {
+                                            focusEditableBlock(block.id, moveToEnd = true, toggleTitle = true)
+                                        }
+                                    },
+                                    onFocusTitleChange = { focused ->
+                                        if (focused) {
+                                            focusedBlockId = block.id
+                                            focusedIsToggleTitle = true
+                                        }
+                                    },
+                                    onFocusBodyChange = { focused ->
+                                        if (focused) {
+                                            focusedBlockId = block.id
+                                            focusedIsToggleTitle = false
+                                        }
+                                    },
+                                    onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
+                                    onBackspaceAtStart = { isTitle -> handleBackspaceAtStart(block.id, isToggleTitle = isTitle) },
+                                    onEnterKey = { isTitle -> handleEnterKey(block.id, isToggleTitle = isTitle) },
+                                    blockMenuContent = {
+                                        WiredBlockContextMenu(
+                                            expanded = openBlockMenuId == block.id,
+                                            doc = doc,
+                                            index = index,
+                                            session = session,
+                                            engine = engine,
+                                            clipboard = clipboard,
+                                            snapshotToggleTitle = focusedIsToggleTitle,
+                                            onDismiss = { openBlockMenuId = null },
+                                            onEnterSelectionMode = { enterSelectionMode(block.id) },
+                                        )
+                                    },
+                                    onStartDrag = dragHandlers.onStartDrag,
+                                    onDragDelta = dragHandlers.onDragDelta,
+                                    onDragFinish = dragHandlers.onDragFinish,
+                                    onDragCancel = dragHandlers.onDragCancel,
+                                )
+                            }
+
+                            doc.type == "divider" -> {
+                                DividerBlockRow(
+                                    block = doc,
+                                    index = index,
+                                    dark = dark,
+                                    selected = focusedBlockId == block.id && !isSelectionMode,
+                                    openBlockMenuId = openBlockMenuId,
+                                    onSelect = {
+                                        focusedBlockId = block.id
+                                        focusedIsToggleTitle = false
+                                        openBlockMenuId = block.id
+                                    },
+                                    onOpenBlockMenu = { openBlockMenuId = it },
+                                    blockMenuContent = {
+                                        WiredBlockContextMenu(
+                                            expanded = openBlockMenuId == block.id,
+                                            doc = doc,
+                                            index = index,
+                                            session = session,
+                                            engine = engine,
+                                            clipboard = clipboard,
+                                            snapshotToggleTitle = false,
+                                            onDismiss = { openBlockMenuId = null },
+                                            onEnterSelectionMode = { enterSelectionMode(block.id) },
+                                            onToggleDividerStyle = {
+                                                openBlockMenuId = null
+                                                val nextStyle = if (doc.dividerStyle == "dashed") "solid" else "dashed"
+                                                val before = engine.snapshot(block.id, false)
+                                                engine.undoStack.recordStructuralChange(before)
+                                                engine.updateSingleBlock(index, doc.withDividerStyle(nextStyle))
+                                                engine.refreshUndoFlags()
+                                            },
+                                        )
+                                    },
+                                    onStartDrag = dragHandlers.onStartDrag,
+                                    onDragDelta = dragHandlers.onDragDelta,
+                                    onDragFinish = dragHandlers.onDragFinish,
+                                    onDragCancel = dragHandlers.onDragCancel,
+                                )
+                            }
+
+                            doc.editable -> {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    EditableStandardBlockRow(
+                                        block = block,
+                                        doc = doc,
+                                        index = index,
+                                        blockCount = session.blocks.size,
+                                        listNumber = listNumbers[block.id] ?: 1,
+                                        indentDp = indentDp,
+                                        isFocused = isFocusedRow && !isSelectionMode,
+                                        dark = dark,
+                                        sessionClosing = effectiveRowClosing,
+                                        sessionWriting = session.writing,
+                                        engine = engine,
+                                        focusRequester = blockFocusReq,
+                                        highlightBg = highlightBg,
+                                        highlightFg = highlightFg,
+                                        enableSlashShortcuts = enableSlashShortcuts,
+                                        openBlockMenuId = openBlockMenuId,
+                                        onOpenBlockMenu = { openBlockMenuId = it },
+                                        onToggleCheckbox = { checked -> model.toggleEditorTask(session, block, checked) },
+                                        onFocusChange = { focused ->
+                                            if (focused) {
+                                                focusedBlockId = block.id
+                                                focusedIsToggleTitle = false
+                                            }
+                                        },
+                                        onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
+                                        onBackspaceAtStart = { handleBackspaceAtStart(block.id, isToggleTitle = false) },
+                                        onEnterKey = { handleEnterKey(block.id, isToggleTitle = false) },
+                                        blockMenuContent = {
+                                            WiredBlockContextMenu(
+                                                expanded = openBlockMenuId == block.id,
+                                                doc = doc,
+                                                index = index,
+                                                session = session,
+                                                engine = engine,
+                                                clipboard = clipboard,
+                                                snapshotToggleTitle = false,
+                                                onDismiss = { openBlockMenuId = null },
+                                                onEnterSelectionMode = { enterSelectionMode(block.id) },
+                                            )
+                                        },
+                                        onStartDrag = dragHandlers.onStartDrag,
+                                        onDragDelta = dragHandlers.onDragDelta,
+                                        onDragFinish = dragHandlers.onDragFinish,
+                                        onDragCancel = dragHandlers.onDragCancel,
+                                    )
+
+                                    if (block.type == "checkbox") {
+                                        val liveTask = noteTaskItems.firstOrNull {
+                                            it.noteId == session.draft.noteId && it.blockId == block.id
+                                        }
+                                        val effectiveDue = if (block.pendingScheduleChanged) block.dueDate else liveTask?.dueDate ?: block.dueDate
+                                        val effectiveTime = if (block.pendingScheduleChanged) {
+                                            block.pendingReminderTime ?: block.reminderLocalTime
+                                        } else {
+                                            liveTask?.reminderLocalTime ?: block.reminderLocalTime
+                                        }
+                                        val effectiveStatus = block.reminderStatus ?: liveTask?.reminderStatus
+                                        val hasActiveReminder = effectiveTime != null && effectiveStatus != ReminderStatus.CANCELLED
+                                        val effectiveRecurrence = if (block.pendingScheduleChanged) {
+                                            block.recurrenceRule
+                                        } else {
+                                            liveTask?.recurrence ?: block.recurrenceRule
+                                        }
+
+                                        if ((isFocusedRow && !isSelectionMode) || !effectiveDue.isNullOrBlank() || hasActiveReminder || effectiveRecurrence != RecurrenceRule.NONE) {
+                                            EditorCheckboxScheduleRow(
+                                                dueDate = effectiveDue,
+                                                reminderTime = if (hasActiveReminder) effectiveTime else null,
+                                                recurrence = effectiveRecurrence,
+                                                notificationsEnabled = capability.notificationsEnabled,
+                                                enabled = !session.writing && !isSelectionMode,
+                                                dark = dark,
+                                                startIndentDp = indentDp + 44.dp,
+                                                onClick = {
+                                                    focusManager.clearFocus(force = true)
+                                                    keyboard?.hide()
+                                                    capability = ReminderScheduler.capability(context)
+                                                    scheduleBlockId = block.id
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            block.attachmentId != null -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        AttachmentRow(
+                                            model.attachments,
+                                            requireNotNull(block.attachmentId),
+                                            !session.writing && !session.voiceBusy && !isSelectionMode,
+                                            insertTranscript = { text -> session.insertTranscript(block, text) },
+                                        ) {
+                                            val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                                            engine.undoStack.recordStructuralChange(before)
+                                            session.removeAttachment(block)
+                                            engine.refreshUndoFlags()
+                                        }
+                                    }
+                                    if (!isSelectionMode) {
+                                        BlockDragOnlyHandle(
+                                            dark = dark,
+                                            onStartDrag = dragHandlers.onStartDrag,
+                                            onDragDelta = dragHandlers.onDragDelta,
+                                            onDragFinish = dragHandlers.onDragFinish,
+                                            onDragCancel = dragHandlers.onDragCancel,
+                                        )
+                                    }
+                                }
+                            }
+
+                            block.referenceTarget != null -> {
+                                val rawTarget = notes.firstOrNull { it.id == block.referenceTarget }
+                                val trashedMatch = trashedNotes.firstOrNull { it.id == block.referenceTarget }
+                                val targetTrashed = block.referenceTarget in trashedNoteIds || trashedMatch != null
+                                val target = rawTarget?.takeUnless { targetTrashed }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        ReferenceBlockCard(
+                                            block = block,
+                                            target = target,
+                                            trashedTarget = targetTrashed,
+                                            trashedTitle = (trashedMatch ?: rawTarget?.takeIf { targetTrashed })?.let(::referenceLabel),
+                                            dark = dark,
+                                            enabled = !session.writing && !isSelectionMode,
+                                            onOpen = if (target != null && onOpenRelated != null && !isSelectionMode) {
+                                                { onOpenRelated(target.id) }
+                                            } else null,
+                                            onRemove = {
+                                                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                                                engine.undoStack.recordStructuralChange(before)
+                                                session.removeReference(block)
+                                                engine.refreshUndoFlags()
+                                            },
+                                        )
+                                    }
+                                    if (!isSelectionMode) {
+                                        BlockDragOnlyHandle(
+                                            dark = dark,
+                                            onStartDrag = dragHandlers.onStartDrag,
+                                            onDragDelta = dragHandlers.onDragDelta,
+                                            onDragFinish = dragHandlers.onDragFinish,
+                                            onDragCancel = dragHandlers.onDragCancel,
+                                        )
+                                    }
+                                }
+                            }
+
+                            else -> {
+                                Text(
+                                    text = block.text.text.toString().ifBlank { "只读区块 · ${block.type}" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = scheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                )
+                            }
+                        }
+                        }
                         }
                     }
 
-                    if (block.type == "checkbox") {
-                        val liveTask = noteTaskItems.firstOrNull {
-                            it.noteId == session.draft.noteId && it.blockId == block.id
-                        }
-                        val effectiveDue = if (block.pendingScheduleChanged) block.dueDate else liveTask?.dueDate ?: block.dueDate
-                        val effectiveTime = if (block.pendingScheduleChanged) {
-                            block.pendingReminderTime ?: block.reminderLocalTime
-                        } else {
-                            liveTask?.reminderLocalTime ?: block.reminderLocalTime
-                        }
-                        val effectiveStatus = block.reminderStatus ?: liveTask?.reminderStatus
-                        val hasActiveReminder = effectiveTime != null && effectiveStatus != ReminderStatus.CANCELLED
-                        val effectiveRecurrence = if (block.pendingScheduleChanged) {
-                            block.recurrenceRule
-                        } else {
-                            liveTask?.recurrence ?: block.recurrenceRule
-                        }
-
-                        EditorCheckboxScheduleRow(
-                            dueDate = effectiveDue,
-                            reminderTime = if (hasActiveReminder) effectiveTime else null,
-                            recurrence = effectiveRecurrence,
-                            notificationsEnabled = capability.notificationsEnabled,
-                            enabled = !session.writing,
-                            dark = dark,
-                            onClick = {
-                                focusManager.clearFocus(force = true)
-                                keyboard?.hide()
-                                capability = ReminderScheduler.capability(context)
-                                scheduleBlockId = block.id
-                            },
-                        )
+                    if (showDropAfter) {
+                        DragInsertionIndicator(color = goldDropIndicator)
                     }
                 }
             }
+
+            item(key = "editor-blank-canvas") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .heightIn(min = 240.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            enabled = !session.closing,
+                            onClick = {
+                                if (isSelectionMode) {
+                                    exitSelectionMode()
+                                } else {
+                                    val currentBlocks = session.blocks.map { it.documentBlock() }
+                                    val outcome = EditorBlockOps.tapBlankCanvas(currentBlocks)
+                                    if (outcome.blocks.size > currentBlocks.size) {
+                                        val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                                        engine.applyOutcome(outcome, recordUndoBefore = before)
+                                    } else if (outcome.focusBlockId != null) {
+                                        focusEditableBlock(outcome.focusBlockId, cursorOffset = outcome.cursorOffset)
+                                    }
+                                }
+                            },
+                        )
+                        .testTag("editor-blank-canvas"),
+                )
+            }
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 280.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    enabled = !session.writing,
-                    onClick = {
-                        val existingTarget = session.blocks.lastOrNull { it.editable }
-                        if (existingTarget != null && blockFocusRequesters.containsKey(existingTarget.id)) {
-                            focusEditableBlock(existingTarget.id, moveToEnd = true)
-                        } else {
-                            val tail = session.ensureTailEditableBlock()
-                            session.focusBlockId = tail.id
+
+        // Floating Slash Command Menu positioned near cursor
+        val activeBlockForSlash = if (isSelectionMode) null else session.blocks.firstOrNull { it.id == focusedBlockId && it.editable }
+        val activeSlashTfv = if (activeBlockForSlash != null && !focusedIsToggleTitle && activeBlockForSlash.type != "toggle") {
+            engine.tfvStateFor(activeBlockForSlash).value
+        } else null
+        val slashTrigger = if (enableSlashShortcuts && activeSlashTfv != null) {
+            EditorBlockOps.detectSlashCommand(
+                text = activeSlashTfv.text,
+                selection = activeSlashTfv.selection,
+                composition = activeSlashTfv.composition,
+            )
+        } else null
+        val slashSuppressed = activeBlockForSlash != null &&
+            slashTrigger != null &&
+            engine.dismissedSlashAt == (activeBlockForSlash.id to slashTrigger.triggerIndex)
+        if (activeBlockForSlash != null && slashTrigger != null && !slashSuppressed) {
+            val filteredCommands = remember(slashTrigger.query) {
+                SlashCommandCatalog.filter(slashTrigger.query)
+            }
+            if (filteredCommands.isNotEmpty()) {
+                val menuMaxHeightPx = with(density) { 268.dp.toPx() }
+                val marginPx = with(density) { 8.dp.toPx() }
+                val startPadPx = with(density) { 20.dp.toPx() }.roundToInt()
+                val rawOffsetY = when {
+                    cursorAnchorBottomPx.isNaN() || editorBoxHeightPx <= 0 ->
+                        (editorBoxHeightPx - menuMaxHeightPx - marginPx).coerceAtLeast(marginPx)
+                    cursorAnchorBottomPx + menuMaxHeightPx + marginPx <= editorBoxHeightPx ->
+                        cursorAnchorBottomPx + with(density) { 6.dp.toPx() }
+                    !cursorAnchorTopPx.isNaN() ->
+                        (cursorAnchorTopPx - menuMaxHeightPx - with(density) { 6.dp.toPx() }).coerceAtLeast(marginPx)
+                    else -> marginPx
+                }.roundToInt()
+
+                SlashCommandPopup(
+                    commands = filteredCommands,
+                    dark = dark,
+                    modifier = Modifier
+                        .offset { IntOffset(startPadPx, rawOffsetY) }
+                        .widthIn(min = 256.dp, max = 320.dp)
+                        .heightIn(max = 268.dp),
+                    onSelectCommand = { cmd ->
+                        val idx = session.blocks.indexOfFirst { it.id == activeBlockForSlash.id }
+                        if (idx >= 0) {
+                            val before = engine.snapshot(activeBlockForSlash.id, false)
+                            val outcome = EditorBlockOps.applySlashCommand(
+                                blocks = session.blocks.map { it.documentBlock() },
+                                blockIndex = idx,
+                                trigger = slashTrigger,
+                                command = cmd,
+                            )
+                            engine.dismissedSlashAt = null
+                            engine.applyOutcome(outcome, recordUndoBefore = before)
                         }
                     },
                 )
-                .testTag("editor-blank-canvas"),
-        ) {
-            if (session.existingNote && session.blocks.size == 1 && session.blocks.first().text.text.isNotBlank()) {
-                Text(
-                    text = "轻点此处继续书写正文…",
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp),
-                    color = scheme.onSurfaceVariant.copy(alpha = 0.42f),
-                    modifier = Modifier.padding(top = 6.dp, start = 2.dp),
-                )
             }
+        } else if (slashTrigger == null && engine.dismissedSlashAt != null) {
+            engine.dismissedSlashAt = null
         }
     }
 
     val activeBlock = session.blocks.firstOrNull { it.id == focusedBlockId && it.editable }
-    val inlineTrigger = activeBlock?.let { block ->
-        detectInlineTrigger(
-            text = block.text.text.toString(),
-            selection = block.text.selection,
-            composition = block.text.composition,
-        )
-    }
+    val activeBlockIndex = if (activeBlock != null) session.blocks.indexOf(activeBlock) else -1
+    val activeTfv = if (activeBlock != null) {
+        if (focusedIsToggleTitle && activeBlock.type == "toggle") {
+            engine.titleTfvStateFor(activeBlock).value
+        } else {
+            engine.tfvStateFor(activeBlock).value
+        }
+    } else null
 
-    if (activeBlock != null && inlineTrigger != null) {
+    val inlineTrigger = if (activeBlock != null && activeTfv != null) {
+        detectInlineTrigger(
+            text = activeTfv.text,
+            selection = activeTfv.selection,
+            composition = activeTfv.composition,
+        )
+    } else null
+
+    if (activeBlock != null && activeTfv != null && inlineTrigger != null) {
         InlineTriggerSuggestionBar(
             trigger = inlineTrigger,
             availableTags = availableTags,
@@ -580,24 +1411,16 @@ internal fun ColumnScope.NoteEditor(
             candidateNotes = notes.filter { it.id != session.draft.noteId },
             dark = dark,
             onPickExistingTag = { tag ->
-                val latest = detectInlineTrigger(
-                    activeBlock.text.text.toString(),
-                    activeBlock.text.selection,
-                    activeBlock.text.composition,
-                )
-                if (latest != null && activeBlock.text.composition == null) {
-                    activeBlock.text.edit { replace(latest.triggerIndex, latest.cursorIndex, "") }
+                val latest = detectInlineTrigger(activeTfv.text, activeTfv.selection, activeTfv.composition)
+                if (latest != null && activeTfv.composition == null) {
+                    removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
                     model.attachTagToSession(session, tag.id)
                 }
             },
             onCreateTag = { tagName ->
-                val latest = detectInlineTrigger(
-                    activeBlock.text.text.toString(),
-                    activeBlock.text.selection,
-                    activeBlock.text.composition,
-                )
-                if (latest != null && activeBlock.text.composition == null) {
-                    activeBlock.text.edit { replace(latest.triggerIndex, latest.cursorIndex, "") }
+                val latest = detectInlineTrigger(activeTfv.text, activeTfv.selection, activeTfv.composition)
+                if (latest != null && activeTfv.composition == null) {
+                    removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
                     val existing = availableTags.firstOrNull {
                         it.parentId.isEmpty() && it.name.equals(tagName, ignoreCase = true)
                     }
@@ -605,22 +1428,17 @@ internal fun ColumnScope.NoteEditor(
                 }
             },
             onPickNoteFull = { targetNote ->
-                val latest = detectInlineTrigger(
-                    activeBlock.text.text.toString(),
-                    activeBlock.text.selection,
-                    activeBlock.text.composition,
-                )
-                if (latest != null && activeBlock.text.composition == null) {
-                    activeBlock.text.edit { replace(latest.triggerIndex, latest.cursorIndex, "") }
+                val latest = detectInlineTrigger(activeTfv.text, activeTfv.selection, activeTfv.composition)
+                if (latest != null && activeTfv.composition == null) {
+                    val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                    engine.undoStack.recordStructuralChange(before)
+                    removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
                     session.addReference(targetNote)
+                    engine.refreshUndoFlags()
                 }
             },
             onPickNoteExcerpt = { targetNote ->
-                val latest = detectInlineTrigger(
-                    activeBlock.text.text.toString(),
-                    activeBlock.text.selection,
-                    activeBlock.text.composition,
-                )
+                val latest = detectInlineTrigger(activeTfv.text, activeTfv.selection, activeTfv.composition)
                 pendingTriggerReplace = latest?.let {
                     PendingTriggerReplace(activeBlock.id, it.triggerIndex, it.cursorIndex)
                 }
@@ -645,19 +1463,20 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
-    if (session.status.isNotEmpty()) {
+    val bannerStatus = engine.transientHint ?: session.status
+    if (bannerStatus.isNotEmpty()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = session.status,
-                color = if ("失败" in session.status || "未开启" in session.status) scheme.error else scheme.onSurfaceVariant,
+                text = bannerStatus,
+                color = if ("失败" in bannerStatus || "未开启" in bannerStatus) scheme.error else scheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.weight(1f),
             )
-            if ("失败" in session.status && !session.writing) {
+            if (engine.transientHint == null && "失败" in session.status && !session.writing) {
                 TextButton(
                     onClick = onSave,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
@@ -671,13 +1490,16 @@ internal fun ColumnScope.NoteEditor(
     val echoBlock = session.blocks.firstOrNull { it.id == focusedBlockId && it.editable }
         ?: session.blocks.lastOrNull { it.editable }
     val echoInitialText = remember(session.draft.id, echoBlock?.id) {
-        echoBlock?.text?.text?.toString().orEmpty()
+        echoBlock?.documentBlock()?.searchableText.orEmpty()
     }
-    val echoCurrentText = echoBlock?.text?.text?.toString().orEmpty()
-    val echoIsComposing = echoBlock?.text?.composition != null
+    val echoCurrentText = echoBlock?.documentBlock()?.searchableText.orEmpty()
+    val echoIsComposing = echoBlock?.let { blk ->
+        engine.tfvStateFor(blk).value.composition != null ||
+            (blk.type == "toggle" && engine.titleTfvStateFor(blk).value.composition != null)
+    } ?: false
     val fullDraftText = session.blocks
         .filter { it.editable }
-        .joinToString("\n") { it.text.text.toString() }
+        .joinToString("\n") { it.documentBlock().searchableText }
     val attachedTagIdsSnapshot = noteTagIds + session.pendingTagIds
     LaunchedEffect(session.draft.id, attachedTagIdsSnapshot) {
         model.refreshEditorTagRecommendations(
@@ -801,61 +1623,274 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
+    // Bottom Accessory Toolbar: Fixed Undo/Redo (Left) | Horizontal Scroll Tools (Center) | Collapse Keyboard (Right)
+    val activeSelection = activeTfv?.selection ?: TextRange.Zero
+    val activeMarks = if (activeBlock != null && !focusedIsToggleTitle) {
+        engine.activeMarksFor(activeBlock, activeSelection)
+    } else emptySet()
+    val hasReferenceOption = onOpenRelated != null && notes.any { it.id != session.draft.noteId && it.id !in trashedNoteIds }
+    val formatTargetIdx = activeBlockIndex.takeIf { it >= 0 } ?: session.blocks.indexOfLast { it.editable }
+    val formatTargetDoc = formatTargetIdx.takeIf { it in session.blocks.indices }?.let { session.blocks[it].documentBlock() }
+
+    fun insertOrConvertDivider() {
+        val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+        val curBlocks = session.blocks.map { it.documentBlock() }
+        val idx = activeBlockIndex.takeIf { it >= 0 } ?: curBlocks.lastIndex
+        val target = curBlocks.getOrNull(idx)
+        if (target != null && target.editable && target.searchableText.isEmpty()) {
+            val outcome = EditorBlockOps.convertBlockType(curBlocks, idx, "divider")
+            engine.applyOutcome(outcome, recordUndoBefore = before)
+        } else {
+            engine.undoStack.recordStructuralChange(before)
+            val insertAt = (idx + 1).coerceIn(0, curBlocks.size)
+            val div = NoteBlock.divider()
+            val nextP = NoteBlock.paragraph()
+            val nextList = curBlocks.toMutableList()
+            nextList.add(insertAt, div)
+            nextList.add(insertAt + 1, nextP)
+            engine.applyOutcome(BlockEditOutcome(nextList, nextP.id, 0))
+        }
+    }
+
+    AnimatedVisibility(visible = formatPanelOpen && !isSelectionMode) {
+        EditorFormatPanel(
+            targetDoc = formatTargetDoc,
+            activeMarks = activeMarks,
+            canStyleMarks = activeBlock != null && !focusedIsToggleTitle && !session.closing,
+            canOutdent = formatTargetDoc != null && formatTargetDoc.editable && formatTargetDoc.indent > 0 && !session.closing,
+            canIndent = formatTargetDoc != null && formatTargetDoc.editable && formatTargetDoc.indent < NoteBlock.MAX_INDENT && !session.closing,
+            dark = dark,
+            onConvertType = { targetType, level ->
+                if (formatTargetIdx in session.blocks.indices) {
+                    val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                    val outcome = EditorBlockOps.convertBlockType(
+                        blocks = session.blocks.map { it.documentBlock() },
+                        blockIndex = formatTargetIdx,
+                        targetType = targetType,
+                        headingLevel = level,
+                    )
+                    engine.applyOutcome(outcome, recordUndoBefore = before)
+                }
+            },
+            onInsertDivider = { insertOrConvertDivider() },
+            onToggleMark = { markType ->
+                if (activeBlockIndex >= 0) {
+                    engine.toggleMarkAction(activeBlockIndex, markType, activeSelection)
+                }
+            },
+            onAdjustIndent = { delta ->
+                if (formatTargetIdx in session.blocks.indices) {
+                    val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                    val outcome = EditorBlockOps.adjustIndent(
+                        session.blocks.map { it.documentBlock() },
+                        formatTargetIdx,
+                        delta = delta,
+                    )
+                    engine.applyOutcome(outcome, recordUndoBefore = before)
+                }
+            },
+        )
+    }
+
     HorizontalDivider(
         thickness = 0.5.dp,
         color = scheme.outlineVariant.copy(alpha = 0.35f),
         modifier = Modifier.padding(top = 4.dp),
     )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .padding(horizontal = if (session.existingNote) 8.dp else 0.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        EditorAccessoryPill(
-            icon = MintIcons.Checklist,
-            label = "添加待办",
-            enabled = !session.writing,
-            dark = dark,
-            onClick = session::addCheckbox,
+
+    if (isSelectionMode) {
+        val currentDocBlocks = session.blocks.map { it.documentBlock() }
+        val allSelected = currentDocBlocks.isNotEmpty() && selectedBlockIds.size >= currentDocBlocks.size
+        EditorBatchActionBar(
+            selectedCount = selectedBlockIds.size,
+            allSelected = allSelected,
+            onBatchTodo = {
+                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                val outcome = EditorBlockOps.batchToggleTodo(currentDocBlocks, selectedBlockIds)
+                engine.applyOutcome(outcome, recordUndoBefore = before)
+            },
+            onOpenBatchFormat = { batchFormatSheetOpen = true },
+            onToggleSelectAll = {
+                selectedBlockIds = if (allSelected) emptySet() else EditorBlockOps.selectAllBlocks(currentDocBlocks)
+            },
+            onBatchCopy = {
+                val copied = EditorBlockOps.batchCopyText(currentDocBlocks, selectedBlockIds)
+                if (copied.isNotEmpty()) {
+                    clipboard.setText(AnnotatedString(copied))
+                    engine.transientHint = "已复制 ${selectedBlockIds.size} 段内容"
+                }
+            },
+            onBatchDelete = {
+                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                val outcome = EditorBlockOps.batchDeleteBlocks(currentDocBlocks, selectedBlockIds)
+                engine.applyOutcome(outcome, recordUndoBefore = before)
+                exitSelectionMode()
+            },
         )
-        EditorAccessoryPill(
-            icon = MintIcons.Paperclip,
-            label = if (session.importFailed) "重选" else "附件",
-            enabled = !session.writing && !session.importing && !session.voiceBusy,
-            dark = dark,
-            onClick = { showImport = true },
-        )
-        if (!session.recording && !session.voicePending) {
-            EditorAccessoryPill(
-                icon = MintIcons.Audio,
-                label = "录音",
-                enabled = !session.writing && !session.importing && !session.voiceBusy,
-                dark = dark,
-                onClick = { microphone.launch(Manifest.permission.RECORD_AUDIO) },
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 54.dp)
+                .focusProperties { canFocus = false }
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                EditorAccessoryPill(
+                    icon = MintIcons.Checklist,
+                    label = "添加待办",
+                    enabled = !session.writing && !session.closing,
+                    dark = dark,
+                    onClick = {
+                        val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                        val curBlocks = session.blocks.map { it.documentBlock() }
+                        val targetIdx = activeBlockIndex.takeIf { it >= 0 } ?: curBlocks.lastIndex
+                        val targetBlock = curBlocks.getOrNull(targetIdx)
+                        engine.undoStack.recordStructuralChange(before)
+                        if (targetIdx > 0 && targetBlock?.type == "paragraph" && targetBlock.text.isEmpty()) {
+                            val outcome = EditorBlockOps.convertBlockType(curBlocks, targetIdx, "checkbox")
+                            engine.applyOutcome(outcome)
+                        } else {
+                            val insertAt = (targetIdx + 1).coerceIn(0, curBlocks.size)
+                            val newCb = NoteBlock.checkbox()
+                            val nextList = curBlocks.toMutableList()
+                            nextList.add(insertAt, newCb)
+                            if (insertAt == nextList.lastIndex) {
+                                nextList.add(NoteBlock.paragraph())
+                            }
+                            engine.applyOutcome(BlockEditOutcome(nextList, newCb.id, 0))
+                        }
+                    },
+                )
+                EditorAccessoryPill(
+                    icon = EditorIcons.TextFormat,
+                    label = "格式",
+                    enabled = !session.closing && session.blocks.isNotEmpty(),
+                    active = formatPanelOpen,
+                    dark = dark,
+                    contentDescription = "展开格式面板",
+                    onClick = { formatPanelOpen = !formatPanelOpen },
+                )
+                if (hasReferenceOption) {
+                    EditorAccessoryPill(
+                        icon = MintIcons.AtSign,
+                        label = "@ 引用",
+                        enabled = !session.writing && !session.closing,
+                        dark = dark,
+                        onClick = {
+                            excerptTarget = null
+                            pendingTriggerReplace = null
+                            picker = "引用笔记"
+                        },
+                    )
+                }
+                if (!session.recording && !session.voicePending) {
+                    EditorAccessoryPill(
+                        icon = MintIcons.Audio,
+                        label = "录音",
+                        enabled = !session.writing && !session.importing && !session.voiceBusy && !session.closing,
+                        dark = dark,
+                        onClick = { microphone.launch(Manifest.permission.RECORD_AUDIO) },
+                    )
+                }
+                Box {
+                    ToolbarIconButton(
+                        icon = MintIcons.Plus,
+                        contentDescription = "更多插入",
+                        enabled = !session.closing,
+                        active = moreInsertMenuOpen,
+                        iconSize = 22.dp,
+                        onClick = { moreInsertMenuOpen = true },
+                    )
+                    ComposablesMenu(
+                        expanded = moreInsertMenuOpen,
+                        onDismiss = { moreInsertMenuOpen = false },
+                        tag = "editor-more-insert-menu",
+                    ) {
+                        ComposablesMenuItem(
+                            label = if (session.importFailed) "重选图片/文件附件" else "插入图片/视频/附件",
+                            icon = MintIcons.Paperclip,
+                        ) {
+                            moreInsertMenuOpen = false
+                            if (!session.writing && !session.importing && !session.voiceBusy) {
+                                showImport = true
+                            }
+                        }
+                        ComposablesMenuItem(
+                            label = "# 添加标签",
+                            icon = MintIcons.Tag,
+                        ) {
+                            moreInsertMenuOpen = false
+                            if (!session.writing) tagPickerOpen = true
+                        }
+                        ComposablesMenuItem(
+                            label = "插入分割线",
+                            icon = EditorIcons.DividerLine,
+                        ) {
+                            moreInsertMenuOpen = false
+                            insertOrConvertDivider()
+                        }
+                        ComposablesMenuItem(
+                            label = "多选整理段落",
+                            icon = EditorIcons.SelectAll,
+                        ) {
+                            moreInsertMenuOpen = false
+                            val seed = focusedBlockId ?: session.blocks.firstOrNull()?.id
+                            if (seed != null) enterSelectionMode(seed)
+                        }
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 4.dp)
+                    .width(0.8.dp)
+                    .height(22.dp)
+                    .background(mintDividerColor(dark)),
             )
-        }
-        if (onOpenRelated != null && notes.any { it.id != session.draft.noteId && it.id !in trashedNoteIds }) {
-            EditorAccessoryPill(
-                icon = MintIcons.AtSign,
-                label = "@ 引用",
-                enabled = !session.writing,
-                dark = dark,
+            // Right fixed: Collapse Keyboard
+            ToolbarIconButton(
+                icon = EditorIcons.KeyboardHide,
+                contentDescription = "收起键盘",
+                enabled = true,
+                iconSize = 22.dp,
                 onClick = {
-                    excerptTarget = null
-                    pendingTriggerReplace = null
-                    picker = "引用笔记"
+                    formatPanelOpen = false
+                    focusManager.clearFocus(force = true)
+                    keyboard?.hide()
                 },
             )
         }
-        EditorAccessoryPill(
-            icon = MintIcons.Tag,
-            label = "标签",
-            enabled = !session.writing,
+    }
+
+    if (batchFormatSheetOpen && isSelectionMode) {
+        val sampleId = selectedBlockIds.firstOrNull()
+        val sampleDoc = sampleId?.let { id -> session.blocks.firstOrNull { it.id == id }?.documentBlock() }
+        BlockFormatSheet(
+            currentType = sampleDoc?.type,
+            currentLevel = sampleDoc?.level ?: 1,
             dark = dark,
-            onClick = { tagPickerOpen = true },
+            backdrop = localBackdrop,
+            onDismiss = { batchFormatSheetOpen = false },
+            onSelectCommand = { cmd ->
+                batchFormatSheetOpen = false
+                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                val outcome = EditorBlockOps.batchConvertType(
+                    blocks = session.blocks.map { it.documentBlock() },
+                    selectedIds = selectedBlockIds,
+                    targetType = cmd.targetType,
+                    headingLevel = cmd.headingLevel,
+                )
+                engine.applyOutcome(outcome, recordUndoBefore = before)
+            },
         )
     }
 
@@ -898,14 +1933,23 @@ internal fun ColumnScope.NoteEditor(
                 pendingTriggerReplace = null
             },
             onPickFull = { note ->
-                clearPendingInlineTrigger(session, pendingTriggerReplace)
+                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                clearPendingInlineTrigger(session, engine, pendingTriggerReplace)
                 pendingTriggerReplace = null
                 picker = null
                 excerptTarget = null
-                if (mode == "引用笔记") session.addReference(note) else onOpenRelated?.invoke(note.id)
+                if (mode == "引用笔记") {
+                    engine.undoStack.recordStructuralChange(before)
+                    session.addReference(note)
+                    engine.refreshUndoFlags()
+                } else {
+                    onOpenRelated?.invoke(note.id)
+                }
             },
             onPickExcerpt = { note, blockId, start, end, labelOverride ->
-                clearPendingInlineTrigger(session, pendingTriggerReplace)
+                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                engine.undoStack.recordStructuralChange(before)
+                clearPendingInlineTrigger(session, engine, pendingTriggerReplace)
                 pendingTriggerReplace = null
                 picker = null
                 excerptTarget = null
@@ -916,6 +1960,7 @@ internal fun ColumnScope.NoteEditor(
                     end = end,
                     labelOverride = labelOverride,
                 )
+                engine.refreshUndoFlags()
             },
         )
     }
@@ -1087,15 +2132,1611 @@ internal fun ColumnScope.NoteEditor(
     }
 }
 
-private fun clearPendingInlineTrigger(session: EditorSession, pending: PendingTriggerReplace?) {
+private val LIST_BLOCK_TYPES = setOf("bullet", "numbered", "checkbox")
+
+@Composable
+private fun EditableStandardBlockRow(
+    block: EditorBlock,
+    doc: NoteBlock,
+    index: Int,
+    blockCount: Int,
+    listNumber: Int,
+    indentDp: androidx.compose.ui.unit.Dp,
+    isFocused: Boolean,
+    dark: Boolean,
+    sessionClosing: Boolean,
+    sessionWriting: Boolean,
+    engine: EditorEngineState,
+    focusRequester: FocusRequester,
+    highlightBg: Color,
+    highlightFg: Color,
+    enableSlashShortcuts: Boolean,
+    openBlockMenuId: String?,
+    onOpenBlockMenu: (String?) -> Unit,
+    onToggleCheckbox: (Boolean) -> Unit,
+    onFocusChange: (Boolean) -> Unit,
+    onCursorLayout: (LayoutCoordinates, TextLayoutResult, Int) -> Unit,
+    onBackspaceAtStart: () -> Boolean,
+    onEnterKey: () -> Boolean,
+    blockMenuContent: @Composable () -> Unit,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val tfvState = engine.tfvStateFor(block)
+    val baseStyle = blockTextStyle(doc = doc, scheme = scheme)
+    val visual = remember(doc.marks, highlightBg, highlightFg) {
+        marksVisualTransformation(doc.marks, highlightBg, highlightFg)
+    }
+    val placeholder = when {
+        doc.type == "checkbox" -> "待办事项"
+        doc.type == "heading" -> "${doc.level} 级标题"
+        doc.type == "quote" -> "输入引用内容…"
+        doc.type == "bullet" || doc.type == "numbered" -> "列表项"
+        index == 0 && blockCount == 1 -> "写点什么…  /快捷排版 #标签 @引用"
+        else -> ""
+    }
+
+    val rowContent: @Composable RowScope.() -> Unit = {
+        when (doc.type) {
+            "checkbox" -> {
+                MintCheckbox(
+                    checked = block.checked,
+                    enabled = !sessionWriting && !sessionClosing,
+                    onCheckedChange = onToggleCheckbox,
+                    dark = dark,
+                    modifier = Modifier.testTag("checkbox-$index"),
+                )
+            }
+            "bullet" -> {
+                val bulletGlyph = when (doc.indent % 3) {
+                    1 -> "◦"
+                    2 -> "▪"
+                    else -> "•"
+                }
+                Box(
+                    modifier = Modifier.size(width = 24.dp, height = 26.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = bulletGlyph,
+                        style = baseStyle.copy(fontWeight = FontWeight.Bold),
+                        color = scheme.primary,
+                    )
+                }
+            }
+            "numbered" -> {
+                Box(
+                    modifier = Modifier
+                        .widthIn(min = 24.dp)
+                        .height(26.dp)
+                        .padding(end = 4.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        text = "$listNumber.",
+                        style = baseStyle.copy(
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFeatureSettings = "tnum",
+                        ),
+                        color = scheme.primary,
+                    )
+                }
+            }
+        }
+
+        BlockBasicTextField(
+            block = block,
+            doc = doc,
+            tfvState = tfvState,
+            textStyle = baseStyle,
+            placeholder = placeholder,
+            visualTransformation = visual,
+            enabled = !sessionClosing,
+            engine = engine,
+            focusRequester = focusRequester,
+            attachedSet = engine.attachedFocusRequesters,
+            testTag = if (index == 0) "capture-editor" else "block-editor-$index",
+            enableSlashShortcuts = enableSlashShortcuts,
+            modifier = Modifier
+                .weight(1f)
+                .then(
+                    if (doc.type == "checkbox" && block.checked) Modifier.alpha(0.48f) else Modifier
+                ),
+            onFocusChange = onFocusChange,
+            onCursorLayout = onCursorLayout,
+            onBackspaceAtStart = onBackspaceAtStart,
+            onEnterKey = onEnterKey,
+        )
+
+        if (isFocused || openBlockMenuId == block.id) {
+            BlockTrailingControls(
+                blockId = block.id,
+                index = index,
+                dark = dark,
+                menuOpen = openBlockMenuId == block.id,
+                onOpenMenu = { onOpenBlockMenu(block.id) },
+                menuContent = blockMenuContent,
+                onStartDrag = onStartDrag,
+                onDragDelta = onDragDelta,
+                onDragFinish = onDragFinish,
+                onDragCancel = onDragCancel,
+            )
+        }
+    }
+
+    if (doc.type == "quote") {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = indentDp)
+                .height(IntrinsicSize.Min)
+                .heightIn(min = 28.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 3.dp)
+                    .width(3.5.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(scheme.primary.copy(alpha = 0.55f)),
+            )
+            Spacer(Modifier.width(10.dp))
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                content = rowContent,
+            )
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = indentDp)
+                .heightIn(min = if (doc.type == "checkbox") 32.dp else 26.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = rowContent,
+        )
+    }
+}
+
+@Composable
+private fun CalloutBlockRow(
+    block: EditorBlock,
+    doc: NoteBlock,
+    index: Int,
+    indentDp: androidx.compose.ui.unit.Dp,
+    isFocused: Boolean,
+    dark: Boolean,
+    sessionClosing: Boolean,
+    engine: EditorEngineState,
+    focusRequester: FocusRequester,
+    highlightBg: Color,
+    highlightFg: Color,
+    enableSlashShortcuts: Boolean,
+    openBlockMenuId: String?,
+    onOpenBlockMenu: (String?) -> Unit,
+    onFocusChange: (Boolean) -> Unit,
+    onCursorLayout: (LayoutCoordinates, TextLayoutResult, Int) -> Unit,
+    onBackspaceAtStart: () -> Boolean,
+    onEnterKey: () -> Boolean,
+    onCycleTone: () -> Unit,
+    blockMenuContent: @Composable () -> Unit,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val tfvState = engine.tfvStateFor(block)
+    val (accentFg, cardBg) = when (doc.tone) {
+        "tip" -> scheme.primary to scheme.primaryContainer.copy(alpha = if (dark) 0.52f else 0.72f)
+        "warn" -> mintTodoAccent(dark).let { it.fg to it.bg }
+        "important" -> mintAiAccent(dark).let { it.fg to it.bg }
+        else -> mintLinkAccent(dark).let { it.fg to it.bg }
+    }
+    val visual = remember(doc.marks, highlightBg, highlightFg) {
+        marksVisualTransformation(doc.marks, highlightBg, highlightFg)
+    }
+    val style = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = 16.5.sp,
+        lineHeight = 26.sp,
+        color = scheme.onSurface,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = indentDp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(cardBg, RoundedCornerShape(14.dp))
+            .border(0.6.dp, accentFg.copy(alpha = 0.28f), RoundedCornerShape(14.dp))
+            .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClick = onCycleTone,
+                )
+                .semantics { contentDescription = "切换提示框配色" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = EditorIcons.Callout,
+                contentDescription = null,
+                tint = accentFg,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        BlockBasicTextField(
+            block = block,
+            doc = doc,
+            tfvState = tfvState,
+            textStyle = style,
+            placeholder = "输入提示内容…",
+            visualTransformation = visual,
+            enabled = !sessionClosing,
+            engine = engine,
+            focusRequester = focusRequester,
+            attachedSet = engine.attachedFocusRequesters,
+            testTag = if (index == 0) "capture-editor" else "block-editor-$index",
+            enableSlashShortcuts = enableSlashShortcuts,
+            modifier = Modifier.weight(1f),
+            onFocusChange = onFocusChange,
+            onCursorLayout = onCursorLayout,
+            onBackspaceAtStart = onBackspaceAtStart,
+            onEnterKey = onEnterKey,
+        )
+        if (isFocused || openBlockMenuId == block.id) {
+            BlockTrailingControls(
+                blockId = block.id,
+                index = index,
+                dark = dark,
+                menuOpen = openBlockMenuId == block.id,
+                onOpenMenu = { onOpenBlockMenu(block.id) },
+                menuContent = blockMenuContent,
+                onStartDrag = onStartDrag,
+                onDragDelta = onDragDelta,
+                onDragFinish = onDragFinish,
+                onDragCancel = onDragCancel,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToggleBlockRow(
+    block: EditorBlock,
+    doc: NoteBlock,
+    index: Int,
+    indentDp: androidx.compose.ui.unit.Dp,
+    isFocused: Boolean,
+    dark: Boolean,
+    sessionClosing: Boolean,
+    engine: EditorEngineState,
+    titleFocusRequester: FocusRequester,
+    bodyFocusRequester: FocusRequester,
+    highlightBg: Color,
+    highlightFg: Color,
+    openBlockMenuId: String?,
+    onOpenBlockMenu: (String?) -> Unit,
+    onToggleCollapse: () -> Unit,
+    onFocusTitleChange: (Boolean) -> Unit,
+    onFocusBodyChange: (Boolean) -> Unit,
+    onCursorLayout: (LayoutCoordinates, TextLayoutResult, Int) -> Unit,
+    onBackspaceAtStart: (Boolean) -> Boolean,
+    onEnterKey: (Boolean) -> Boolean,
+    blockMenuContent: @Composable () -> Unit,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val titleTfvState = engine.titleTfvStateFor(block)
+    val bodyTfvState = engine.tfvStateFor(block)
+    val titleStyle = MaterialTheme.typography.titleSmall.copy(
+        fontSize = 17.5.sp,
+        lineHeight = 26.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = scheme.onSurface,
+    )
+    val bodyStyle = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = 16.5.sp,
+        lineHeight = 26.sp,
+        color = scheme.onSurface,
+    )
+    val bodyVisual = remember(doc.marks, highlightBg, highlightFg) {
+        marksVisualTransformation(doc.marks, highlightBg, highlightFg)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = indentDp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(mintSecondaryFill(dark).copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onToggleCollapse,
+                    )
+                    .semantics { contentDescription = if (doc.collapsed) "展开折叠块" else "收起折叠块" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (doc.collapsed) MintIcons.ChevronRight else MintIcons.ChevronDown,
+                    contentDescription = null,
+                    tint = scheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            ToggleTitleTextField(
+                block = block,
+                doc = doc,
+                tfvState = titleTfvState,
+                textStyle = titleStyle,
+                enabled = !sessionClosing,
+                engine = engine,
+                focusRequester = titleFocusRequester,
+                modifier = Modifier.weight(1f),
+                onFocusChange = onFocusTitleChange,
+                onBackspaceAtStart = { onBackspaceAtStart(true) },
+                onEnterKey = { onEnterKey(true) },
+            )
+            if (isFocused || openBlockMenuId == block.id) {
+                BlockTrailingControls(
+                    blockId = block.id,
+                    index = index,
+                    dark = dark,
+                    menuOpen = openBlockMenuId == block.id,
+                    onOpenMenu = { onOpenBlockMenu(block.id) },
+                    menuContent = blockMenuContent,
+                    onStartDrag = onStartDrag,
+                    onDragDelta = onDragDelta,
+                    onDragFinish = onDragFinish,
+                    onDragCancel = onDragCancel,
+                )
+            }
+        }
+        if (!doc.collapsed) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 18.dp, end = 6.dp, bottom = 4.dp)
+                    .height(IntrinsicSize.Min),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 4.dp)
+                        .width(2.dp)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(mintDividerColor(dark)),
+                )
+                Spacer(Modifier.width(10.dp))
+                BlockBasicTextField(
+                    block = block,
+                    doc = doc,
+                    tfvState = bodyTfvState,
+                    textStyle = bodyStyle,
+                    placeholder = "展开内容…",
+                    visualTransformation = bodyVisual,
+                    enabled = !sessionClosing,
+                    engine = engine,
+                    focusRequester = bodyFocusRequester,
+                    attachedSet = engine.attachedFocusRequesters,
+                    testTag = if (index == 0) "capture-editor" else "block-editor-$index",
+                    enableSlashShortcuts = false,
+                    modifier = Modifier.weight(1f),
+                    onFocusChange = onFocusBodyChange,
+                    onCursorLayout = onCursorLayout,
+                    onBackspaceAtStart = { onBackspaceAtStart(false) },
+                    onEnterKey = { onEnterKey(false) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DividerBlockRow(
+    block: NoteBlock,
+    index: Int,
+    dark: Boolean,
+    selected: Boolean,
+    openBlockMenuId: String?,
+    onSelect: () -> Unit,
+    onOpenBlockMenu: (String?) -> Unit,
+    blockMenuContent: @Composable () -> Unit,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val lineColor = if (selected) scheme.primary else mintDividerColor(dark)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClick = onSelect,
+            )
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Canvas(
+            modifier = Modifier
+                .weight(1f)
+                .height(2.dp),
+        ) {
+            val pathEffect = if (block.dividerStyle == "dashed") {
+                PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
+            } else null
+            drawLine(
+                color = lineColor,
+                start = Offset(0f, size.height / 2f),
+                end = Offset(size.width, size.height / 2f),
+                strokeWidth = 1.5.dp.toPx(),
+                pathEffect = pathEffect,
+            )
+        }
+        if (selected || openBlockMenuId == block.id) {
+            BlockTrailingControls(
+                blockId = block.id,
+                index = index,
+                dark = dark,
+                menuOpen = openBlockMenuId == block.id,
+                onOpenMenu = { onOpenBlockMenu(block.id) },
+                menuContent = blockMenuContent,
+                onStartDrag = onStartDrag,
+                onDragDelta = onDragDelta,
+                onDragFinish = onDragFinish,
+                onDragCancel = onDragCancel,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun BlockBasicTextField(
+    block: EditorBlock,
+    doc: NoteBlock,
+    tfvState: MutableState<TextFieldValue>,
+    textStyle: TextStyle,
+    placeholder: String,
+    visualTransformation: VisualTransformation,
+    enabled: Boolean,
+    engine: EditorEngineState,
+    focusRequester: FocusRequester,
+    attachedSet: MutableSet<String>,
+    testTag: String,
+    enableSlashShortcuts: Boolean,
+    modifier: Modifier = Modifier,
+    onFocusChange: (Boolean) -> Unit,
+    onCursorLayout: (LayoutCoordinates, TextLayoutResult, Int) -> Unit,
+    onBackspaceAtStart: () -> Boolean,
+    onEnterKey: () -> Boolean,
+) {
+    val scheme = MaterialTheme.colorScheme
+    var fieldCoords by remember(block.id) { mutableStateOf<LayoutCoordinates?>(null) }
+    var lastTextLayout by remember(block.id) { mutableStateOf<TextLayoutResult?>(null) }
+
+    DisposableEffect(block.id) {
+        onDispose { attachedSet.remove(block.id) }
+    }
+
+    val currentTfv by rememberUpdatedState(tfvState.value)
+    val latestOnBackspace by rememberUpdatedState(onBackspaceAtStart)
+    val latestOnEnter by rememberUpdatedState(onEnterKey)
+    val interceptor = remember(block.id) {
+        backspaceAtStartInterceptor(
+            shouldTriggerBackspaceAtStart = {
+                currentTfv.composition == null &&
+                    currentTfv.selection.collapsed &&
+                    currentTfv.selection.start == 0
+            },
+            onBackspaceAtStart = { latestOnBackspace() },
+        )
+    }
+
+    InterceptPlatformTextInput(interceptor) {
+        BasicTextField(
+            value = tfvState.value,
+            onValueChange = { next ->
+                val prev = tfvState.value
+                if (next.text == prev.text) {
+                    if (next.selection != prev.selection && next.composition == null) {
+                        engine.pendingTypingMarks = emptySet()
+                    }
+                    tfvState.value = next
+                    block.text.edit {
+                        selection = clampSelection(next.selection, length)
+                    }
+                    val layout = lastTextLayout
+                    val coords = fieldCoords
+                    if (layout != null && coords != null && coords.isAttached) {
+                        onCursorLayout(coords, layout, next.selection.end)
+                    }
+                    return@BasicTextField
+                }
+
+                if (next.composition != null) {
+                    tfvState.value = next
+                    block.text.edit {
+                        replace(0, length, next.text)
+                        selection = clampSelection(next.selection, length)
+                    }
+                    val updatedMarks = adjustMarksForTextEdit(doc.marks, prev.text, next.text, next.selection.end)
+                    val idx = engine.indexOfBlock(block.id)
+                    if (idx >= 0) {
+                        engine.updateSingleBlock(idx, doc.copy(text = next.text, marks = updatedMarks))
+                    }
+                    return@BasicTextField
+                }
+
+                val splitAt = EditorBlockOps.isSingleNewlineInsertion(prev.text, next.text, next.selection)
+                if (splitAt != null) {
+                    val before = EditorSnapshot(
+                        blocks = engine.blocksSnapshotWithOverride(block.id, prev.text, doc.marks),
+                        focusedBlockId = block.id,
+                        cursorOffset = prev.selection.start,
+                    )
+                    val idx = engine.indexOfBlock(block.id)
+                    if (idx >= 0) {
+                        val beforeCursor = next.text.substring(0, splitAt)
+                        val afterCursor = next.text.substring(splitAt + 1)
+                        val outcome = EditorBlockOps.applyEnter(
+                            blocks = before.blocks,
+                            blockIndex = idx,
+                            beforeCursor = beforeCursor,
+                            afterCursor = afterCursor,
+                            isToggleTitle = false,
+                        )
+                        engine.applyOutcome(outcome, recordUndoBefore = before)
+                    }
+                    return@BasicTextField
+                }
+
+                val idx = engine.indexOfBlock(block.id)
+                if (enableSlashShortcuts && idx >= 0) {
+                    val beforeBlocks = engine.blocksSnapshotWithOverride(block.id, prev.text, doc.marks)
+                    val curBlocks = beforeBlocks.toMutableList()
+                    val shifted = adjustMarksForTextEdit(doc.marks, prev.text, next.text, next.selection.end)
+                    curBlocks[idx] = doc.copy(text = next.text, marks = shifted)
+                    val prefixOutcome = EditorBlockOps.tryApplyMarkdownPrefix(
+                        blocks = curBlocks,
+                        blockIndex = idx,
+                        newText = next.text,
+                        cursorOffset = next.selection.start,
+                    )
+                    if (prefixOutcome != null) {
+                        val before = EditorSnapshot(beforeBlocks, block.id, prev.selection.start)
+                        engine.applyOutcome(prefixOutcome, recordUndoBefore = before)
+                        return@BasicTextField
+                    }
+                }
+
+                val beforeSnapshot = EditorSnapshot(
+                    blocks = engine.blocksSnapshotWithOverride(block.id, prev.text, doc.marks),
+                    focusedBlockId = block.id,
+                    cursorOffset = prev.selection.start,
+                )
+                var nextMarks = adjustMarksForTextEdit(doc.marks, prev.text, next.text, next.selection.end)
+                if (engine.pendingTypingMarks.isNotEmpty() && next.text.length > prev.text.length) {
+                    val insertedLen = next.text.length - prev.text.length
+                    val insEnd = next.selection.start.coerceIn(0, next.text.length)
+                    val insStart = (insEnd - insertedLen).coerceAtLeast(0)
+                    if (insStart < insEnd) {
+                        val additions = engine.pendingTypingMarks.map { NoteTextMark(it, insStart, insEnd) }
+                        nextMarks = normalizeMarks(nextMarks + additions, next.text)
+                    }
+                }
+                tfvState.value = next
+                block.text.edit {
+                    replace(0, length, next.text)
+                    selection = clampSelection(next.selection, length)
+                }
+                if (idx >= 0) {
+                    engine.updateSingleBlock(idx, doc.copy(text = next.text, marks = nextMarks))
+                }
+                val forceBreak = next.text.length != prev.text.length + 1 ||
+                    next.text.lastOrNull() in WORD_BOUNDARY_CHARS
+                engine.undoStack.recordTypingChange(beforeSnapshot, forceBreak = forceBreak)
+                engine.refreshUndoFlags()
+            },
+            enabled = enabled,
+            modifier = modifier
+                .onGloballyPositioned { coords ->
+                    fieldCoords = coords
+                    if (coords.isAttached) attachedSet.add(block.id)
+                }
+                .focusRequester(focusRequester)
+                .onFocusChanged { state -> onFocusChange(state.isFocused) }
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val tfv = tfvState.value
+                    if (tfv.composition != null) return@onPreviewKeyEvent false
+                    when {
+                        event.key == Key.Backspace && tfv.selection.collapsed && tfv.selection.start == 0 -> {
+                            latestOnBackspace()
+                        }
+                        (event.key == Key.Enter || event.key == Key.NumPadEnter) && !event.isShiftPressed -> {
+                            latestOnEnter()
+                        }
+                        else -> false
+                    }
+                }
+                .padding(vertical = 2.dp, horizontal = 2.dp)
+                .testTag(testTag),
+            textStyle = textStyle,
+            cursorBrush = SolidColor(scheme.primary),
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Sentences,
+                imeAction = ImeAction.Default,
+            ),
+            visualTransformation = visualTransformation,
+            onTextLayout = { layout ->
+                lastTextLayout = layout
+                val coords = fieldCoords
+                if (coords != null && coords.isAttached) {
+                    onCursorLayout(coords, layout, tfvState.value.selection.end)
+                }
+            },
+            decorationBox = { innerTextField ->
+                Box(Modifier.fillMaxWidth()) {
+                    if (tfvState.value.text.isEmpty() && placeholder.isNotEmpty()) {
+                        Text(
+                            text = placeholder,
+                            color = scheme.onSurfaceVariant.copy(alpha = 0.65f),
+                            style = textStyle.copy(fontWeight = FontWeight.Normal),
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun ToggleTitleTextField(
+    block: EditorBlock,
+    doc: NoteBlock,
+    tfvState: MutableState<TextFieldValue>,
+    textStyle: TextStyle,
+    enabled: Boolean,
+    engine: EditorEngineState,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+    onFocusChange: (Boolean) -> Unit,
+    onBackspaceAtStart: () -> Boolean,
+    onEnterKey: () -> Boolean,
+) {
+    val scheme = MaterialTheme.colorScheme
+    DisposableEffect(block.id) {
+        onDispose { engine.attachedTitleFocusRequesters.remove(block.id) }
+    }
+    val currentTfv by rememberUpdatedState(tfvState.value)
+    val latestOnBackspace by rememberUpdatedState(onBackspaceAtStart)
+    val latestOnEnter by rememberUpdatedState(onEnterKey)
+    val interceptor = remember(block.id) {
+        backspaceAtStartInterceptor(
+            shouldTriggerBackspaceAtStart = {
+                currentTfv.composition == null &&
+                    currentTfv.selection.collapsed &&
+                    currentTfv.selection.start == 0
+            },
+            onBackspaceAtStart = { latestOnBackspace() },
+        )
+    }
+
+    InterceptPlatformTextInput(interceptor) {
+        BasicTextField(
+            value = tfvState.value,
+            onValueChange = { next ->
+                val prev = tfvState.value
+                if (next.text == prev.text) {
+                    tfvState.value = next
+                    return@BasicTextField
+                }
+                if (next.composition == null) {
+                    val splitAt = EditorBlockOps.isSingleNewlineInsertion(prev.text, next.text, next.selection)
+                    if (splitAt != null) {
+                        val cleaned = next.text.removeRange(splitAt, splitAt + 1)
+                        tfvState.value = TextFieldValue(cleaned, TextRange(splitAt.coerceIn(0, cleaned.length)))
+                        latestOnEnter()
+                        return@BasicTextField
+                    }
+                }
+                val idx = engine.indexOfBlock(block.id)
+                val beforeBlocks = engine.blocksSnapshotWithOverrideTitle(block.id, prev.text)
+                val before = EditorSnapshot(beforeBlocks, block.id, prev.selection.start, focusToggleTitle = true)
+                tfvState.value = next
+                if (idx >= 0) {
+                    engine.updateSingleBlock(idx, doc.withToggleState(title = next.text))
+                }
+                if (next.composition == null) {
+                    engine.undoStack.recordTypingChange(before)
+                    engine.refreshUndoFlags()
+                }
+            },
+            enabled = enabled,
+            singleLine = true,
+            modifier = modifier
+                .onGloballyPositioned { coords ->
+                    if (coords.isAttached) engine.attachedTitleFocusRequesters.add(block.id)
+                }
+                .focusRequester(focusRequester)
+                .onFocusChanged { state -> onFocusChange(state.isFocused) }
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val tfv = tfvState.value
+                    if (tfv.composition != null) return@onPreviewKeyEvent false
+                    when {
+                        event.key == Key.Backspace && tfv.selection.collapsed && tfv.selection.start == 0 -> latestOnBackspace()
+                        event.key == Key.Enter || event.key == Key.NumPadEnter -> latestOnEnter()
+                        else -> false
+                    }
+                }
+                .padding(vertical = 3.dp, horizontal = 2.dp),
+            textStyle = textStyle,
+            cursorBrush = SolidColor(scheme.primary),
+            decorationBox = { inner ->
+                Box(Modifier.fillMaxWidth()) {
+                    if (tfvState.value.text.isEmpty()) {
+                        Text(
+                            text = "折叠标题…",
+                            color = scheme.onSurfaceVariant.copy(alpha = 0.65f),
+                            style = textStyle.copy(fontWeight = FontWeight.Medium),
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+    }
+}
+
+private val WORD_BOUNDARY_CHARS = setOf(' ', '，', '。', '！', '？', '.', ',', '\n')
+
+private fun EditorEngineState.blocksSnapshotWithOverride(
+    blockId: String,
+    textOverride: String,
+    marksOverride: List<NoteTextMark>,
+): List<NoteBlock> {
+    val cur = snapshot(blockId, false).blocks
+    return cur.map { blk ->
+        if (blk.id == blockId) blk.copy(text = textOverride, marks = marksOverride) else blk
+    }
+}
+
+private fun EditorEngineState.blocksSnapshotWithOverrideTitle(
+    blockId: String,
+    titleOverride: String,
+): List<NoteBlock> {
+    val cur = snapshot(blockId, true).blocks
+    return cur.map { blk ->
+        if (blk.id == blockId && blk.type == "toggle") blk.withToggleState(title = titleOverride) else blk
+    }
+}
+
+@Composable
+private fun blockTextStyle(doc: NoteBlock, scheme: ColorScheme): TextStyle {
+    return when (doc.type) {
+        "heading" -> when (doc.level) {
+            1 -> MaterialTheme.typography.headlineSmall.copy(
+                fontSize = 26.sp,
+                lineHeight = 34.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.4).sp,
+                color = scheme.onSurface,
+            )
+            2 -> MaterialTheme.typography.titleLarge.copy(
+                fontSize = 21.sp,
+                lineHeight = 28.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.2).sp,
+                color = scheme.onSurface,
+            )
+            else -> MaterialTheme.typography.titleMedium.copy(
+                fontSize = 18.5.sp,
+                lineHeight = 25.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = scheme.onSurface,
+            )
+        }
+        "checkbox" -> MaterialTheme.typography.bodyLarge.copy(
+            fontSize = 17.sp,
+            lineHeight = 24.5.sp,
+            color = if (doc.checked) scheme.onSurfaceVariant else scheme.onSurface,
+            textDecoration = if (doc.checked) TextDecoration.LineThrough else null,
+        )
+        "bullet", "numbered" -> MaterialTheme.typography.bodyLarge.copy(
+            fontSize = 17.sp,
+            lineHeight = 24.5.sp,
+            color = scheme.onSurface,
+        )
+        "quote" -> MaterialTheme.typography.bodyLarge.copy(
+            fontSize = 16.5.sp,
+            lineHeight = 24.sp,
+            color = scheme.onSurface.copy(alpha = 0.86f),
+        )
+        else -> MaterialTheme.typography.bodyLarge.copy(
+            fontSize = 17.5.sp,
+            lineHeight = 25.5.sp,
+            color = scheme.onSurface,
+        )
+    }
+}
+
+@Composable
+private fun BlockTrailingControls(
+    blockId: String,
+    index: Int,
+    dark: Boolean,
+    menuOpen: Boolean,
+    onOpenMenu: () -> Unit,
+    menuContent: @Composable () -> Unit,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .padding(start = 4.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(mintSecondaryFill(dark).copy(alpha = 0.8f)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box {
+            Box(
+                modifier = Modifier
+                    .size(width = 30.dp, height = 28.dp)
+                    .focusProperties { canFocus = false }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onOpenMenu,
+                    )
+                    .testTag("block-actions-$index")
+                    .semantics { contentDescription = "段落操作菜单" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = MintIcons.More,
+                    contentDescription = null,
+                    tint = if (menuOpen) scheme.primary else scheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+            menuContent()
+        }
+        BlockDragOnlyHandle(
+            dark = dark,
+            controlHeight = 28.dp,
+            onStartDrag = onStartDrag,
+            onDragDelta = onDragDelta,
+            onDragFinish = onDragFinish,
+            onDragCancel = onDragCancel,
+        )
+    }
+}
+
+@Composable
+private fun Modifier.longPressBlockDrag(
+    enabled: Boolean = true,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+): Modifier {
+    val latestEnabled by rememberUpdatedState(enabled)
+    val latestStart by rememberUpdatedState(onStartDrag)
+    val latestDelta by rememberUpdatedState(onDragDelta)
+    val latestFinish by rememberUpdatedState(onDragFinish)
+    val latestCancel by rememberUpdatedState(onDragCancel)
+    return pointerInput(enabled) {
+        if (!latestEnabled) return@pointerInput
+        detectDragGesturesAfterLongPress(
+            onDragStart = { startOffset -> latestStart(startOffset) },
+            onDragEnd = { latestFinish() },
+            onDragCancel = { latestCancel() },
+            onDrag = { change, dragAmount ->
+                change.consume()
+                latestDelta(dragAmount.y, change.position)
+            },
+        )
+    }
+}
+
+@Composable
+private fun BlockDragOnlyHandle(
+    dark: Boolean,
+    controlHeight: androidx.compose.ui.unit.Dp = 28.dp,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(width = 30.dp, height = controlHeight)
+            .focusProperties { canFocus = false }
+            .longPressBlockDrag(
+                onStartDrag = onStartDrag,
+                onDragDelta = onDragDelta,
+                onDragFinish = onDragFinish,
+                onDragCancel = onDragCancel,
+            )
+            .semantics { contentDescription = "长按拖动调整段落顺序" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = EditorIcons.DragHandle,
+            contentDescription = null,
+            tint = mintTertiaryTextColor(dark).copy(alpha = 0.9f),
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
+@Composable
+private fun DragInsertionIndicator(color: Color) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(2.5.dp)
+                .background(color),
+        )
+    }
+}
+
+@Composable
+private fun BlockSelectionTopBanner(
+    selectedCount: Int,
+    dark: Boolean,
+    onDone: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val bannerBg = if (dark) Color(0xFF2B2412) else Color(0xFFFFF7DC)
+    val bannerBorder = if (dark) Color(0xFFE5B84B).copy(alpha = 0.35f) else Color(0xFFE2B94B).copy(alpha = 0.5f)
+    Surface(
+        color = bannerBg,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp)
+            .border(0.8.dp, bannerBorder, RoundedCornerShape(14.dp))
+            .testTag("block-selection-banner"),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "已选择 $selectedCount 段",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = scheme.onSurface,
+                )
+                Text(
+                    text = "点按段落勾选 · 长按右侧手柄上下调整顺序",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.5.sp),
+                    color = mintTertiaryTextColor(dark),
+                )
+            }
+            MintPillButton(
+                label = "完成",
+                primary = true,
+                dark = dark,
+                modifier = Modifier.testTag("block-selection-done"),
+                onClick = onDone,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectionAwareBlockSlot(
+    isSelectionMode: Boolean,
+    selected: Boolean,
+    dark: Boolean,
+    onToggleSelect: () -> Unit,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    var lastRowDragEndedAtMs by remember { mutableLongStateOf(0L) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.weight(1f)) {
+            content()
+            if (isSelectionMode) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .longPressBlockDrag(
+                            enabled = selected,
+                            onStartDrag = onStartDrag,
+                            onDragDelta = onDragDelta,
+                            onDragFinish = {
+                                lastRowDragEndedAtMs = System.currentTimeMillis()
+                                onDragFinish()
+                            },
+                            onDragCancel = {
+                                lastRowDragEndedAtMs = System.currentTimeMillis()
+                                onDragCancel()
+                            },
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Checkbox,
+                            onClick = {
+                                if (System.currentTimeMillis() - lastRowDragEndedAtMs > 250L) {
+                                    onToggleSelect()
+                                }
+                            },
+                        ),
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = isSelectionMode,
+            enter = fadeIn() + expandHorizontally(),
+            exit = fadeOut() + shrinkHorizontally(),
+        ) {
+            BlockSelectionTrailingControls(
+                selected = selected,
+                dark = dark,
+                onToggle = onToggleSelect,
+                onStartDrag = onStartDrag,
+                onDragDelta = onDragDelta,
+                onDragFinish = onDragFinish,
+                onDragCancel = onDragCancel,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BlockSelectionTrailingControls(
+    selected: Boolean,
+    dark: Boolean,
+    onToggle: () -> Unit,
+    onStartDrag: (Offset) -> Unit,
+    onDragDelta: (Float, Offset) -> Unit,
+    onDragFinish: () -> Unit,
+    onDragCancel: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 36.dp, height = 40.dp)
+                .focusProperties { canFocus = false }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Checkbox,
+                    onClick = onToggle,
+                )
+                .semantics { contentDescription = if (selected) "取消选择该段" else "选择该段" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .then(
+                        if (selected) {
+                            Modifier.background(scheme.primary, CircleShape)
+                        } else {
+                            Modifier.border(1.5.dp, mintTertiaryTextColor(dark).copy(alpha = 0.75f), CircleShape)
+                        }
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) {
+                    Icon(
+                        imageVector = MintIcons.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
+        }
+        BlockDragOnlyHandle(
+            dark = dark,
+            onStartDrag = onStartDrag,
+            onDragDelta = onDragDelta,
+            onDragFinish = onDragFinish,
+            onDragCancel = onDragCancel,
+        )
+    }
+}
+
+private class BlockDragHandlers(
+    val onStartDrag: (Offset) -> Unit,
+    val onDragDelta: (Float, Offset) -> Unit,
+    val onDragFinish: () -> Unit,
+    val onDragCancel: () -> Unit,
+)
+
+@Suppress("DEPRECATION")
+@Composable
+private fun WiredBlockContextMenu(
+    expanded: Boolean,
+    doc: NoteBlock,
+    index: Int,
+    session: EditorSession,
+    engine: EditorEngineState,
+    clipboard: androidx.compose.ui.platform.ClipboardManager,
+    snapshotToggleTitle: Boolean,
+    onDismiss: () -> Unit,
+    onEnterSelectionMode: () -> Unit,
+    onCycleCalloutTone: (() -> Unit)? = null,
+    onToggleDividerStyle: (() -> Unit)? = null,
+) {
+    val focusAfterMove = if (doc.type == "divider") null else doc.id
+    val moveTo: (Int) -> Unit = { targetIndex ->
+        onDismiss()
+        val before = engine.snapshot(doc.id, snapshotToggleTitle)
+        val moved = EditorBlockOps.moveBlock(session.blocks.map { it.documentBlock() }, index, targetIndex)
+        engine.applyOutcome(BlockEditOutcome(moved, focusAfterMove, 0), recordUndoBefore = before)
+    }
+    BlockContextMenu(
+        expanded = expanded,
+        block = doc,
+        index = index,
+        blockCount = session.blocks.size,
+        onDismiss = onDismiss,
+        onConvert = { targetType, level ->
+            onDismiss()
+            val before = engine.snapshot(doc.id, snapshotToggleTitle)
+            val outcome = EditorBlockOps.convertBlockType(
+                blocks = session.blocks.map { it.documentBlock() },
+                blockIndex = index,
+                targetType = targetType,
+                headingLevel = level,
+            )
+            engine.applyOutcome(outcome, recordUndoBefore = before)
+        },
+        onCycleCalloutTone = onCycleCalloutTone,
+        onToggleDividerStyle = onToggleDividerStyle,
+        onCopy = if (doc.type == "divider") null else {
+            {
+                onDismiss()
+                clipboard.setText(AnnotatedString(doc.searchableText))
+                engine.transientHint = "已复制该段内容"
+            }
+        },
+        onEnterSelectionMode = {
+            onDismiss()
+            onEnterSelectionMode()
+        },
+        onMoveUp = { if (index > 0) moveTo(index - 1) else onDismiss() },
+        onMoveDown = { if (index < session.blocks.lastIndex) moveTo(index + 1) else onDismiss() },
+        onDelete = {
+            onDismiss()
+            val before = engine.snapshot(doc.id, snapshotToggleTitle)
+            val outcome = EditorBlockOps.deleteBlock(session.blocks.map { it.documentBlock() }, index)
+            engine.applyOutcome(outcome, recordUndoBefore = before)
+        },
+    )
+}
+
+@Composable
+private fun BlockContextMenu(
+    expanded: Boolean,
+    block: NoteBlock,
+    index: Int,
+    blockCount: Int,
+    onDismiss: () -> Unit,
+    onConvert: (targetType: String, level: Int) -> Unit,
+    onCycleCalloutTone: (() -> Unit)?,
+    onToggleDividerStyle: (() -> Unit)?,
+    onCopy: (() -> Unit)?,
+    onEnterSelectionMode: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    ComposablesMenu(
+        expanded = expanded,
+        onDismiss = onDismiss,
+        tag = "block-context-menu",
+    ) {
+        if (block.type != "paragraph") {
+            ComposablesMenuItem(label = "转化为正文", icon = EditorIcons.TextFormat) { onConvert("paragraph", 1) }
+        }
+        if (!(block.type == "heading" && block.level == 1)) {
+            ComposablesMenuItem(label = "转化为一级标题 (H1)", icon = EditorIcons.TextFormat) { onConvert("heading", 1) }
+        }
+        if (!(block.type == "heading" && block.level == 2)) {
+            ComposablesMenuItem(label = "转化为二级标题 (H2)", icon = EditorIcons.TextFormat) { onConvert("heading", 2) }
+        }
+        if (!(block.type == "heading" && block.level == 3)) {
+            ComposablesMenuItem(label = "转化为三级标题 (H3)", icon = EditorIcons.TextFormat) { onConvert("heading", 3) }
+        }
+        if (block.type != "checkbox") {
+            ComposablesMenuItem(label = "转化为待办事项", icon = MintIcons.Checklist) { onConvert("checkbox", 1) }
+        }
+        if (block.type != "bullet") {
+            ComposablesMenuItem(label = "转化为无序列表", icon = EditorIcons.BulletList) { onConvert("bullet", 1) }
+        }
+        if (block.type != "numbered") {
+            ComposablesMenuItem(label = "转化为有序列表", icon = EditorIcons.NumberedList) { onConvert("numbered", 1) }
+        }
+        if (block.type != "quote") {
+            ComposablesMenuItem(label = "转化为引用", icon = EditorIcons.Quote) { onConvert("quote", 1) }
+        }
+        if (block.type != "callout") {
+            ComposablesMenuItem(label = "转化为提示框", icon = EditorIcons.Callout) { onConvert("callout", 1) }
+        } else if (onCycleCalloutTone != null) {
+            ComposablesMenuItem(label = "切换提示框配色", icon = EditorIcons.Callout, onClick = onCycleCalloutTone)
+        }
+        if (block.type != "toggle") {
+            ComposablesMenuItem(label = "转化为折叠块", icon = EditorIcons.Toggle) { onConvert("toggle", 1) }
+        }
+        if (block.type != "divider") {
+            ComposablesMenuItem(label = "替换为分割线", icon = EditorIcons.DividerLine) { onConvert("divider", 1) }
+        } else if (onToggleDividerStyle != null) {
+            val styleLabel = if (block.dividerStyle == "dashed") "切换为实线分割线" else "切换为虚线分割线"
+            ComposablesMenuItem(label = styleLabel, icon = EditorIcons.DividerLine, onClick = onToggleDividerStyle)
+        }
+        if (onCopy != null) {
+            ComposablesMenuItem(label = "复制整段", icon = EditorIcons.Copy, onClick = onCopy)
+        }
+        ComposablesMenuItem(label = "多选调整", icon = EditorIcons.SelectAll, onClick = onEnterSelectionMode)
+        if (index > 0) {
+            ComposablesMenuItem(label = "上移一段", icon = EditorIcons.MoveUp, onClick = onMoveUp)
+        }
+        if (index < blockCount - 1) {
+            ComposablesMenuItem(label = "下移一段", icon = EditorIcons.MoveDown, onClick = onMoveDown)
+        }
+        ComposablesMenuItem(label = "删除这一段", icon = MintIcons.Trash, destructive = true, onClick = onDelete)
+    }
+}
+
+@Composable
+private fun SlashCommandPopup(
+    commands: List<SlashCommand>,
+    dark: Boolean,
+    modifier: Modifier = Modifier,
+    onSelectCommand: (SlashCommand) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(20.dp)
+    LazyColumn(
+        modifier = modifier
+            .shadow(14.dp, shape)
+            .clip(shape)
+            .background(mintElevatedSurface(dark), shape)
+            .border(0.6.dp, mintDividerColor(dark), shape)
+            .focusProperties { canFocus = false }
+            .padding(vertical = 6.dp)
+            .testTag("slash-command-menu"),
+    ) {
+        itemsIndexed(
+            items = commands,
+            key = { _, cmd -> cmd.id },
+        ) { idx, cmd ->
+            if (idx > 0) {
+                MintGroupedDivider(dark = dark, startIndent = 48.dp)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .focusProperties { canFocus = false }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = { onSelectCommand(cmd) },
+                    )
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = cmd.icon,
+                    contentDescription = null,
+                    tint = scheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = cmd.label,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                        ),
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = cmd.subtitle,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.5.sp),
+                        color = mintTertiaryTextColor(dark),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = cmd.shortcutHint,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.5.sp),
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BlockFormatSheet(
+    currentType: String?,
+    currentLevel: Int,
+    dark: Boolean,
+    backdrop: GlassBackdrop,
+    onDismiss: () -> Unit,
+    onSelectCommand: (SlashCommand) -> Unit,
+) {
+    MintBottomSheet(
+        onDismissRequest = onDismiss,
+        dark = dark,
+        backdrop = backdrop,
+        title = "段落转化",
+        subtitle = "选择当前段落的排版样式",
+        leadingLabel = "关闭",
+        onLeadingClick = onDismiss,
+    ) {
+        LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
+            val cmds = SlashCommandCatalog.commands
+            itemsIndexed(
+                items = cmds,
+                key = { _, item -> item.id },
+            ) { idx, cmd ->
+                val isSelected = currentType == cmd.targetType &&
+                    (cmd.targetType != "heading" || currentLevel == cmd.headingLevel)
+                val shape = when {
+                    cmds.size == 1 -> RoundedCornerShape(16.dp)
+                    idx == 0 -> RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+                    idx == cmds.lastIndex -> RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
+                    else -> RoundedCornerShape(0.dp)
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(shape)
+                        .background(mintCardSurface(dark), shape),
+                ) {
+                    if (idx > 0) MintGroupedDivider(dark = dark)
+                    MintGroupedRow(
+                        label = cmd.label,
+                        subtitle = cmd.subtitle,
+                        leadingIcon = cmd.icon,
+                        trailingText = cmd.shortcutHint,
+                        selected = isSelected,
+                        dark = dark,
+                        onClick = { onSelectCommand(cmd) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolbarIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    active: Boolean = false,
+    iconSize: androidx.compose.ui.unit.Dp = 20.dp,
+    onClick: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val fg = when {
+        !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.35f)
+        active -> scheme.primary
+        else -> scheme.onSurface
+    }
+    val bg = if (active && enabled) scheme.primary.copy(alpha = 0.14f) else Color.Transparent
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 42.dp, minHeight = 44.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(bg, RoundedCornerShape(11.dp))
+            .focusProperties { canFocus = false }
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = contentDescription,
+                onClick = onClick,
+            )
+            .semantics { this.contentDescription = contentDescription }
+            .padding(horizontal = 9.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = fg,
+            modifier = Modifier.size(iconSize),
+        )
+    }
+}
+
+@Composable
+private fun InlineUndoRedoButtons(
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CompactUndoRedoButton(EditorIcons.Undo, "撤销", canUndo, onUndo)
+        CompactUndoRedoButton(EditorIcons.Redo, "重做", canRedo, onRedo)
+    }
+}
+
+@Composable
+private fun CompactUndoRedoButton(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .focusProperties { canFocus = false }
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = label,
+                onClick = onClick,
+            )
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (enabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = 0.35f),
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+private fun removeTriggerText(
+    block: EditorBlock,
+    engine: EditorEngineState,
+    isToggleTitle: Boolean,
+    triggerIndex: Int,
+    cursorIndex: Int,
+) {
+    val tfvState = if (isToggleTitle && block.type == "toggle") {
+        engine.titleTfvStateFor(block)
+    } else {
+        engine.tfvStateFor(block)
+    }
+    val current = tfvState.value
+    if (current.composition != null) return
+    val text = current.text
+    if (triggerIndex !in 0..cursorIndex || cursorIndex > text.length) return
+    val updatedText = text.removeRange(triggerIndex, cursorIndex)
+    val nextCursor = triggerIndex.coerceIn(0, updatedText.length)
+    tfvState.value = TextFieldValue(updatedText, TextRange(nextCursor))
+    val doc = block.documentBlock()
+    if (isToggleTitle && block.type == "toggle") {
+        val idx = engine.indexOfBlock(block.id)
+        if (idx >= 0) engine.updateSingleBlock(idx, doc.withToggleState(title = updatedText))
+    } else {
+        block.text.edit {
+            replace(0, length, updatedText)
+            selection = TextRange(nextCursor)
+        }
+        val nextMarks = adjustMarksForTextEdit(doc.marks, text, updatedText, nextCursor)
+        val idx = engine.indexOfBlock(block.id)
+        if (idx >= 0) engine.updateSingleBlock(idx, doc.copy(text = updatedText, marks = nextMarks))
+    }
+}
+
+private fun clearPendingInlineTrigger(
+    session: EditorSession,
+    engine: EditorEngineState,
+    pending: PendingTriggerReplace?,
+) {
     if (pending == null) return
     val block = session.blocks.firstOrNull { it.id == pending.blockId && it.editable } ?: return
-    if (block.text.composition != null) return
-    val currentText = block.text.text.toString()
+    val tfvState = engine.tfvStateFor(block)
+    if (tfvState.value.composition != null) return
+    val currentText = tfvState.value.text
     if (pending.start in 0..pending.end && pending.end <= currentText.length) {
         val slice = currentText.substring(pending.start, pending.end)
         if (slice.startsWith("@") || slice.startsWith("#")) {
-            block.text.edit { replace(pending.start, pending.end, "") }
+            val updatedText = currentText.removeRange(pending.start, pending.end)
+            val nextCursor = pending.start.coerceIn(0, updatedText.length)
+            tfvState.value = TextFieldValue(updatedText, TextRange(nextCursor))
+            block.text.edit {
+                replace(0, length, updatedText)
+                selection = TextRange(nextCursor)
+            }
+            val doc = block.documentBlock()
+            val nextMarks = adjustMarksForTextEdit(doc.marks, currentText, updatedText, nextCursor)
+            val idx = session.blocks.indexOf(block)
+            if (idx >= 0) {
+                engine.updateSingleBlock(idx, doc.copy(text = updatedText, marks = nextMarks))
+            }
         }
     }
 }
@@ -1105,38 +3746,62 @@ private fun clearPendingInlineTrigger(session: EditorSession, pending: PendingTr
 private fun EditorHeaderMetadata(
     activeNote: NoteEntity?,
     notebook: NotebookEntity?,
+    charCount: Int,
     availableTags: List<TagEntity>,
     noteTagIds: Set<String>,
     pendingTagIds: List<String>,
     backlinksCount: Int,
-    relatedCount: Int = 0,
     dark: Boolean,
+    isAiExcluded: Boolean = false,
+    onToggleAiExcluded: (() -> Unit)? = null,
+    showInlineUndoRedo: Boolean = false,
+    canUndo: Boolean = false,
+    canRedo: Boolean = false,
+    onUndo: () -> Unit = {},
+    onRedo: () -> Unit = {},
     onOpenOrganize: (() -> Unit)?,
     onOpenTagPicker: () -> Unit,
     onRemovePendingTag: (String) -> Unit,
     onOpenBacklinks: () -> Unit,
-    onOpenRelatedNotes: (() -> Unit)? = null,
 ) {
-    val scheme = MaterialTheme.colorScheme
     val allTagIds = (noteTagIds + pendingTagIds).toList()
-    val hasTokens = notebook != null || allTagIds.isNotEmpty() || backlinksCount > 0
+    val hasTokens = notebook != null || allTagIds.isNotEmpty() || backlinksCount > 0 || isAiExcluded
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        if (activeNote != null) {
-            val updated = remember(activeNote.updatedAt) { formatNoteTimestamp(activeNote.updatedAt) }
-            val created = remember(activeNote.createdAt) { formatNoteTimestamp(activeNote.createdAt) }
-            val timeSummary = if (updated == created) updated else "编辑于 $updated · 创建于 $created"
+        val timeText = activeNote?.let { note ->
+            val updated = formatNoteTimestamp(note.updatedAt)
+            val created = formatNoteTimestamp(note.createdAt)
+            if (updated == created) updated else "$updated (创建于 $created)"
+        }
+        val summaryParts = buildList {
+            if (timeText != null) add(timeText)
+            add("$charCount 字")
+            if (notebook != null) add(notebook.name)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = timeSummary,
-                style = MaterialTheme.typography.labelSmall,
+                text = summaryParts.joinToString(" | "),
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.5.sp),
                 color = mintTertiaryTextColor(dark),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            if (showInlineUndoRedo) {
+                InlineUndoRedoButtons(
+                    canUndo = canUndo,
+                    canRedo = canRedo,
+                    onUndo = onUndo,
+                    onRedo = onRedo,
+                )
+            }
         }
         if (hasTokens) {
             FlowRow(
@@ -1144,6 +3809,16 @@ private fun EditorHeaderMetadata(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                if (isAiExcluded) {
+                    MintChip(
+                        label = "不参与 AI 整理",
+                        selected = true,
+                        leadingIcon = MintIcons.Lock,
+                        style = MintChipStyle.Standard,
+                        dark = dark,
+                        onClick = { onToggleAiExcluded?.invoke() },
+                    )
+                }
                 if (notebook != null) {
                     MintChip(
                         label = notebook.name,
@@ -1438,9 +4113,7 @@ private fun ReferenceBlockCard(
                             role = Role.Button,
                             onClick = onOpen,
                         )
-                    } else {
-                        Modifier
-                    },
+                    } else Modifier
                 ),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
@@ -1463,7 +4136,7 @@ private fun ReferenceBlockCard(
                 )
                 if (block.referenceStart != null && block.referenceEnd != null) {
                     Text(
-                        text = "[${block.referenceStart}, ${block.referenceEnd})",
+                        text = "摘录片段",
                         style = MaterialTheme.typography.labelSmall,
                         color = scheme.onSurfaceVariant,
                     )
@@ -1497,6 +4170,7 @@ private fun EditorCheckboxScheduleRow(
     notificationsEnabled: Boolean,
     enabled: Boolean,
     dark: Boolean,
+    startIndentDp: androidx.compose.ui.unit.Dp = 44.dp,
     onClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -1542,9 +4216,10 @@ private fun EditorCheckboxScheduleRow(
 
     Row(
         modifier = Modifier
-            .padding(start = 48.dp, bottom = 2.dp)
+            .padding(start = startIndentDp, bottom = 2.dp)
             .clip(shape)
             .background(bg, shape)
+            .focusProperties { canFocus = false }
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -1578,15 +4253,83 @@ private fun EditorAccessoryPill(
     label: String,
     enabled: Boolean,
     dark: Boolean,
+    active: Boolean = false,
+    contentDescription: String = label,
     onClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(10.dp)
-    val fg = if (enabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = 0.45f)
+    val shape = RoundedCornerShape(12.dp)
+    val fg = when {
+        !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.45f)
+        active -> scheme.primary
+        else -> scheme.onSurface
+    }
+    val bg = if (active && enabled) scheme.primary.copy(alpha = 0.14f) else Color.Transparent
     Row(
         modifier = Modifier
-            .heightIn(min = 48.dp)
+            .defaultMinSize(minWidth = 44.dp, minHeight = 44.dp)
             .clip(shape)
+            .background(bg, shape)
+            .focusProperties { canFocus = false }
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = contentDescription,
+                onClick = onClick,
+            )
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (enabled) scheme.primary else fg,
+            modifier = Modifier.size(22.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            ),
+            color = fg,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+@Composable
+private fun FormatPanelActionChip(
+    label: String,
+    icon: ImageVector? = null,
+    active: Boolean = false,
+    enabled: Boolean = true,
+    dark: Boolean,
+    onClick: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val bg = when {
+        !enabled -> mintSecondaryFill(dark).copy(alpha = 0.45f)
+        active -> scheme.primary.copy(alpha = 0.16f)
+        else -> mintCardSurface(dark)
+    }
+    val fg = when {
+        !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.4f)
+        active -> scheme.primary
+        else -> scheme.onSurface
+    }
+    val borderColor = if (active && enabled) scheme.primary.copy(alpha = 0.4f) else mintDividerColor(dark)
+    Row(
+        modifier = Modifier
+            .heightIn(min = 38.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg, RoundedCornerShape(10.dp))
+            .border(0.6.dp, borderColor, RoundedCornerShape(10.dp))
+            .focusProperties { canFocus = false }
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -1594,20 +4337,213 @@ private fun EditorAccessoryPill(
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 5.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = if (enabled) scheme.primary else fg, modifier = Modifier.size(16.dp))
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = fg,
+                modifier = Modifier.size(16.dp),
+            )
+        }
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium.copy(
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.Medium,
+                fontSize = 13.sp,
+                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
             ),
             color = fg,
             maxLines = 1,
             softWrap = false,
+        )
+    }
+}
+
+@Composable
+private fun EditorFormatPanel(
+    targetDoc: NoteBlock?,
+    activeMarks: Set<NoteMarkType>,
+    canStyleMarks: Boolean,
+    canOutdent: Boolean,
+    canIndent: Boolean,
+    dark: Boolean,
+    onConvertType: (targetType: String, level: Int) -> Unit,
+    onInsertDivider: () -> Unit,
+    onToggleMark: (NoteMarkType) -> Unit,
+    onAdjustIndent: (Int) -> Unit,
+) {
+    val hasTarget = targetDoc != null
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(mintSecondaryFill(dark).copy(alpha = 0.85f), RoundedCornerShape(16.dp))
+            .border(0.6.dp, mintDividerColor(dark), RoundedCornerShape(16.dp))
+            .focusProperties { canFocus = false }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val blockItems = listOf(
+                Triple("H1", "heading", 1),
+                Triple("H2", "heading", 2),
+                Triple("H3", "heading", 3),
+                Triple("正文", "paragraph", 1),
+                Triple("圆点列表", "bullet", 1),
+                Triple("数字列表", "numbered", 1),
+                Triple("引用", "quote", 1),
+                Triple("提示框", "callout", 1),
+                Triple("折叠块", "toggle", 1),
+            )
+            blockItems.forEach { (label, type, level) ->
+                val isSelected = targetDoc?.type == type && (type != "heading" || targetDoc.level == level)
+                FormatPanelActionChip(
+                    label = label,
+                    active = isSelected,
+                    enabled = hasTarget,
+                    dark = dark,
+                    onClick = { onConvertType(type, level) },
+                )
+            }
+            FormatPanelActionChip(
+                label = "分割线",
+                icon = EditorIcons.DividerLine,
+                active = targetDoc?.type == "divider",
+                enabled = hasTarget,
+                dark = dark,
+                onClick = onInsertDivider,
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FormatPanelActionChip(
+                label = "加粗",
+                icon = EditorIcons.Bold,
+                active = NoteMarkType.BOLD in activeMarks,
+                enabled = canStyleMarks,
+                dark = dark,
+                onClick = { onToggleMark(NoteMarkType.BOLD) },
+            )
+            FormatPanelActionChip(
+                label = "高亮",
+                icon = EditorIcons.Highlight,
+                active = NoteMarkType.HIGHLIGHT in activeMarks,
+                enabled = canStyleMarks,
+                dark = dark,
+                onClick = { onToggleMark(NoteMarkType.HIGHLIGHT) },
+            )
+            FormatPanelActionChip(
+                label = "斜体",
+                icon = EditorIcons.Italic,
+                active = NoteMarkType.ITALIC in activeMarks,
+                enabled = canStyleMarks,
+                dark = dark,
+                onClick = { onToggleMark(NoteMarkType.ITALIC) },
+            )
+            FormatPanelActionChip(
+                label = "减少缩进",
+                icon = EditorIcons.IndentDecrease,
+                enabled = canOutdent,
+                dark = dark,
+                onClick = { onAdjustIndent(-1) },
+            )
+            FormatPanelActionChip(
+                label = "增加缩进",
+                icon = EditorIcons.IndentIncrease,
+                enabled = canIndent,
+                dark = dark,
+                onClick = { onAdjustIndent(1) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditorBatchActionBar(
+    selectedCount: Int,
+    allSelected: Boolean,
+    onBatchTodo: () -> Unit,
+    onOpenBatchFormat: () -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onBatchCopy: () -> Unit,
+    onBatchDelete: () -> Unit,
+) {
+    val hasSelection = selectedCount > 0
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .focusProperties { canFocus = false }
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BatchActionBarButton(MintIcons.Checklist, "转待办", hasSelection, onClick = onBatchTodo)
+        BatchActionBarButton(EditorIcons.TextFormat, "格式", hasSelection, onClick = onOpenBatchFormat)
+        BatchActionBarButton(EditorIcons.SelectAll, if (allSelected) "全不选" else "全选", true, onClick = onToggleSelectAll)
+        BatchActionBarButton(EditorIcons.Copy, "复制", hasSelection, onClick = onBatchCopy)
+        BatchActionBarButton(MintIcons.Trash, "删除", hasSelection, destructive = true, onClick = onBatchDelete)
+    }
+}
+
+@Composable
+private fun BatchActionBarButton(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val fg = when {
+        !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.35f)
+        destructive -> scheme.error
+        else -> scheme.onSurface
+    }
+    Column(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 52.dp, minHeight = 46.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (enabled && !destructive) scheme.primary else fg,
+            modifier = Modifier.size(21.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            ),
+            color = fg,
+            maxLines = 1,
         )
     }
 }
@@ -1660,7 +4596,7 @@ private fun ReferencePickerDialog(
                 )
                 LazyColumn(Modifier.heightIn(max = 320.dp)) {
                     if (filtered.isEmpty()) {
-                        item {
+                        item(key = "ref-empty") {
                             MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                                 Text(
                                     text = "没有匹配的笔记",
@@ -1671,43 +4607,50 @@ private fun ReferencePickerDialog(
                             }
                         }
                     } else {
-                        item {
-                            MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
-                                filtered.forEachIndexed { index, note ->
-                                    if (index > 0) MintGroupedDivider(dark = dark)
-                                    val hasBlocks = remember(note.documentJson) {
-                                        runCatching {
-                                            NoteDocument.decode(note.documentJson).blocks.any { it.text.isNotEmpty() }
-                                        }.getOrDefault(false)
-                                    }
-                                    Row(
+                        itemsIndexed(
+                            items = filtered,
+                            key = { _, note -> note.id },
+                        ) { index, note ->
+                            val itemShape = groupedItemShape(index, filtered.size)
+                            val hasBlocks = remember(note.documentJson) {
+                                runCatching {
+                                    NoteDocument.decode(note.documentJson).blocks.any { it.searchableText.isNotEmpty() }
+                                }.getOrDefault(false)
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(itemShape)
+                                    .background(mintCardSurface(dark), itemShape),
+                            ) {
+                                if (index > 0) MintGroupedDivider(dark = dark)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .defaultMinSize(minHeight = 48.dp)
+                                        .padding(start = 14.dp, end = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = referenceLabel(note),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = scheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .defaultMinSize(minHeight = 48.dp)
-                                            .padding(start = 14.dp, end = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        Text(
-                                            text = referenceLabel(note),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = scheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .clickable(
-                                                    interactionSource = remember { MutableInteractionSource() },
-                                                    indication = null,
-                                                    role = Role.Button,
-                                                    onClick = { onPickFull(note) },
-                                                )
-                                                .padding(vertical = 12.dp),
-                                        )
-                                        if (mode == "引用笔记" && hasBlocks) {
-                                            TextButton(onClick = { onSelectExcerptTarget(note) }) {
-                                                Text("选段")
-                                            }
+                                            .weight(1f)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                role = Role.Button,
+                                                onClick = { onPickFull(note) },
+                                            )
+                                            .padding(vertical = 12.dp),
+                                    )
+                                    if (mode == "引用笔记" && hasBlocks) {
+                                        TextButton(onClick = { onSelectExcerptTarget(note) }) {
+                                            Text("选段")
                                         }
                                     }
                                 }
@@ -1803,7 +4746,7 @@ private fun ReferencePickerDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "UTF-16 选区 [$safeStart, $safeEnd) · ${safeEnd - safeStart}/${sourceText.length}",
+                            text = "已选 ${safeEnd - safeStart} / ${sourceText.length} 字",
                             style = MaterialTheme.typography.labelSmall,
                             color = scheme.primary,
                         )
@@ -1981,7 +4924,7 @@ private fun TagPickerDialog(
             }
             LazyColumn(Modifier.heightIn(max = 300.dp)) {
                 if (matches.isEmpty()) {
-                    item {
+                    item(key = "tag-empty") {
                         MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
                             Text(
                                 text = "输入关键词可快速新建标签",
@@ -1992,26 +4935,40 @@ private fun TagPickerDialog(
                         }
                     }
                 } else {
-                    item {
-                        MintGroupedSection(dark = dark, containerColor = mintCardSurface(dark)) {
-                            matches.forEachIndexed { index, tag ->
-                                if (index > 0) MintGroupedDivider(dark = dark)
-                                val alreadyAttached = tag.id in selectedTagIds
-                                MintGroupedRow(
-                                    label = "#${tag.name}",
-                                    dark = dark,
-                                    selected = alreadyAttached,
-                                    trailingText = if (alreadyAttached) "已添加" else null,
-                                    enabled = !alreadyAttached,
-                                    onClick = { if (!alreadyAttached) onSelectExisting(tag) },
-                                )
-                            }
+                    itemsIndexed(
+                        items = matches,
+                        key = { _, tag -> tag.id },
+                    ) { index, tag ->
+                        val itemShape = groupedItemShape(index, matches.size)
+                        val alreadyAttached = tag.id in selectedTagIds
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(itemShape)
+                                .background(mintCardSurface(dark), itemShape),
+                        ) {
+                            if (index > 0) MintGroupedDivider(dark = dark)
+                            MintGroupedRow(
+                                label = "#${tag.name}",
+                                dark = dark,
+                                selected = alreadyAttached,
+                                trailingText = if (alreadyAttached) "已添加" else null,
+                                enabled = !alreadyAttached,
+                                onClick = { if (!alreadyAttached) onSelectExisting(tag) },
+                            )
                         }
                     }
                 }
             }
         }
     }
+}
+
+private fun groupedItemShape(index: Int, totalCount: Int): RoundedCornerShape = when {
+    totalCount <= 1 -> RoundedCornerShape(16.dp)
+    index == 0 -> RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+    index == totalCount - 1 -> RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
+    else -> RoundedCornerShape(0.dp)
 }
 
 private fun formatNoteTimestamp(iso: String): String = runCatching {

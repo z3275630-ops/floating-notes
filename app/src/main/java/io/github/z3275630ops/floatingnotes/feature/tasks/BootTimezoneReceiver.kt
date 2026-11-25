@@ -58,6 +58,8 @@ internal class BootTimezoneReceiver : BroadcastReceiver() {
             ReminderScheduler.syncReconcile(appContext, reconciled)
 
             if (!canPostNotifications(appContext)) return
+            ReminderScheduler.ensureChannel(appContext)
+            ReminderScheduler.ensureStrongAlarmChannel(appContext)
             val missedItems = repository.pendingMissedReminders(
                 currentZone = currentZone,
                 now = now,

@@ -23,6 +23,11 @@
               "text": {
                 "type": "string"
               },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
               "marks": {
                 "type": "array",
                 "items": {
@@ -72,6 +77,11 @@
               },
               "text": {
                 "type": "string"
+              },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
               },
               "marks": {
                 "type": "array",
@@ -129,6 +139,11 @@
               "text": {
                 "type": "string"
               },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
               "marks": {
                 "type": "array",
                 "items": {
@@ -179,6 +194,11 @@
               "text": {
                 "type": "string"
               },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
               "marks": {
                 "type": "array",
                 "items": {
@@ -228,6 +248,11 @@
               },
               "text": {
                 "type": "string"
+              },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
               },
               "marks": {
                 "type": "array",
@@ -295,6 +320,11 @@
               "text": {
                 "type": "string"
               },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
               "marks": {
                 "type": "array",
                 "items": {
@@ -329,6 +359,155 @@
               "id",
               "type",
               "text"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "const": "callout"
+              },
+              "tone": {
+                "enum": [
+                  "info",
+                  "tip",
+                  "warn",
+                  "important"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
+              "marks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "bold",
+                        "highlight",
+                        "italic"
+                      ]
+                    },
+                    "start": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "start",
+                    "end"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "const": "toggle"
+              },
+              "title": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "collapsed": {
+                "type": "boolean"
+              },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
+              "marks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "bold",
+                        "highlight",
+                        "italic"
+                      ]
+                    },
+                    "start": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "start",
+                    "end"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "title",
+              "text",
+              "collapsed"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "const": "divider"
+              },
+              "style": {
+                "enum": [
+                  "solid",
+                  "dashed"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type"
             ],
             "additionalProperties": false
           },

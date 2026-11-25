@@ -31,12 +31,18 @@ internal class ReminderReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        private fun isRunningInstrumentationTest(): Boolean =
+            runCatching {
+                Class.forName("androidx.test.platform.app.InstrumentationRegistry")
+            }.isSuccess
+
         suspend fun handleIntent(
             appContext: Context,
             intent: Intent,
             repository: NotesRepository,
             zoneId: ZoneId = ZoneId.systemDefault(),
             now: Instant = Instant.now(),
+            allowStrongAlarmEffects: Boolean = !isRunningInstrumentationTest(),
         ) {
             when (intent.action) {
                 ReminderScheduler.ACTION_FIRE_REMINDER -> {
@@ -50,16 +56,53 @@ internal class ReminderReceiver : BroadcastReceiver() {
                         expectedRevision = expectedRevision,
                         now = now,
                     ) ?: run {
+                        AlarmPlaybackService.stopForReminder(appContext, reminderId)
                         ReminderScheduler.cancelNotification(appContext, reminderId)
                         return
                     }
-                    val shown = ReminderScheduler.showReminderNotification(
-                        context = appContext,
-                        reminder = payload.reminder,
-                        taskText = payload.taskText,
-                        noteLabel = payload.noteLabel,
+
+                    val health = ReminderScheduler.inspectAlarmHealth(appContext)
+                    val strongEnabled = ReminderScheduler.isStrongAlarmEnabled(appContext)
+                    val deliveryMode = health.deliveryMode(
+                        strongAlarmEnabled = strongEnabled,
+                        underInstrumentationTest = !allowStrongAlarmEffects,
                     )
-                    if (shown) {
+
+                    val notified = when (deliveryMode) {
+                        AlarmDeliveryMode.STRONG_FULL_SCREEN,
+                        AlarmDeliveryMode.STRONG_HEADS_UP_DEGRADED -> {
+                            val includeFullScreen = deliveryMode == AlarmDeliveryMode.STRONG_FULL_SCREEN
+                            val serviceStarted = AlarmPlaybackService.start(
+                                context = appContext,
+                                payload = payload,
+                                includeFullScreenIntent = includeFullScreen,
+                            )
+                            if (serviceStarted) {
+                                true
+                            } else {
+                                ReminderScheduler.showStrongAlarmNotification(
+                                    context = appContext,
+                                    reminder = payload.reminder,
+                                    taskText = payload.taskText,
+                                    noteLabel = payload.noteLabel,
+                                    includeFullScreenIntent = includeFullScreen,
+                                    silent = false,
+                                    ongoing = false,
+                                )
+                            }
+                        }
+
+                        AlarmDeliveryMode.STANDARD_NOTIFICATION -> {
+                            ReminderScheduler.showReminderNotification(
+                                context = appContext,
+                                reminder = payload.reminder,
+                                taskText = payload.taskText,
+                                noteLabel = payload.noteLabel,
+                            )
+                        }
+                    }
+
+                    if (notified) {
                         repository.markReminderNotifiedOnTime(payload.reminder.id, now = now)
                     }
                 }
@@ -71,6 +114,7 @@ internal class ReminderReceiver : BroadcastReceiver() {
                     val occurrenceId = intent.getStringExtra(ReminderScheduler.EXTRA_OCCURRENCE_ID)
                     val expectedRevision = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_REVISION, -1L)
                         .takeIf { it > 0L }
+                    AlarmPlaybackService.stopForReminder(appContext, reminderId)
                     reminderId?.let { ReminderScheduler.cancelNotification(appContext, it) }
                     val result = repository.completeFromNotification(
                         noteId = noteId,
@@ -91,16 +135,32 @@ internal class ReminderReceiver : BroadcastReceiver() {
                     val occurrenceId = intent.getStringExtra(ReminderScheduler.EXTRA_OCCURRENCE_ID)
                     val expectedRevision = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_REVISION, -1L)
                         .takeIf { it > 0L }
+                    val requestedSnooze = if (intent.hasExtra(ReminderScheduler.EXTRA_SNOOZE_MINUTES)) {
+                        intent.getLongExtra(ReminderScheduler.EXTRA_SNOOZE_MINUTES, ReminderScheduler.DEFAULT_SNOOZE_MINUTES)
+                    } else {
+                        null
+                    }
+                    val snoozeMinutes = ReminderScheduler.resolveSnoozeMinutes(requestedSnooze)
+                    AlarmPlaybackService.stopForReminder(appContext, reminderId)
                     ReminderScheduler.cancelNotification(appContext, reminderId)
                     val snoozed = repository.snoozeReminder(
                         reminderId = reminderId,
-                        snoozeMinutes = 15L,
+                        snoozeMinutes = snoozeMinutes,
                         now = now,
                         expectedOccurrenceId = occurrenceId,
                         expectedRevision = expectedRevision,
                     )
                     if (snoozed != null) {
                         ReminderScheduler.scheduleReminder(appContext, snoozed)
+                    }
+                }
+
+                ReminderScheduler.ACTION_DISMISS_ALARM -> {
+                    val reminderId = intent.getStringExtra(ReminderScheduler.EXTRA_REMINDER_ID)
+                    AlarmPlaybackService.stopForReminder(appContext, reminderId)
+                    reminderId?.let {
+                        ReminderScheduler.cancelNotification(appContext, it)
+                        repository.markReminderNotifiedOnTime(it, now = now)
                     }
                 }
             }

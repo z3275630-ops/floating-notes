@@ -174,7 +174,7 @@ internal object LocalRetrievalEngine {
         val doc = runCatching { NoteDocument.decode(note.documentJson) }.getOrNull()
         val rawSegments = if (doc != null && doc.blocks.isNotEmpty()) {
             doc.blocks.flatMap { block ->
-                val text = block.text.trim()
+                val text = block.searchableText.trim()
                 if (text.isEmpty()) emptyList()
                 else splitLongSegment(text, 220).map { part -> block.id to part }
             }

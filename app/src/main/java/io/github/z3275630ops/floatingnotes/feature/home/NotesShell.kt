@@ -10,9 +10,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -34,12 +36,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -53,7 +59,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.z3275630ops.floatingnotes.BuildConfig
 import io.github.z3275630ops.floatingnotes.DebugSampleAction
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
@@ -62,11 +72,15 @@ import io.github.z3275630ops.floatingnotes.feature.agent.AgentWorkspace
 import io.github.z3275630ops.floatingnotes.feature.capture.AttachmentThumbnail
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureMotion
 import io.github.z3275630ops.floatingnotes.feature.capture.CaptureSheet
+import io.github.z3275630ops.floatingnotes.feature.capture.EditorIcons
+import io.github.z3275630ops.floatingnotes.feature.capture.EditorUndoHandle
 import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
 import io.github.z3275630ops.floatingnotes.feature.capture.NotesViewModel
+import io.github.z3275630ops.floatingnotes.feature.capture.rememberEditorUndoHandle
 import io.github.z3275630ops.floatingnotes.feature.explore.ExploreScreen
 import io.github.z3275630ops.floatingnotes.feature.share.ShareCardSheet
 import io.github.z3275630ops.floatingnotes.feature.stats.StatsSheet
+import io.github.z3275630ops.floatingnotes.feature.tasks.ReminderScheduler
 import io.github.z3275630ops.floatingnotes.feature.widget.WidgetContract
 import io.github.z3275630ops.floatingnotes.ui.designsystem.*
 import kotlinx.coroutines.CancellationException
@@ -117,6 +131,7 @@ internal data class ShellDeepLinkRequest(
     val blockId: String?,
     val widgetAction: String? = null,
     val reviewSessionId: String? = null,
+    val shortcutAction: String? = null,
 )
 
 @Composable
@@ -131,39 +146,71 @@ internal fun NotesShell(
     deepLinkRequest: ShellDeepLinkRequest? = null,
     onConsumeDeepLink: () -> Unit = {},
     onRequestNotificationPermission: (() -> Unit)? = null,
+    onRequestVoiceCapture: (() -> Unit)? = null,
 ) {
-    val dark = isSystemInDarkTheme()
-    val scheme = MaterialTheme.colorScheme
-    val backdrop = rememberGlassBackdrop()
-    val supportedGlassTier = GlassTier.Enhanced.supportedOn(Build.VERSION.SDK_INT)
-    var page by rememberSaveable { mutableStateOf(Page.Record) }
-    var recordFilter by rememberSaveable { mutableStateOf(RecordFilter.All) }
-    var showTasksOverlay by rememberSaveable { mutableStateOf(initialStartOnTasks && tasksOverlay != null) }
-    var requestedNoteId by rememberSaveable { mutableStateOf<String?>(null) }
-    var requestedCaptureSlot by rememberSaveable { mutableStateOf<String?>(null) }
-    var open by rememberSaveable { mutableStateOf(false) }
-    var showArchive by rememberSaveable { mutableStateOf(false) }
-    var showTrash by rememberSaveable { mutableStateOf(false) }
-    var showBackupSheet by rememberSaveable { mutableStateOf(false) }
-    var quickCaptureDismissPrompt by remember { mutableStateOf(false) }
-    val notes by model.notes.collectAsStateWithLifecycle()
-    val captures by model.captureDrafts.collectAsStateWithLifecycle()
-    val trashedCount by model.trashedCount.collectAsStateWithLifecycle()
-    val trashedNoteIds by model.trashedNoteIds.collectAsStateWithLifecycle()
-    val historyState by model.historyState.collectAsStateWithLifecycle()
-    val trashPurgeImpact by model.trashPurgeImpact.collectAsStateWithLifecycle()
-    val backupState by model.backupState.collectAsStateWithLifecycle()
-    val exploreState by model.exploreState.collectAsStateWithLifecycle()
-    val agentState by model.agentState.collectAsStateWithLifecycle()
-    val todoStartupEnabled by model.taskPreferences.observeTodoStartupEnabled().collectAsStateWithLifecycle(
-        initialValue = model.taskPreferences.todoStartupEnabled,
-    )
-    val edgeEchoEnabled by model.explorePreferences.observeEdgeEchoEnabled().collectAsStateWithLifecycle(
-        initialValue = model.explorePreferences.edgeEchoEnabled,
-    )
-    val widgetPrivacyEnabled by model.widgetPreferences.observePrivacyModeEnabled().collectAsStateWithLifecycle(
-        initialValue = model.widgetPreferences.privacyModeEnabled,
-    )
+    val appPrefs by model.appPreferencesSnapshot.collectAsStateWithLifecycle()
+    MaterialTheme(
+        colorScheme = MaterialTheme.colorScheme,
+        typography = mintTypography(appPrefs.fontScaleTier.multiplier),
+    ) {
+        val context = LocalContext.current
+        val lifecycleOwner = LocalLifecycleOwner.current
+        val dark = isSystemInDarkTheme()
+        val scheme = MaterialTheme.colorScheme
+        val backdrop = rememberGlassBackdrop()
+        val supportedGlassTier = GlassTier.Enhanced.supportedOn(Build.VERSION.SDK_INT)
+        var page by rememberSaveable { mutableStateOf(Page.Record) }
+        var recordFilter by rememberSaveable { mutableStateOf(RecordFilter.All) }
+        var showTasksOverlay by rememberSaveable { mutableStateOf(initialStartOnTasks && tasksOverlay != null) }
+        var requestedNoteId by rememberSaveable { mutableStateOf<String?>(null) }
+        var requestedCaptureSlot by rememberSaveable { mutableStateOf<String?>(null) }
+        var open by rememberSaveable { mutableStateOf(false) }
+        var showArchive by rememberSaveable { mutableStateOf(false) }
+        var showTrash by rememberSaveable { mutableStateOf(false) }
+        var showSettingsSheet by rememberSaveable { mutableStateOf(false) }
+        var showBackupSheet by rememberSaveable { mutableStateOf(false) }
+        var quickCaptureDismissPrompt by remember { mutableStateOf(false) }
+        var suppressNextAutoFocus by remember { mutableStateOf(false) }
+        var selectedNoteIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
+        val selectedNoteIdSet = remember(selectedNoteIds) { selectedNoteIds.toSet() }
+        val inSelectionMode = selectedNoteIdSet.isNotEmpty()
+        var showBatchTagSheet by remember { mutableStateOf(false) }
+        var showBatchNotebookSheet by remember { mutableStateOf(false) }
+        val notes by model.notes.collectAsStateWithLifecycle()
+        val captures by model.captureDrafts.collectAsStateWithLifecycle()
+        val trashedCount by model.trashedCount.collectAsStateWithLifecycle()
+        val trashedNoteIds by model.trashedNoteIds.collectAsStateWithLifecycle()
+        val historyState by model.historyState.collectAsStateWithLifecycle()
+        val trashPurgeImpact by model.trashPurgeImpact.collectAsStateWithLifecycle()
+        val backupState by model.backupState.collectAsStateWithLifecycle()
+        val exploreState by model.exploreState.collectAsStateWithLifecycle()
+        val agentState by model.agentState.collectAsStateWithLifecycle()
+        val attachmentStorageBytes by model.attachmentStorageBytes.collectAsStateWithLifecycle()
+        var alarmHealth by remember { mutableStateOf(ReminderScheduler.inspectAlarmHealth(context)) }
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    alarmHealth = ReminderScheduler.inspectAlarmHealth(context)
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+        LaunchedEffect(showSettingsSheet) {
+            if (showSettingsSheet) {
+                alarmHealth = ReminderScheduler.inspectAlarmHealth(context)
+                model.refreshAttachmentStorageBytes()
+            }
+        }
+        LaunchedEffect(notes) {
+            if (selectedNoteIds.isNotEmpty()) {
+                val activeIds = notes.mapTo(HashSet()) { it.id }
+                val retained = selectedNoteIds.filter { it in activeIds }
+                if (retained.size != selectedNoteIds.size) {
+                    selectedNoteIds = retained
+                }
+            }
+        }
     var showStatsSheet by rememberSaveable { mutableStateOf(false) }
     var sharingNoteId by rememberSaveable { mutableStateOf<String?>(null) }
     var exploreSectionIndex by rememberSaveable { mutableStateOf(0) }
@@ -274,6 +321,17 @@ internal fun NotesShell(
     val motion = remember { CaptureMotion(scope, open) }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
+    BackHandler(
+        enabled = inSelectionMode &&
+            !motion.visible &&
+            !drawer.isOpen &&
+            !showTasksOverlay &&
+            !showTrash &&
+            !showSettingsSheet &&
+            !showBackupSheet &&
+            !showBatchTagSheet &&
+            !showBatchNotebookSheet,
+    ) { selectedNoteIds = emptyList() }
     BackHandler(enabled = showTasksOverlay && !motion.visible) { showTasksOverlay = false }
     BackHandler(enabled = showTrash && !motion.visible && !drawer.isOpen && !showTasksOverlay) { showTrash = false }
     var samples by remember { mutableStateOf(emptyList<String>()) }
@@ -281,6 +339,22 @@ internal fun NotesShell(
     val focus = LocalFocusManager.current
     var hadEditorSession by remember { mutableStateOf(model.editor != null) }
     var switchingNote by remember { mutableStateOf(false) }
+
+    fun toggleNoteSelection(noteId: String) {
+        selectedNoteIds = if (noteId in selectedNoteIdSet) {
+            selectedNoteIds.filterNot { it == noteId }
+        } else {
+            selectedNoteIds + noteId
+        }
+    }
+
+    fun enterNoteSelection(noteId: String) {
+        keyboard?.hide()
+        focus.clearFocus()
+        if (noteId !in selectedNoteIdSet) {
+            selectedNoteIds = selectedNoteIds + noteId
+        }
+    }
 
     LaunchedEffect(model.editor, switchingNote) {
         if (switchingNote) return@LaunchedEffect
@@ -295,23 +369,39 @@ internal fun NotesShell(
                 requestedNoteId = null
                 requestedCaptureSlot = null
                 quickCaptureDismissPrompt = false
+                suppressNextAutoFocus = false
                 open = false
                 motion.settle(false)
             }
         }
     }
 
-    fun launchEditor(noteId: String? = null, captureSlot: String? = null, focusBlockId: String? = null) {
+    fun launchEditor(
+        noteId: String? = null,
+        captureSlot: String? = null,
+        focusBlockId: String? = null,
+        startVoice: Boolean = false,
+    ) {
+        selectedNoteIds = emptyList()
         scope.launch(Dispatchers.Main.immediate) {
-            val switching = model.editor != null && noteId != null && model.editor?.draft?.noteId != noteId
+            val currentSession = model.editor
+            val switching = currentSession != null && (
+                (noteId != null && currentSession.draft.noteId != noteId) ||
+                    (captureSlot != null && currentSession.draft.slot != captureSlot) ||
+                    (noteId == null && captureSlot == null && currentSession.draft.slot != "manual")
+                )
             if (switching) switchingNote = true
             try {
                 if (model.openNote(noteId, captureSlot, focusBlockId)) {
                     requestedNoteId = noteId
                     requestedCaptureSlot = captureSlot
                     quickCaptureDismissPrompt = false
+                    suppressNextAutoFocus = startVoice
                     open = true
                     motion.settle(true)
+                    if (startVoice) {
+                        onRequestVoiceCapture?.invoke()
+                    }
                 } else if (model.editor == null) {
                     open = false
                     motion.settle(false)
@@ -323,6 +413,9 @@ internal fun NotesShell(
     }
 
     LaunchedEffect(page) {
+        if (page != Page.Record && page != Page.Library) {
+            selectedNoteIds = emptyList()
+        }
         if (page == Page.Agent) {
             model.ensureAgentRunsObserved()
         }
@@ -335,15 +428,47 @@ internal fun NotesShell(
         }
     }
 
+    fun close(velocity: Float? = null, save: Boolean = false, discard: Boolean = false) {
+        scope.launch(Dispatchers.Main.immediate) {
+            if (model.finishEditor(save = save, discard = discard)) {
+                keyboard?.hide()
+                focus.clearFocus()
+                requestedNoteId = null
+                requestedCaptureSlot = null
+                quickCaptureDismissPrompt = false
+                suppressNextAutoFocus = false
+                open = false
+                if (velocity == null) motion.settle(false) else motion.settle(false, velocity)
+            } else if (open) {
+                motion.settle(true)
+            }
+        }
+    }
+
     LaunchedEffect(deepLinkRequest?.seq) {
         val request = deepLinkRequest ?: return@LaunchedEffect
+        selectedNoteIds = emptyList()
+        showSettingsSheet = false
+        showBackupSheet = false
         when {
-            request.widgetAction == WidgetContract.ACTION_QUICK_CAPTURE -> {
+            request.shortcutAction == WidgetContract.ACTION_SHORTCUT_CAPTURE ||
+                request.widgetAction == WidgetContract.ACTION_QUICK_CAPTURE -> {
                 showTasksOverlay = false
                 showTrash = false
                 launchEditor(noteId = null)
             }
+            request.shortcutAction == WidgetContract.ACTION_SHORTCUT_VOICE -> {
+                showTasksOverlay = false
+                showTrash = false
+                launchEditor(noteId = null, startVoice = true)
+            }
+            request.shortcutAction == WidgetContract.ACTION_SHORTCUT_TASKS -> {
+                if (open) close()
+                showTrash = false
+                showTasksOverlay = true
+            }
             request.widgetAction == WidgetContract.ACTION_OPEN_REVIEW_SESSION -> {
+                if (open) close()
                 showTasksOverlay = false
                 showTrash = false
                 exploreSectionIndex = 0
@@ -354,12 +479,14 @@ internal fun NotesShell(
                 )
             }
             request.widgetAction == WidgetContract.ACTION_OPEN_EXPLORE -> {
+                if (open) close()
                 showTasksOverlay = false
                 showTrash = false
                 exploreSectionIndex = 0
                 page = Page.Explore
             }
             request.widgetAction == WidgetContract.ACTION_OPEN_AGENT -> {
+                if (open) close()
                 showTasksOverlay = false
                 showTrash = false
                 page = Page.Agent
@@ -370,26 +497,12 @@ internal fun NotesShell(
                 launchEditor(noteId = request.noteId, focusBlockId = request.blockId)
             }
             request.openTasks -> {
+                if (open) close()
+                showTrash = false
                 showTasksOverlay = true
             }
         }
         onConsumeDeepLink()
-    }
-
-    fun close(velocity: Float? = null, save: Boolean = false, discard: Boolean = false) {
-        scope.launch(Dispatchers.Main.immediate) {
-            if (model.finishEditor(save = save, discard = discard)) {
-                keyboard?.hide()
-                focus.clearFocus()
-                requestedNoteId = null
-                requestedCaptureSlot = null
-                quickCaptureDismissPrompt = false
-                open = false
-                if (velocity == null) motion.settle(false) else motion.settle(false, velocity)
-            } else if (open) {
-                motion.settle(true)
-            }
-        }
     }
 
     organizeNote?.let { id ->
@@ -441,11 +554,57 @@ internal fun NotesShell(
         )
     }
 
+    if (showSettingsSheet) {
+        val settingsState = SettingsCenterState(
+            preferences = appPrefs,
+            alarmChecklist = AlarmChecklistState(
+                notificationsGranted = alarmHealth.notificationsGranted,
+                exactAlarmGranted = alarmHealth.exactAlarmAllowed,
+                fullScreenIntentGranted = alarmHealth.fullScreenIntentAllowed,
+                batteryOptimizationIgnored = alarmHealth.ignoringBatteryOptimizations,
+            ),
+            attachmentStorageBytes = attachmentStorageBytes,
+            appVersionName = BuildConfig.VERSION_NAME,
+        )
+        SettingsCenterSheet(
+            state = settingsState,
+            dark = dark,
+            backdrop = backdrop,
+            onDismiss = { showSettingsSheet = false },
+            onSelectFontScaleTier = { tier -> model.setFontScaleTier(tier) },
+            onSelectNoteSortOrder = { order -> model.setNoteSortOrder(order) },
+            onToggleSlashShortcuts = { enabled -> model.setEnableSlashShortcuts(enabled) },
+            onToggleEdgeEcho = { enabled -> model.setEdgeEchoGlobalEnabled(enabled) },
+            onToggleOpenTasksFirst = { enabled -> model.setOpenTasksFirst(enabled) },
+            onToggleStrongAlarm = { enabled -> model.setStrongAlarmEnabled(enabled) },
+            onOpenNotificationSettings = {
+                ReminderScheduler.launchNotificationSettings(context)
+            },
+            onOpenExactAlarmSettings = {
+                ReminderScheduler.launchExactAlarmSettings(context)
+            },
+            onOpenFullScreenIntentSettings = {
+                ReminderScheduler.launchFullScreenIntentSettings(context)
+            },
+            onOpenBatteryOptimizationSettings = {
+                ReminderScheduler.launchBatteryOptimizationSettings(context)
+            },
+            onToggleWidgetPrivacyMask = { enabled -> model.setWidgetPrivacyModeEnabled(enabled) },
+            onSelectTrashRetentionDays = { days -> model.setTrashRetentionDays(days) },
+            onOpenBackupRestore = {
+                showSettingsSheet = false
+                showBackupSheet = true
+            },
+            onRestoreDiscoveryExclusions = { model.restoreAllDiscoveryExclusions() },
+            onRefreshAlarmHealth = {
+                alarmHealth = ReminderScheduler.inspectAlarmHealth(context)
+            },
+        )
+    }
+
     if (showBackupSheet) {
         BackupRestoreSheet(
             state = backupState,
-            todoStartupEnabled = todoStartupEnabled,
-            onToggleTodoStartup = { enabled -> model.taskPreferences.todoStartupEnabled = enabled },
             backdrop = backdrop,
             dark = dark,
             onDismiss = { showBackupSheet = false },
@@ -457,15 +616,62 @@ internal fun NotesShell(
             onConfirmRestore = { model.confirmRestoreFromPreflight() },
             onDismissPreflight = { model.dismissRestorePreflight() },
             onClearOutcome = { model.clearBackupOutcome() },
-            edgeEchoEnabled = edgeEchoEnabled,
-            onToggleEdgeEcho = { enabled -> model.setEdgeEchoGlobalEnabled(enabled) },
-            widgetPrivacyEnabled = widgetPrivacyEnabled,
-            onToggleWidgetPrivacy = { enabled -> model.setWidgetPrivacyModeEnabled(enabled) },
-            onRestoreDiscoveryExclusions = {
-                model.restoreAllDiscoveryExclusions()
-                showBackupSheet = false
-                exploreSectionIndex = 0
-                page = Page.Explore
+        )
+    }
+
+    if (showBatchTagSheet && inSelectionMode) {
+        BatchTagPickerSheet(
+            selectedCount = selectedNoteIdSet.size,
+            tags = tags,
+            tagPaths = tagPaths,
+            dark = dark,
+            backdrop = backdrop,
+            onDismiss = { showBatchTagSheet = false },
+            onSelectTag = { tagId ->
+                model.batchAddTag(selectedNoteIdSet, tagId)
+                showBatchTagSheet = false
+                selectedNoteIds = emptyList()
+            },
+            onCreateAndApplyTag = { name ->
+                val targetIds = selectedNoteIdSet.toList()
+                showBatchTagSheet = false
+                selectedNoteIds = emptyList()
+                scope.launch {
+                    runCatching {
+                        val existing = tags.firstOrNull {
+                            it.parentId.isEmpty() && it.name.equals(name.trim(), ignoreCase = true)
+                        }
+                        val tagId = existing?.id ?: organization.createTag(name.trim())
+                        model.batchAddTag(targetIds, tagId)
+                    }
+                }
+            },
+        )
+    }
+
+    if (showBatchNotebookSheet && inSelectionMode) {
+        BatchNotebookPickerSheet(
+            selectedCount = selectedNoteIdSet.size,
+            notebooks = notebooks,
+            dark = dark,
+            backdrop = backdrop,
+            onDismiss = { showBatchNotebookSheet = false },
+            onSelectNotebook = { notebookId ->
+                model.batchAssignNotebook(selectedNoteIdSet, notebookId)
+                showBatchNotebookSheet = false
+                selectedNoteIds = emptyList()
+            },
+            onCreateAndApplyNotebook = { name ->
+                val targetIds = selectedNoteIdSet.toList()
+                showBatchNotebookSheet = false
+                selectedNoteIds = emptyList()
+                scope.launch {
+                    runCatching {
+                        val existing = notebooks.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
+                        val notebookId = existing?.id ?: organization.createNotebook(name.trim()).id
+                        model.batchAssignNotebook(targetIds, notebookId)
+                    }
+                }
             },
         )
     }
@@ -560,12 +766,14 @@ internal fun NotesShell(
                 notebooks = notebooks,
                 filter = if (page == Page.Library && !showTrash) LibraryFilter(selectedTag, selectedNotebook, descendants) else LibraryFilter(),
                 onRecord = { archive ->
+                    selectedNoteIds = emptyList()
                     showTrash = false
                     showArchive = archive
                     page = Page.Record
                     scope.launch { drawer.close() }
                 },
                 onLibrary = { filter ->
+                    selectedNoteIds = emptyList()
                     showTrash = false
                     keyword.edit { replace(0, length, "") }
                     searchScopeJson = NoteScope().encode()
@@ -581,11 +789,13 @@ internal fun NotesShell(
                 trashedCount = trashedCount,
                 trashSelected = showTrash,
                 onOpenTasks = {
+                    selectedNoteIds = emptyList()
                     showTrash = false
                     scope.launch { drawer.close() }
                     showTasksOverlay = true
                 },
                 onOpenTrash = {
+                    selectedNoteIds = emptyList()
                     showArchive = false
                     showTrash = true
                     scope.launch { drawer.close() }
@@ -596,7 +806,7 @@ internal fun NotesShell(
                 },
                 onOpenBackup = {
                     scope.launch { drawer.close() }
-                    showBackupSheet = true
+                    showSettingsSheet = true
                 },
                 labs = labs,
                 debugSampleSlot = {
@@ -638,6 +848,7 @@ internal fun NotesShell(
                         onConfirmEmptyTrash = { model.emptyTrash() },
                         onClearPurgeImpact = { model.clearPurgeImpact() },
                         onOpenBackupExport = { showBackupSheet = true },
+                        retentionDays = appPrefs.trashRetentionDays,
                     )
                 } else {
                     val tabAnimEnabled = mintAnimatorsEnabled()
@@ -655,21 +866,36 @@ internal fun NotesShell(
                         label = "home-page",
                     ) { current ->
                         if (current == Page.Library) {
-                            val visible = if (librarySearching) {
-                                libraryResults.orEmpty().take(libraryLimit)
-                            } else {
-                                notes.filter {
-                                    it.archivedAt == null &&
-                                        (selectedTag == null || it.id in tagMatches) &&
-                                        (selectedNotebook == null || it.id in notebookMatches)
+                            val visible = remember(
+                                librarySearching,
+                                libraryResults,
+                                libraryLimit,
+                                phrase,
+                                notes,
+                                selectedTag,
+                                tagMatches,
+                                selectedNotebook,
+                                notebookMatches,
+                                appPrefs.noteSortOrder,
+                            ) {
+                                if (librarySearching) {
+                                    val sliced = libraryResults.orEmpty().take(libraryLimit)
+                                    if (phrase.isBlank()) sortNotesByOrder(sliced, appPrefs.noteSortOrder) else sliced
+                                } else {
+                                    val filtered = notes.filter {
+                                        it.archivedAt == null &&
+                                            (selectedTag == null || it.id in tagMatches) &&
+                                            (selectedNotebook == null || it.id in notebookMatches)
+                                    }
+                                    sortNotesByOrder(filtered, appPrefs.noteSortOrder)
                                 }
                             }
                             val hasOrgFilter = selectedTag != null || selectedNotebook != null
-                            val libraryBuckets = remember(visible, librarySearching) {
+                            val libraryBuckets = remember(visible, librarySearching, appPrefs.noteSortOrder) {
                                 if (librarySearching && visible.isNotEmpty()) {
                                     listOf(NoteGroupBucket("search", "搜索结果 · ${visible.size}", visible))
                                 } else {
-                                    bucketNotesForAppleGroups(visible)
+                                    bucketNotesForAppleGroups(visible, sortOrder = appPrefs.noteSortOrder)
                                 }
                             }
                             Column(
@@ -688,7 +914,7 @@ internal fun NotesShell(
                                     onOpenDrawer = { scope.launch { drawer.open() } },
                                     trailingAction = {
                                         MintIconButton(
-                                            onClick = { showBackupSheet = true },
+                                            onClick = { showSettingsSheet = true },
                                             contentDescription = "设置与数据管理",
                                             dark = dark,
                                             icon = MintIcons.Settings,
@@ -800,10 +1026,18 @@ internal fun NotesShell(
                                                 tagIdsByNoteId = tagIdsByNoteId,
                                                 tagPaths = tagPaths,
                                                 noteDueBadges = noteDueBadges,
+                                                selectionMode = inSelectionMode,
+                                                selectedNoteIds = selectedNoteIdSet,
+                                                onToggleSelect = { toggleNoteSelection(it.id) },
+                                                onEnterSelection = { enterNoteSelection(it.id) },
                                                 onOpen = { launchEditor(it.id) },
                                                 onPin = { model.pin(it) },
                                                 onArchive = { model.archive(it) },
                                                 onOrganize = { organizeNote = it.id },
+                                                onToggleAiPolicy = {
+                                                    val nextPolicy = if (it.aiPolicy == "exclude") "inherit" else "exclude"
+                                                    model.setNoteAiPolicy(it.id, nextPolicy)
+                                                },
                                                 onHistory = { model.openVersionHistory(it.id) },
                                                 onShareCard = { sharingNoteId = it.id },
                                                 onMoveToTrash = { model.moveToTrash(it) },
@@ -837,15 +1071,26 @@ internal fun NotesShell(
                             val archivedFiltered = remember(notes, showArchive) {
                                 notes.filter { (it.archivedAt != null) == showArchive }
                             }
-                            val recordNotes = remember(archivedFiltered, showArchive, recordFilter, activeTodoNoteIds) {
-                                if (!showArchive && recordFilter == RecordFilter.Todos) {
+                            val recordNotes = remember(
+                                archivedFiltered,
+                                showArchive,
+                                recordFilter,
+                                activeTodoNoteIds,
+                                appPrefs.noteSortOrder,
+                            ) {
+                                val filtered = if (!showArchive && recordFilter == RecordFilter.Todos) {
                                     archivedFiltered.filter { it.id in activeTodoNoteIds }
                                 } else {
                                     archivedFiltered
                                 }
+                                sortNotesByOrder(filtered, appPrefs.noteSortOrder)
                             }
-                            val recordBuckets = remember(recordNotes, showArchive) {
-                                bucketNotesForAppleGroups(recordNotes, includePinnedBucket = !showArchive)
+                            val recordBuckets = remember(recordNotes, showArchive, appPrefs.noteSortOrder) {
+                                bucketNotesForAppleGroups(
+                                    notes = recordNotes,
+                                    includePinnedBucket = !showArchive,
+                                    sortOrder = appPrefs.noteSortOrder,
+                                )
                             }
 
                             LazyColumn(
@@ -995,10 +1240,18 @@ internal fun NotesShell(
                                                 tagIdsByNoteId = tagIdsByNoteId,
                                                 tagPaths = tagPaths,
                                                 noteDueBadges = noteDueBadges,
+                                                selectionMode = inSelectionMode,
+                                                selectedNoteIds = selectedNoteIdSet,
+                                                onToggleSelect = { toggleNoteSelection(it.id) },
+                                                onEnterSelection = { enterNoteSelection(it.id) },
                                                 onOpen = { launchEditor(it.id) },
                                                 onPin = { model.pin(it) },
                                                 onArchive = { model.archive(it) },
                                                 onOrganize = { organizeNote = it.id },
+                                                onToggleAiPolicy = {
+                                                    val nextPolicy = if (it.aiPolicy == "exclude") "inherit" else "exclude"
+                                                    model.setNoteAiPolicy(it.id, nextPolicy)
+                                                },
                                                 onHistory = { model.openVersionHistory(it.id) },
                                                 onShareCard = { sharingNoteId = it.id },
                                                 onMoveToTrash = { model.moveToTrash(it) },
@@ -1170,33 +1423,60 @@ internal fun NotesShell(
                     )
                     .navigationBarsPadding(),
             ) {
-                if (!motion.visible && !drawer.isOpen && !showTasksOverlay && !showTrash && !imeVisible) {
-                    Row(
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .widthIn(max = 640.dp)
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        FloatingNavigation(
+                if (!motion.visible && !drawer.isOpen && !showTasksOverlay && !showTrash) {
+                    if (inSelectionMode && (page == Page.Record || page == Page.Library)) {
+                        val selectedNotesList = notes.filter { it.id in selectedNoteIdSet }
+                        val allSelectedArchived = selectedNotesList.isNotEmpty() && selectedNotesList.all { it.archivedAt != null }
+                        BatchActionBottomBar(
                             backdrop = backdrop,
                             dark = dark,
-                            current = page,
-                            onSelect = {
-                                showTrash = false
-                                page = it
+                            selectedCount = selectedNoteIdSet.size,
+                            allArchived = allSelectedArchived,
+                            onCancel = { selectedNoteIds = emptyList() },
+                            onAddTag = { showBatchTagSheet = true },
+                            onAssignNotebook = { showBatchNotebookSheet = true },
+                            onToggleArchive = {
+                                model.batchSetArchived(selectedNoteIdSet, !allSelectedArchived)
+                                selectedNoteIds = emptyList()
                             },
-                            modifier = Modifier.weight(1f),
+                            onSoftDelete = {
+                                model.batchSoftDelete(selectedNoteIdSet)
+                                selectedNoteIds = emptyList()
+                            },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .widthIn(max = 640.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
                         )
-                        CircularComposeFab(
-                            backdrop = backdrop,
-                            tier = supportedGlassTier,
-                            dark = dark,
-                            onClick = { launchEditor() },
-                            modifier = Modifier.testTag("new-note"),
-                        )
+                    } else if (!imeVisible) {
+                        Row(
+                            Modifier
+                                .align(Alignment.BottomCenter)
+                                .widthIn(max = 640.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            FloatingNavigation(
+                                backdrop = backdrop,
+                                dark = dark,
+                                current = page,
+                                onSelect = {
+                                    showTrash = false
+                                    page = it
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            CircularComposeFab(
+                                backdrop = backdrop,
+                                tier = supportedGlassTier,
+                                dark = dark,
+                                onClick = { launchEditor() },
+                                modifier = Modifier.testTag("new-note"),
+                            )
+                        }
                     }
                 }
             }
@@ -1213,6 +1493,11 @@ internal fun NotesShell(
                 val session = model.editor
                 val editingExisting = session?.existingNote == true
                 val activeNote = session?.draft?.noteId?.let { id -> notes.firstOrNull { it.id == id } }
+                val undoHandle = if (session != null && editingExisting) {
+                    key(session.draft.id) { rememberEditorUndoHandle() }
+                } else {
+                    null
+                }
                 CaptureSheet(
                     motion = motion,
                     open = open,
@@ -1230,9 +1515,13 @@ internal fun NotesShell(
                     title = if (editingExisting) "" else "快速记录",
                     dismissLabel = if (editingExisting) "关闭" else "取消",
                     fullScreen = editingExisting,
-                    autoFocus = open && session != null && !editingExisting,
+                    autoFocus = open && session != null && !editingExisting && !suppressNextAutoFocus,
                     headerActions = if (editingExisting) {
                         {
+                            EditorHeaderUndoRedoButtons(
+                                undoHandle = undoHandle,
+                                enabled = session?.closing != true,
+                            )
                             if (activeNote != null) {
                                 var editorMenu by remember { mutableStateOf(false) }
                                 MintIconButton(
@@ -1278,6 +1567,16 @@ internal fun NotesShell(
                                         ) {
                                             editorMenu = false
                                             organizeNote = activeNote.id
+                                        }
+                                        ComposablesMenuItem(
+                                            label = if (activeNote.aiPolicy == "exclude") "允许 AI 整理" else "不参与 AI 整理",
+                                            icon = MintIcons.Lock,
+                                        ) {
+                                            editorMenu = false
+                                            model.setNoteAiPolicy(
+                                                activeNote.id,
+                                                if (activeNote.aiPolicy == "exclude") "inherit" else "exclude",
+                                            )
                                         }
                                         ComposablesMenuItem(
                                             label = "移到废纸篓",
@@ -1359,7 +1658,7 @@ internal fun NotesShell(
                                 backdrop = backdrop,
                                 tier = supportedGlassTier,
                                 dark = dark,
-                                autoFocusKeyboard = open && !editingExisting,
+                                autoFocusKeyboard = open && !editingExisting && !suppressNextAutoFocus,
                                 onOpenOrganize = activeNote?.let { note -> { organizeNote = note.id } },
                                 onRequestNotificationPermission = onRequestNotificationPermission,
                                 onOpenRelated = { id ->
@@ -1386,6 +1685,15 @@ internal fun NotesShell(
                                 },
                                 trashedNoteIds = trashedNoteIds,
                                 trashedNotes = trashedNotes,
+                                enableSlashShortcuts = appPrefs.enableSlashShortcuts,
+                                isAiExcluded = activeNote?.aiPolicy == "exclude",
+                                onToggleAiExcluded = activeNote?.let { note ->
+                                    {
+                                        val nextPolicy = if (note.aiPolicy == "exclude") "inherit" else "exclude"
+                                        model.setNoteAiPolicy(note.id, nextPolicy)
+                                    }
+                                },
+                                undoHandle = undoHandle,
                             )
                         }
                     } else if (open) {
@@ -1399,6 +1707,71 @@ internal fun NotesShell(
                 }
             }
         }
+    }
+    }
+}
+
+@Composable
+private fun EditorHeaderUndoRedoButtons(
+    undoHandle: EditorUndoHandle?,
+    enabled: Boolean,
+) {
+    if (undoHandle == null) return
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        EditorHeaderUndoRedoButton(
+            icon = EditorIcons.Undo,
+            label = "撤销",
+            enabled = enabled && undoHandle.canUndo,
+            onClick = undoHandle::performUndo,
+        )
+        EditorHeaderUndoRedoButton(
+            icon = EditorIcons.Redo,
+            label = "重做",
+            enabled = enabled && undoHandle.canRedo,
+            onClick = undoHandle::performRedo,
+        )
+    }
+}
+
+@Composable
+private fun EditorHeaderUndoRedoButton(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val interactionSource = remember { MutableInteractionSource() }
+    val scale = rememberMintPressScale(interactionSource, 0.94f)
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .focusProperties { canFocus = false }
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClickLabel = label,
+                onClick = onClick,
+            )
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (enabled) scheme.onSurfaceVariant else scheme.onSurfaceVariant.copy(alpha = 0.34f),
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -1603,7 +1976,9 @@ private fun FloatingNavigation(
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val pillColor = if (dark) Color(0xFF282724) else Color.White
+    val pillColor = if (dark) Color(0xFF2C2C2E) else Color.White
+    val navScale = mintFontScale()
+    val pillHeight = if (navScale > 1.1f) 58.dp else 54.dp
     GlassSurface(backdrop, GlassTier.Enhanced, dark, modifier, shapeRadius = 30.dp) {
         BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
             val tabWidth = maxWidth / Page.entries.size
@@ -1618,13 +1993,13 @@ private fun FloatingNavigation(
                 Modifier
                     .offset { IntOffset(position.roundToPx(), 0) }
                     .width(tabWidth)
-                    .height(50.dp)
+                    .height(pillHeight)
                     .then(
-                        if (!dark) Modifier.shadow(2.dp, RoundedCornerShape(25.dp), ambientColor = Color(0x14000000), spotColor = Color(0x14000000))
+                        if (!dark) Modifier.shadow(2.dp, RoundedCornerShape(27.dp), ambientColor = Color(0x14000000), spotColor = Color(0x14000000))
                         else Modifier
                     )
-                    .clip(RoundedCornerShape(25.dp))
-                    .background(pillColor, RoundedCornerShape(25.dp)),
+                    .clip(RoundedCornerShape(27.dp))
+                    .background(pillColor, RoundedCornerShape(27.dp)),
             )
             Row(Modifier.fillMaxWidth().selectableGroup()) {
                 for (target in Page.entries) {
@@ -1639,7 +2014,7 @@ private fun FloatingNavigation(
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(min = 50.dp)
+                            .heightIn(min = pillHeight)
                             .testTag("tab-${target.name}")
                             .selectable(
                                 selected = selected,
@@ -1661,11 +2036,13 @@ private fun FloatingNavigation(
                             text = target.label,
                             color = tint,
                             style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 11.sp,
-                                lineHeight = 14.sp,
+                                fontSize = (12.5f * navScale).sp,
+                                lineHeight = (16f * navScale).sp,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                             ),
                             maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -1721,28 +2098,44 @@ private fun QuickComposeTriggerBar(
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(16.dp)
+    val surfaceColor = if (dark) mintCardSurface(true) else Color.White
     Row(
         modifier = modifier
-            .defaultMinSize(minHeight = 46.dp)
-            .clip(shape)
-            .background(mintCardSurface(dark), shape)
-            .border(0.6.dp, mintDividerColor(dark), shape)
+            .defaultMinSize(minHeight = 52.dp)
+            .then(
+                if (dark) {
+                    Modifier
+                        .clip(shape)
+                        .background(surfaceColor, shape)
+                        .border(0.5.dp, mintDividerColor(true), shape)
+                } else {
+                    Modifier
+                        .shadow(
+                            elevation = 1.5.dp,
+                            shape = shape,
+                            ambientColor = Color(0x0A000000),
+                            spotColor = Color(0x0D000000),
+                        )
+                        .clip(shape)
+                        .background(surfaceColor, shape)
+                }
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(
             imageVector = MintIcons.Compose,
             contentDescription = null,
             tint = scheme.primary,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(19.dp),
         )
         Text(
             text = "写点什么…",
@@ -1879,9 +2272,25 @@ private data class NoteGroupBucket(
     val notes: List<NoteEntity>,
 )
 
+private fun sortNotesByOrder(
+    notes: List<NoteEntity>,
+    order: NoteSortOrder,
+): List<NoteEntity> {
+    val comparator = when (order) {
+        NoteSortOrder.UPDATED_DESC -> compareByDescending<NoteEntity> {
+            it.updatedAt.ifBlank { it.createdAt }
+        }.thenBy { it.id }
+        NoteSortOrder.CREATED_DESC -> compareByDescending<NoteEntity> {
+            it.createdAt.ifBlank { it.updatedAt }
+        }.thenBy { it.id }
+    }
+    return notes.sortedWith(comparator)
+}
+
 private fun bucketNotesForAppleGroups(
     notes: List<NoteEntity>,
     includePinnedBucket: Boolean = true,
+    sortOrder: NoteSortOrder = NoteSortOrder.UPDATED_DESC,
 ): List<NoteGroupBucket> {
     if (notes.isEmpty()) return emptyList()
     val zone = ZoneId.systemDefault()
@@ -1898,8 +2307,12 @@ private fun bucketNotesForAppleGroups(
     val weekNotes = mutableListOf<NoteEntity>()
     val earlierNotes = mutableListOf<NoteEntity>()
     for (note in regular) {
+        val rawTimestamp = when (sortOrder) {
+            NoteSortOrder.UPDATED_DESC -> note.updatedAt.ifBlank { note.createdAt }
+            NoteSortOrder.CREATED_DESC -> note.createdAt.ifBlank { note.updatedAt }
+        }
         val date = runCatching {
-            Instant.parse(note.updatedAt.ifBlank { note.createdAt }).atZone(zone).toLocalDate()
+            Instant.parse(rawTimestamp).atZone(zone).toLocalDate()
         }.getOrNull()
         when {
             date == null || !date.isBefore(today) -> todayNotes += note
@@ -1929,10 +2342,15 @@ private fun LazyListScope.groupedNoteBucket(
     tagIdsByNoteId: Map<String, List<String>>,
     tagPaths: Map<String, String>,
     noteDueBadges: Map<String, String>,
+    selectionMode: Boolean = false,
+    selectedNoteIds: Set<String> = emptySet(),
+    onToggleSelect: (NoteEntity) -> Unit = {},
+    onEnterSelection: (NoteEntity) -> Unit = {},
     onOpen: (NoteEntity) -> Unit,
     onPin: (NoteEntity) -> Unit,
     onArchive: (NoteEntity) -> Unit,
     onOrganize: (NoteEntity) -> Unit,
+    onToggleAiPolicy: (NoteEntity) -> Unit = {},
     onHistory: (NoteEntity) -> Unit,
     onShareCard: (NoteEntity) -> Unit = {},
     onMoveToTrash: (NoteEntity) -> Unit,
@@ -1942,8 +2360,8 @@ private fun LazyListScope.groupedNoteBucket(
             Text(
                 text = bucket.title,
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = mintTertiaryTextColor(dark),
-                modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = topSpacing, bottom = 6.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = topSpacing, bottom = 8.dp),
             )
         }
     } else if (topSpacing > 0.dp) {
@@ -1956,46 +2374,65 @@ private fun LazyListScope.groupedNoteBucket(
         items = bucket.notes,
         key = { _, note -> "${bucket.key}_${note.id}" },
     ) { index, note ->
-        val isFirst = index == 0
         val isLast = index == bucket.notes.lastIndex
-        val shape = RoundedCornerShape(
-            topStart = if (isFirst) 16.dp else 0.dp,
-            topEnd = if (isFirst) 16.dp else 0.dp,
-            bottomStart = if (isLast) 16.dp else 0.dp,
-            bottomEnd = if (isLast) 16.dp else 0.dp,
-        )
+        val shape = RoundedCornerShape(16.dp)
+        val cardSurface = if (dark) mintCardSurface(true) else Color.White
         val nbName = notebookByNoteId[note.id]?.let { notebookById[it]?.name }
         val noteTagLabels = tagIdsByNoteId[note.id].orEmpty().mapNotNull(tagPaths::get)
 
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(shape)
-                .background(mintCardSurface(dark)),
+                .padding(bottom = if (isLast) 0.dp else 12.dp),
         ) {
-            NoteCard(
-                note = note,
-                attachments = attachments,
-                dark = dark,
-                notebookName = nbName,
-                tagLabels = noteTagLabels,
-                dueBadge = noteDueBadges[note.id],
-                onOpen = { onOpen(note) },
-                onPin = { onPin(note) },
-                onArchive = { onArchive(note) },
-                onOrganize = { onOrganize(note) },
-                onHistory = { onHistory(note) },
-                onShareCard = { onShareCard(note) },
-                onMoveToTrash = { onMoveToTrash(note) },
-            )
-            if (!isLast) {
-                MintGroupedDivider(dark = dark, startIndent = 16.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (dark) {
+                            Modifier
+                                .clip(shape)
+                                .background(cardSurface, shape)
+                                .border(0.5.dp, mintDividerColor(true), shape)
+                        } else {
+                            Modifier
+                                .shadow(
+                                    elevation = 1.5.dp,
+                                    shape = shape,
+                                    ambientColor = Color(0x0A000000),
+                                    spotColor = Color(0x0D000000),
+                                )
+                                .clip(shape)
+                                .background(cardSurface, shape)
+                        }
+                    ),
+            ) {
+                NoteCard(
+                    note = note,
+                    attachments = attachments,
+                    dark = dark,
+                    notebookName = nbName,
+                    tagLabels = noteTagLabels,
+                    dueBadge = noteDueBadges[note.id],
+                    selectionMode = selectionMode,
+                    selected = note.id in selectedNoteIds,
+                    onToggleSelect = { onToggleSelect(note) },
+                    onEnterSelection = { onEnterSelection(note) },
+                    onOpen = { onOpen(note) },
+                    onPin = { onPin(note) },
+                    onArchive = { onArchive(note) },
+                    onOrganize = { onOrganize(note) },
+                    onToggleAiPolicy = { onToggleAiPolicy(note) },
+                    onHistory = { onHistory(note) },
+                    onShareCard = { onShareCard(note) },
+                    onMoveToTrash = { onMoveToTrash(note) },
+                )
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun NoteCard(
     note: NoteEntity,
@@ -2004,39 +2441,69 @@ private fun NoteCard(
     notebookName: String? = null,
     tagLabels: List<String> = emptyList(),
     dueBadge: String? = null,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
+    onEnterSelection: () -> Unit = {},
     onOpen: () -> Unit,
     onPin: () -> Unit,
     onArchive: () -> Unit,
     onOrganize: () -> Unit,
+    onToggleAiPolicy: () -> Unit = {},
     onHistory: () -> Unit = {},
     onShareCard: () -> Unit = {},
     onMoveToTrash: () -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
+    val scale = mintFontScale()
+    val haptic = LocalHapticFeedback.current
     var menu by remember { mutableStateOf(false) }
-    val meta = remember(note.documentJson, note.title, note.searchText, note.updatedAt, note.createdAt) {
+    val meta = remember(note.id, note.revision, note.updatedAt) {
         deriveNoteCardMeta(note)
+    }
+    val aiExcluded = note.aiPolicy == "exclude"
+    val selectedBg = if (selectionMode && selected) {
+        scheme.primary.copy(alpha = if (dark) 0.14f else 0.08f)
+    } else {
+        Color.Transparent
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .background(selectedBg)
             .testTag("saved-note")
-            .clickable(
+            .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 role = Role.Button,
-                onClick = onOpen,
+                onClick = if (selectionMode) onToggleSelect else onOpen,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (selectionMode) onToggleSelect() else onEnterSelection()
+                },
             )
-            .padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(verticalAlignment = Alignment.Top) {
+        Row(
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (selectionMode) {
+                Box(modifier = Modifier.padding(top = 4.dp)) {
+                    MintCheckbox(
+                        checked = selected,
+                        onCheckedChange = null,
+                        dark = dark,
+                        contentDescription = if (selected) "已选中笔记" else "未选中笔记",
+                    )
+                }
+            }
             Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .padding(top = 2.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 if (note.pinned) {
                     val pinTint = mintTodoAccent(dark).fg
@@ -2048,11 +2515,15 @@ private fun NoteCard(
                             imageVector = MintIcons.Pin,
                             contentDescription = null,
                             tint = pinTint,
-                            modifier = Modifier.size(12.dp),
+                            modifier = Modifier.size(14.dp),
                         )
                         Text(
                             text = "已置顶",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = (13f * scale).sp,
+                                lineHeight = (18f * scale).sp,
+                                fontWeight = FontWeight.SemiBold,
+                            ),
                             color = pinTint,
                         )
                     }
@@ -2060,8 +2531,8 @@ private fun NoteCard(
                 Text(
                     text = meta.title,
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 16.sp,
-                        lineHeight = 22.sp,
+                        fontSize = (17.5f * scale).sp,
+                        lineHeight = (24.5f * scale).sp,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = (-0.15).sp,
                     ),
@@ -2073,8 +2544,8 @@ private fun NoteCard(
                     Text(
                         text = meta.preview,
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
+                            fontSize = (15.5f * scale).sp,
+                            lineHeight = (23f * scale).sp,
                         ),
                         color = scheme.onSurfaceVariant,
                         maxLines = 1,
@@ -2082,42 +2553,51 @@ private fun NoteCard(
                     )
                 }
             }
-            Box {
-                NoteMenuTrigger { menu = true }
-                ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
-                    ComposablesMenuItem("整理笔记", icon = MintIcons.Folder) {
-                        menu = false
-                        onOrganize()
-                    }
-                    ComposablesMenuItem("版本历史", icon = MintIcons.History) {
-                        menu = false
-                        onHistory()
-                    }
-                    ComposablesMenuItem("生成分享卡片", icon = MintIcons.Share) {
-                        menu = false
-                        onShareCard()
-                    }
-                    ComposablesMenuItem(
-                        label = if (note.pinned) "取消置顶" else "置顶",
-                        icon = MintIcons.Pin,
-                    ) {
-                        menu = false
-                        onPin()
-                    }
-                    ComposablesMenuItem(
-                        label = if (note.archivedAt == null) "归档" else "取消归档",
-                        icon = MintIcons.Archive,
-                    ) {
-                        menu = false
-                        onArchive()
-                    }
-                    ComposablesMenuItem(
-                        label = "移到废纸篓",
-                        icon = MintIcons.Trash,
-                        destructive = true,
-                    ) {
-                        menu = false
-                        onMoveToTrash()
+            if (!selectionMode) {
+                Box {
+                    NoteMenuTrigger { menu = true }
+                    ComposablesMenu(expanded = menu, onDismiss = { menu = false }) {
+                        ComposablesMenuItem("整理笔记", icon = MintIcons.Folder) {
+                            menu = false
+                            onOrganize()
+                        }
+                        ComposablesMenuItem("版本历史", icon = MintIcons.History) {
+                            menu = false
+                            onHistory()
+                        }
+                        ComposablesMenuItem("生成分享卡片", icon = MintIcons.Share) {
+                            menu = false
+                            onShareCard()
+                        }
+                        ComposablesMenuItem(
+                            label = if (note.pinned) "取消置顶" else "置顶",
+                            icon = MintIcons.Pin,
+                        ) {
+                            menu = false
+                            onPin()
+                        }
+                        ComposablesMenuItem(
+                            label = if (note.archivedAt == null) "归档" else "取消归档",
+                            icon = MintIcons.Archive,
+                        ) {
+                            menu = false
+                            onArchive()
+                        }
+                        ComposablesMenuItem(
+                            label = if (aiExcluded) "允许 AI 整理" else "不参与 AI 整理",
+                            icon = MintIcons.Lock,
+                        ) {
+                            menu = false
+                            onToggleAiPolicy()
+                        }
+                        ComposablesMenuItem(
+                            label = "移到废纸篓",
+                            icon = MintIcons.Trash,
+                            destructive = true,
+                        ) {
+                            menu = false
+                            onMoveToTrash()
+                        }
                     }
                 }
             }
@@ -2125,8 +2605,7 @@ private fun NoteCard(
 
         if (meta.media.isNotEmpty()) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(end = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 meta.media.forEach { block ->
                     key(block.id) {
@@ -2134,7 +2613,7 @@ private fun NoteCard(
                             store = attachments,
                             id = requireNotNull(block.attachmentId),
                             type = block.type,
-                            modifier = Modifier.size(44.dp),
+                            modifier = Modifier.size(46.dp),
                         )
                     }
                 }
@@ -2147,21 +2626,24 @@ private fun NoteCard(
             tagLabels.isNotEmpty() ||
             meta.totalTodos > 0 ||
             meta.mediaTypes.isNotEmpty() ||
-            dueBadge != null
+            dueBadge != null ||
+            aiExcluded
         if (hasUnifiedMeta) {
+            val metaTextStyle = MaterialTheme.typography.labelSmall.copy(
+                fontSize = (13.5f * scale).sp,
+                lineHeight = (19f * scale).sp,
+                fontFeatureSettings = "tnum",
+            )
             FlowRow(
-                modifier = Modifier.fillMaxWidth().padding(end = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (meta.relativeTime.isNotBlank()) {
                     Text(
                         text = meta.relativeTime,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 12.sp,
-                            fontFeatureSettings = "tnum",
-                        ),
-                        color = mintTertiaryTextColor(dark),
+                        style = metaTextStyle,
+                        color = scheme.onSurfaceVariant,
                         maxLines = 1,
                     )
                 }
@@ -2170,7 +2652,7 @@ private fun NoteCard(
                     InlineMetadataTag(
                         text = "${meta.doneTodos}/${meta.totalTodos}",
                         icon = MintIcons.Checklist,
-                        tint = if (allDone) mintTertiaryTextColor(dark) else mintTodoAccent(dark).fg,
+                        tint = if (allDone) scheme.onSurfaceVariant else mintTodoAccent(dark).fg,
                     )
                 }
                 if (dueBadge != null) {
@@ -2178,6 +2660,14 @@ private fun NoteCard(
                         text = dueBadge,
                         icon = MintIcons.Bell,
                         tint = mintTodoAccent(dark).fg,
+                    )
+                }
+                if (aiExcluded) {
+                    InlineMetadataTag(
+                        text = "不参与 AI",
+                        icon = MintIcons.Lock,
+                        tint = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("note-ai-excluded-badge"),
                     )
                 }
                 if (meta.domainLabel != null) {
@@ -2197,7 +2687,7 @@ private fun NoteCard(
                 tagLabels.take(2).forEach { tag ->
                     Text(
                         text = "#$tag",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                        style = metaTextStyle.copy(fontWeight = FontWeight.Medium),
                         color = scheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -2206,8 +2696,8 @@ private fun NoteCard(
                 if (tagLabels.size > 2) {
                     Text(
                         text = "+${tagLabels.size - 2}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = mintTertiaryTextColor(dark),
+                        style = metaTextStyle,
+                        color = scheme.onSurfaceVariant,
                     )
                 }
                 meta.mediaTypes.take(2).forEach { type ->
@@ -2219,8 +2709,8 @@ private fun NoteCard(
                     Icon(
                         imageVector = mediaIcon,
                         contentDescription = null,
-                        tint = mintTertiaryTextColor(dark),
-                        modifier = Modifier.size(13.dp),
+                        tint = scheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp),
                     )
                 }
             }
@@ -2233,20 +2723,27 @@ private fun InlineMetadataTag(
     text: String,
     icon: ImageVector,
     tint: Color,
+    modifier: Modifier = Modifier,
 ) {
+    val scale = mintFontScale()
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(12.dp),
+            modifier = Modifier.size(14.dp),
         )
         Text(
             text = text,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = (13.5f * scale).sp,
+                lineHeight = (19f * scale).sp,
+                fontFeatureSettings = "tnum",
+            ),
             color = tint,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -2415,7 +2912,7 @@ private fun deriveNoteCardMeta(note: NoteEntity): NoteCardMeta {
                 if (label.isNotEmpty()) rawLines.add("@$label")
             }
             else -> {
-                block.text.lines()
+                block.searchableText.lines()
                     .map { it.trim() }
                     .filter { it.isNotEmpty() }
                     .forEach { rawLines.add(it) }
@@ -2478,5 +2975,385 @@ private fun formatRelativeTimestamp(iso: String): String {
         targetDate == today.minusDays(1) -> "昨天"
         targetDate.year == today.year -> instant.atZone(zone).format(DateTimeFormatter.ofPattern("M月d日"))
         else -> instant.atZone(zone).format(DateTimeFormatter.ofPattern("yyyy/M/d"))
+    }
+}
+
+@Composable
+private fun BatchActionBottomBar(
+    backdrop: GlassBackdrop,
+    dark: Boolean,
+    selectedCount: Int,
+    allArchived: Boolean,
+    onCancel: () -> Unit,
+    onAddTag: () -> Unit,
+    onAssignNotebook: () -> Unit,
+    onToggleArchive: () -> Unit,
+    onSoftDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val scale = mintFontScale()
+    GlassSurface(
+        backdrop = backdrop,
+        tier = GlassTier.Enhanced,
+        dark = dark,
+        shapeRadius = 24.dp,
+        elevatedModal = true,
+        modifier = modifier.testTag("batch-action-bar"),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "已选 $selectedCount 项",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = (15f * scale).sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = scheme.onSurface,
+                    modifier = Modifier
+                        .padding(start = 4.dp)
+                        .testTag("batch-selected-count"),
+                )
+                TextButton(
+                    onClick = onCancel,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = 40.dp)
+                        .testTag("batch-cancel"),
+                ) {
+                    Text(
+                        text = "取消多选",
+                        style = MaterialTheme.typography.labelLarge.copy(fontSize = (14f * scale).sp),
+                        color = scheme.primary,
+                    )
+                }
+            }
+            MintGroupedDivider(dark = dark, startIndent = 0.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                BatchActionItem(
+                    label = "加标签",
+                    icon = MintIcons.Tag,
+                    tint = scheme.onSurface,
+                    scale = scale,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("batch-add-tag"),
+                    onClick = onAddTag,
+                )
+                BatchActionItem(
+                    label = "笔记本",
+                    icon = MintIcons.Folder,
+                    tint = scheme.onSurface,
+                    scale = scale,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("batch-assign-notebook"),
+                    onClick = onAssignNotebook,
+                )
+                BatchActionItem(
+                    label = if (allArchived) "取消归档" else "归档",
+                    icon = MintIcons.Archive,
+                    tint = scheme.onSurface,
+                    scale = scale,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("batch-archive"),
+                    onClick = onToggleArchive,
+                )
+                BatchActionItem(
+                    label = "回收站",
+                    icon = MintIcons.Trash,
+                    tint = mintDestructiveColor(dark),
+                    scale = scale,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("batch-delete"),
+                    onClick = onSoftDelete,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatchActionItem(
+    label: String,
+    icon: ImageVector,
+    tint: Color,
+    scale: Float,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(vertical = 6.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(19.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = (12f * scale).sp,
+                lineHeight = (15f * scale).sp,
+                fontWeight = FontWeight.Medium,
+            ),
+            color = tint,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun BatchTagPickerSheet(
+    selectedCount: Int,
+    tags: List<TagEntity>,
+    tagPaths: Map<String, String>,
+    dark: Boolean,
+    backdrop: GlassBackdrop,
+    onDismiss: () -> Unit,
+    onSelectTag: (String) -> Unit,
+    onCreateAndApplyTag: (String) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val sortedTags = remember(tags, tagPaths) { tags.sortedBy { tagPaths[it.id] ?: it.name } }
+    var newTagName by remember { mutableStateOf("") }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    fun submitNewTag() {
+        val trimmed = newTagName.trim()
+        when {
+            trimmed.isEmpty() -> validationError = "请输入标签名称"
+            trimmed.length > 60 || '/' in trimmed || trimmed.any(Char::isISOControl) -> {
+                validationError = "名称须为 1–60 个字符，且不能包含斜杠或控制字符"
+            }
+            else -> onCreateAndApplyTag(trimmed)
+        }
+    }
+
+    MintBottomSheet(
+        onDismissRequest = onDismiss,
+        dark = dark,
+        backdrop = backdrop,
+        title = "批量添加标签",
+        subtitle = "为已选中的 $selectedCount 条笔记添加标签",
+        leadingLabel = "取消",
+        modifier = Modifier.testTag("batch-tag-picker-sheet"),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 420.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MintTextField(
+                    value = newTagName,
+                    onValueChange = {
+                        newTagName = it
+                        validationError = null
+                    },
+                    placeholder = "新建标签并应用",
+                    dark = dark,
+                    leadingIcon = MintIcons.Tag,
+                    modifier = Modifier.weight(1f),
+                )
+                MintPillButton(
+                    label = "添加",
+                    primary = true,
+                    dark = dark,
+                    enabled = newTagName.isNotBlank(),
+                    onClick = ::submitNewTag,
+                )
+            }
+            validationError?.let { err ->
+                Text(
+                    text = err,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = mintDestructiveColor(dark),
+                )
+            }
+            if (sortedTags.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(mintSecondaryFill(dark))
+                        .padding(16.dp),
+                ) {
+                    Text(
+                        text = "还没有已有标签，可在上方直接新建并应用。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false),
+                ) {
+                    itemsIndexed(
+                        items = sortedTags,
+                        key = { _, tag -> tag.id },
+                    ) { index, tag ->
+                        MintGroupedItemSlot(
+                            index = index,
+                            totalCount = sortedTags.size,
+                            dark = dark,
+                            dividerStartIndent = 46.dp,
+                        ) {
+                            MintGroupedRow(
+                                label = "#${tagPaths[tag.id] ?: tag.name}",
+                                leadingIcon = MintIcons.Tag,
+                                showChevron = true,
+                                dark = dark,
+                                onClick = { onSelectTag(tag.id) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatchNotebookPickerSheet(
+    selectedCount: Int,
+    notebooks: List<NotebookEntity>,
+    dark: Boolean,
+    backdrop: GlassBackdrop,
+    onDismiss: () -> Unit,
+    onSelectNotebook: (String?) -> Unit,
+    onCreateAndApplyNotebook: (String) -> Unit,
+) {
+    var newNotebookName by remember { mutableStateOf("") }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    fun submitNewNotebook() {
+        val trimmed = newNotebookName.trim()
+        when {
+            trimmed.isEmpty() -> validationError = "请输入笔记本名称"
+            trimmed.length > 60 || '/' in trimmed || trimmed.any(Char::isISOControl) -> {
+                validationError = "名称须为 1–60 个字符，且不能包含斜杠或控制字符"
+            }
+            else -> onCreateAndApplyNotebook(trimmed)
+        }
+    }
+
+    MintBottomSheet(
+        onDismissRequest = onDismiss,
+        dark = dark,
+        backdrop = backdrop,
+        title = "批量移入笔记本",
+        subtitle = "为已选中的 $selectedCount 条笔记指定笔记本",
+        leadingLabel = "取消",
+        modifier = Modifier.testTag("batch-notebook-picker-sheet"),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 420.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MintTextField(
+                    value = newNotebookName,
+                    onValueChange = {
+                        newNotebookName = it
+                        validationError = null
+                    },
+                    placeholder = "新建笔记本并移入",
+                    dark = dark,
+                    leadingIcon = MintIcons.Folder,
+                    modifier = Modifier.weight(1f),
+                )
+                MintPillButton(
+                    label = "创建",
+                    primary = true,
+                    dark = dark,
+                    enabled = newNotebookName.isNotBlank(),
+                    onClick = ::submitNewNotebook,
+                )
+            }
+            validationError?.let { err ->
+                Text(
+                    text = err,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = mintDestructiveColor(dark),
+                )
+            }
+            MintGroupedSection(dark = dark) {
+                MintGroupedRow(
+                    label = "移出笔记本（设为未归类）",
+                    leadingIcon = MintIcons.Close,
+                    dark = dark,
+                    onClick = { onSelectNotebook(null) },
+                )
+            }
+            if (notebooks.isNotEmpty()) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false),
+                ) {
+                    itemsIndexed(
+                        items = notebooks,
+                        key = { _, nb -> nb.id },
+                    ) { index, notebook ->
+                        MintGroupedItemSlot(
+                            index = index,
+                            totalCount = notebooks.size,
+                            dark = dark,
+                            dividerStartIndent = 46.dp,
+                        ) {
+                            MintGroupedRow(
+                                label = notebook.name,
+                                leadingIcon = MintIcons.Folder,
+                                showChevron = true,
+                                dark = dark,
+                                onClick = { onSelectNotebook(notebook.id) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }

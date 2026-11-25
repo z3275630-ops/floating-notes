@@ -65,6 +65,7 @@ internal interface OrganizationDao {
     @Query("SELECT * FROM note_links") suspend fun noteLinks(): List<NoteLinkEntity>
     @Upsert suspend fun setNotebook(row: NotebookNoteEntity)
     @Query("DELETE FROM notebook_notes WHERE noteId = :id") suspend fun clearNotebook(id: String)
+    @Query("DELETE FROM notebook_notes WHERE noteId IN (:noteIds)") suspend fun clearNotebooks(noteIds: List<String>)
     @Query("DELETE FROM note_links WHERE sourceId = :id") suspend fun clearLinks(id: String)
     @Query("DELETE FROM note_links WHERE sourceId = :id OR targetId = :id") suspend fun clearLinksInvolving(id: String)
     @Insert suspend fun insertLinks(links: List<NoteLinkEntity>)
@@ -146,6 +147,32 @@ internal class OrganizationRepository(private val db: NotesDatabase) {
 
     suspend fun fileNote(note: String, notebook: String?) {
         if (notebook == null) dao.clearNotebook(note) else dao.setNotebook(NotebookNoteEntity(note, notebook))
+    }
+
+    suspend fun batchAddTag(noteIds: Collection<String>, tagId: String) = db.withTransaction {
+        val ids = NotesRepository.normalizeBatchNoteIds(noteIds)
+        if (ids.isEmpty()) return@withTransaction
+        require(dao.tags().any { it.id == tagId }) { "标签不存在" }
+        val activeIds = ids.chunked(500).flatMap { chunk ->
+            db.notes().notesByIds(chunk).asSequence().filter { it.deletedAt == null }.map { it.id }.toList()
+        }
+        val rows = activeIds.map { NoteTagEntity(it, tagId) }
+        if (rows.isNotEmpty()) dao.insertNoteTags(rows)
+    }
+
+    suspend fun batchAssignNotebook(noteIds: Collection<String>, notebookId: String?) = db.withTransaction {
+        val ids = NotesRepository.normalizeBatchNoteIds(noteIds)
+        if (ids.isEmpty()) return@withTransaction
+        if (notebookId == null) {
+            ids.chunked(500).forEach { chunk -> dao.clearNotebooks(chunk) }
+            return@withTransaction
+        }
+        require(dao.notebooks().any { it.id == notebookId }) { "笔记本不存在" }
+        val activeIds = ids.chunked(500).flatMap { chunk ->
+            db.notes().notesByIds(chunk).asSequence().filter { it.deletedAt == null }.map { it.id }.toList()
+        }
+        val rows = activeIds.map { NotebookNoteEntity(it, notebookId) }
+        if (rows.isNotEmpty()) dao.insertNotebookNotes(rows)
     }
 
     private fun checkSibling(rows: List<TagEntity>, candidate: TagEntity) {

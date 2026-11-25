@@ -18,14 +18,20 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -58,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -109,6 +116,7 @@ import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -156,6 +164,7 @@ internal fun TasksScreen(
     onClose: (() -> Unit)? = null,
     capabilityProvider: (Context) -> ReminderCapability = ReminderScheduler::capability,
     onRequestNotificationPermission: (() -> Unit)? = null,
+    alarmHealthProvider: (Context) -> AlarmHealthStatus = ReminderScheduler::inspectAlarmHealth,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -172,15 +181,20 @@ internal fun TasksScreen(
 
     var selectedFilter by remember { mutableStateOf(TasksFilter.TODAY) }
     var capability by remember { mutableStateOf(capabilityProvider(context)) }
+    var alarmHealth by remember { mutableStateOf(alarmHealthProvider(context)) }
+    var strongAlarmEnabled by remember { mutableStateOf(ReminderScheduler.isStrongAlarmEnabled(context)) }
+    var alarmHealthDismissed by remember { mutableStateOf(false) }
     var currentZone by remember { mutableStateOf(ZoneId.systemDefault()) }
     var currentToday by remember { mutableStateOf(LocalDate.now(currentZone)) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var editingDraft by remember { mutableStateOf<TasksScheduleDraft?>(null) }
 
-    DisposableEffect(lifecycleOwner, context, capabilityProvider) {
+    DisposableEffect(lifecycleOwner, context, capabilityProvider, alarmHealthProvider) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 capability = capabilityProvider(context)
+                alarmHealth = alarmHealthProvider(context)
+                strongAlarmEnabled = ReminderScheduler.isStrongAlarmEnabled(context)
                 val latestZone = ZoneId.systemDefault()
                 currentZone = latestZone
                 currentToday = LocalDate.now(latestZone)
@@ -188,6 +202,15 @@ internal fun TasksScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(windowFocused, capabilityProvider, alarmHealthProvider) {
+        if (windowFocused) {
+            capability = capabilityProvider(context)
+            alarmHealth = alarmHealthProvider(context)
+            strongAlarmEnabled = ReminderScheduler.isStrongAlarmEnabled(context)
+        }
     }
 
     LaunchedEffect(currentToday, currentZone) {
@@ -201,22 +224,31 @@ internal fun TasksScreen(
     }
 
     val openNotificationSettings = {
-        val intent = ReminderScheduler.openNotificationSettingsIntent(context)
-        runCatching { context.startActivity(intent) }.onFailure {
-            runCatching { context.startActivity(ReminderScheduler.openAppDetailsIntent(context)) }
-        }
+        ReminderScheduler.launchNotificationSettings(context)
         Unit
     }
 
     val requestNotifications = onRequestNotificationPermission ?: openNotificationSettings
 
     val openExactAlarmSettings = {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            runCatching { context.startActivity(ReminderScheduler.openExactAlarmSettingsIntent(context)) }
-                .onFailure {
-                    runCatching { context.startActivity(ReminderScheduler.openAppDetailsIntent(context)) }
-                }
-        }
+        ReminderScheduler.launchExactAlarmSettings(context)
+        Unit
+    }
+
+    val openFullScreenSettings = {
+        ReminderScheduler.launchFullScreenIntentSettings(context)
+        Unit
+    }
+
+    val openBatterySettings = {
+        ReminderScheduler.launchBatteryOptimizationSettings(context)
+        Unit
+    }
+
+    val syncSystemClockAlarm: (Int, Int, String) -> Unit = { hour, minute, label ->
+        val intent = ReminderScheduler.buildSystemClockAlarmIntent(hour = hour, minute = minute, label = label)
+        runCatching { context.startActivity(intent) }
+            .onFailure { statusBanner = "未找到可用的系统时钟应用" }
     }
 
     TasksScreenContent(
@@ -338,6 +370,13 @@ internal fun TasksScreen(
         zoneId = currentZone,
         today = currentToday,
         onRequestNotificationPermission = requestNotifications,
+        alarmHealth = alarmHealth,
+        strongAlarmEnabled = strongAlarmEnabled,
+        alarmHealthDismissed = alarmHealthDismissed,
+        onDismissAlarmHealth = { alarmHealthDismissed = true },
+        onOpenFullScreenSettings = openFullScreenSettings,
+        onOpenBatterySettings = openBatterySettings,
+        onSyncSystemClockAlarm = syncSystemClockAlarm,
     )
 }
 
@@ -373,6 +412,18 @@ internal fun TasksScreenContent(
     today: LocalDate = LocalDate.now(zoneId),
     onRequestNotificationPermission: (() -> Unit)? = null,
     onQuickAddTask: ((String) -> Unit)? = null,
+    alarmHealth: AlarmHealthStatus = AlarmHealthStatus(
+        notificationsGranted = capability.notificationsEnabled,
+        exactAlarmAllowed = capability.exactAlarmAllowed,
+        fullScreenIntentAllowed = true,
+        ignoringBatteryOptimizations = true,
+    ),
+    strongAlarmEnabled: Boolean = true,
+    alarmHealthDismissed: Boolean = false,
+    onDismissAlarmHealth: () -> Unit = {},
+    onOpenFullScreenSettings: () -> Unit = {},
+    onOpenBatterySettings: () -> Unit = {},
+    onSyncSystemClockAlarm: ((hour: Int, minute: Int, label: String) -> Unit)? = null,
 ) {
     val activeRemindersCount = remember(items) {
         items.count { !it.checked && it.reminderId != null && it.reminderStatus == ReminderStatus.ACTIVE }
@@ -443,27 +494,35 @@ internal fun TasksScreenContent(
             .background(opaqueCanvas)
             .testTag("tasks_screen"),
     ) {
+        val openTasksCount = remember(items) { items.count { !it.checked } }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(opaqueCanvas)
-                .glassSource(backdrop)
-                .clearAndSetSemantics { }
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                ),
-        )
-
-        val openTasksCount = remember(items) { items.count { !it.checked } }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .glassSource(backdrop),
         ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clearAndSetSemantics { }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    ),
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                    )
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
             TasksHeaderBar(
                 openCount = openTasksCount,
                 todoStartupEnabled = todoStartupEnabled,
@@ -506,6 +565,28 @@ internal fun TasksScreenContent(
                     dark = dark,
                     testTag = "tasks_exact_alarm_banner",
                     actionTag = "tasks_open_exact_alarm_settings",
+                )
+            } else if (
+                strongAlarmEnabled &&
+                activeRemindersCount > 0 &&
+                !alarmHealthDismissed &&
+                (!alarmHealth.fullScreenIntentAllowed || !alarmHealth.ignoringBatteryOptimizations)
+            ) {
+                val missingFullScreen = !alarmHealth.fullScreenIntentAllowed
+                PermissionGuidanceBanner(
+                    title = if (missingFullScreen) "锁屏全屏提醒权限未开启" else "系统忽略电池优化未授权",
+                    message = if (missingFullScreen) {
+                        "未开启全屏通知权限时，强闹钟将降级为横幅提醒，建议前往系统设置开启。"
+                    } else {
+                        "系统忽略电池优化（Doze 白名单）未开启，这与手机管家的自启动管理相互独立；点击一键允许后台运行可防止息屏漏响。"
+                    },
+                    actionLabel = if (missingFullScreen) "开启全屏提醒" else "一键允许",
+                    dismissLabel = "暂不提醒",
+                    onAction = if (missingFullScreen) onOpenFullScreenSettings else onOpenBatterySettings,
+                    onDismiss = onDismissAlarmHealth,
+                    dark = dark,
+                    testTag = "tasks_alarm_health_banner",
+                    actionTag = "tasks_open_alarm_health_settings",
                 )
             }
 
@@ -752,6 +833,7 @@ internal fun TasksScreenContent(
                 }
             }
         }
+        }
 
         if (editingDraft != null) {
             TaskScheduleModal(
@@ -767,6 +849,12 @@ internal fun TasksScreenContent(
                 zoneId = zoneId,
                 today = today,
                 onRequestNotificationPermission = onRequestNotificationPermission,
+                alarmHealth = alarmHealth,
+                strongAlarmEnabled = strongAlarmEnabled,
+                onOpenExactAlarmSettings = onOpenExactAlarmSettings,
+                onOpenFullScreenSettings = onOpenFullScreenSettings,
+                onOpenBatterySettings = onOpenBatterySettings,
+                onSyncSystemClockAlarm = onSyncSystemClockAlarm,
             )
         }
 
@@ -1133,7 +1221,7 @@ private fun TaskRowCard(
             ) {
                 Text(
                     text = "来自：${item.notePreview}",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 13.sp, lineHeight = 18.sp),
                     color = scheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1387,11 +1475,12 @@ private fun TaskCircleCheckbox(
         modifier = modifier
             .size(48.dp)
             .clip(CircleShape)
-            .clickable(
+            .toggleable(
+                value = checked,
                 interactionSource = interactionSource,
                 indication = null,
                 role = Role.Checkbox,
-                onClick = onClick,
+                onValueChange = { onClick() },
             ),
         contentAlignment = Alignment.Center,
     ) {
@@ -1498,7 +1587,7 @@ private fun MetaBadge(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 13.sp, lineHeight = 18.sp),
             color = content,
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
         )
@@ -1520,7 +1609,19 @@ internal fun TaskScheduleModal(
     zoneId: ZoneId,
     today: LocalDate,
     onRequestNotificationPermission: (() -> Unit)? = null,
+    alarmHealth: AlarmHealthStatus = AlarmHealthStatus(
+        notificationsGranted = notificationsEnabled,
+        exactAlarmAllowed = true,
+        fullScreenIntentAllowed = true,
+        ignoringBatteryOptimizations = true,
+    ),
+    strongAlarmEnabled: Boolean = true,
+    onOpenExactAlarmSettings: (() -> Unit)? = null,
+    onOpenFullScreenSettings: (() -> Unit)? = null,
+    onOpenBatterySettings: (() -> Unit)? = null,
+    onSyncSystemClockAlarm: ((hour: Int, minute: Int, label: String) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
     var dueDateText by remember(initial) { mutableStateOf(initial.dueDateText) }
     var reminderEnabled by remember(initial) { mutableStateOf(initial.reminderEnabled) }
     var reminderTimeText by remember(initial) { mutableStateOf(initial.reminderTimeText) }
@@ -1699,6 +1800,96 @@ internal fun TaskScheduleModal(
                                 color = MaterialTheme.colorScheme.primary,
                             )
                         }
+                    }
+                    MintGroupedDivider(dark = dark, startIndent = 14.dp)
+                    val targetClockTime = parsedTime ?: LocalTime.of(9, 0)
+                    MintGroupedRow(
+                        label = "设为手机系统闹钟",
+                        subtitle = "将写入手机时钟，需在时钟中手动关闭",
+                        leadingIcon = MintIcons.Bell,
+                        trailingText = TIME_FORMAT.format(targetClockTime),
+                        showChevron = true,
+                        dark = dark,
+                        onClick = {
+                            if (onSyncSystemClockAlarm != null) {
+                                onSyncSystemClockAlarm(targetClockTime.hour, targetClockTime.minute, initial.taskText)
+                            } else {
+                                runCatching {
+                                    context.startActivity(
+                                        ReminderScheduler.buildSystemClockAlarmIntent(
+                                            hour = targetClockTime.hour,
+                                            minute = targetClockTime.minute,
+                                            label = initial.taskText,
+                                        ),
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier.testTag("schedule_set_system_alarm"),
+                    )
+                }
+            }
+
+            val needsHealthAttention = !alarmHealth.notificationsGranted ||
+                !alarmHealth.exactAlarmAllowed ||
+                (strongAlarmEnabled && (!alarmHealth.fullScreenIntentAllowed || !alarmHealth.ignoringBatteryOptimizations))
+            if (reminderEnabled && needsHealthAttention) {
+                Text(
+                    text = "闹钟防漏响检查",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
+                MintGroupedSection(
+                    dark = dark,
+                    modifier = Modifier.testTag("schedule_alarm_health_card"),
+                ) {
+                    var hasPreviousRow = false
+                    if (!alarmHealth.notificationsGranted) {
+                        hasPreviousRow = true
+                        MintGroupedRow(
+                            label = "通知权限未开启",
+                            subtitle = "未授权将无法弹出提醒与闹钟卡片",
+                            trailingText = "去开启",
+                            showChevron = true,
+                            dark = dark,
+                            onClick = { onRequestNotificationPermission?.invoke() },
+                        )
+                    }
+                    if (!alarmHealth.exactAlarmAllowed) {
+                        if (hasPreviousRow) MintGroupedDivider(dark = dark, startIndent = 16.dp)
+                        hasPreviousRow = true
+                        MintGroupedRow(
+                            label = "精确闹钟权限未开启",
+                            subtitle = "可能被系统延迟数分钟触发",
+                            trailingText = "去开启",
+                            showChevron = true,
+                            dark = dark,
+                            onClick = { onOpenExactAlarmSettings?.invoke() },
+                        )
+                    }
+                    if (strongAlarmEnabled && !alarmHealth.fullScreenIntentAllowed) {
+                        if (hasPreviousRow) MintGroupedDivider(dark = dark, startIndent = 16.dp)
+                        hasPreviousRow = true
+                        MintGroupedRow(
+                            label = "锁屏全屏提醒未开启",
+                            subtitle = "熄屏时将降级为横幅通知",
+                            trailingText = "去设置",
+                            showChevron = true,
+                            dark = dark,
+                            onClick = { onOpenFullScreenSettings?.invoke() },
+                        )
+                    }
+                    if (strongAlarmEnabled && !alarmHealth.ignoringBatteryOptimizations) {
+                        if (hasPreviousRow) MintGroupedDivider(dark = dark, startIndent = 16.dp)
+                        MintGroupedRow(
+                            label = "系统忽略电池优化（Doze 白名单）",
+                            subtitle = "独立于手机管家自启动管理，点此一键弹窗允许后台运行",
+                            trailingText = "一键允许",
+                            showChevron = true,
+                            dark = dark,
+                            onClick = { onOpenBatterySettings?.invoke() },
+                        )
                     }
                 }
             }

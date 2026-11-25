@@ -5,7 +5,7 @@
     android:layout_height="match_parent"
     android:background="@drawable/widget_mint_surface"
     android:orientation="vertical"
-    android:padding="14dp">
+    android:padding="12dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -18,8 +18,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="每日回顾"
-            android:textColor="#187D52"
-            android:textSize="12sp"
+            android:textColor="@color/widget_accent_text"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <TextView
@@ -31,19 +31,20 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:text="隐私遮罩已开"
-            android:textColor="#5C7A6B"
-            android:textSize="11sp" />
+            android:textColor="@color/widget_text_muted"
+            android:textSize="12sp" />
 
         <TextView
             android:id="@+id/widget_review_refresh"
             android:layout_width="wrap_content"
-            android:layout_height="26dp"
+            android:layout_height="44dp"
+            android:minWidth="56dp"
             android:background="@drawable/widget_secondary_pill"
             android:gravity="center"
-            android:paddingHorizontal="10dp"
+            android:paddingHorizontal="14dp"
             android:text="刷新"
-            android:textColor="#187D52"
-            android:textSize="11sp"
+            android:textColor="@color/widget_accent_text"
+            android:textSize="12sp"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -51,8 +52,9 @@
         android:id="@+id/widget_review_card_body"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="6dp"
         android:layout_weight="1"
+        android:minHeight="48dp"
         android:background="@drawable/widget_secondary_pill"
         android:orientation="vertical"
         android:padding="12dp">
@@ -64,8 +66,8 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:text="今日待重温笔记"
-            android:textColor="#11281E"
-            android:textSize="14sp"
+            android:textColor="@color/widget_text_primary"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <TextView
@@ -77,14 +79,14 @@
             android:ellipsize="end"
             android:maxLines="2"
             android:text="已启用隐私保护 · 点此进入原回顾会话查看"
-            android:textColor="#476154"
-            android:textSize="12sp" />
+            android:textColor="@color/widget_text_secondary"
+            android:textSize="13sp" />
     </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="6dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
@@ -96,19 +98,20 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:text="更新于刚刚"
-            android:textColor="#5C7A6B"
-            android:textSize="11sp" />
+            android:textColor="@color/widget_text_muted"
+            android:textSize="12sp" />
 
         <TextView
             android:id="@+id/widget_review_btn_capture"
             android:layout_width="wrap_content"
-            android:layout_height="28dp"
+            android:layout_height="44dp"
+            android:minWidth="84dp"
             android:background="@drawable/widget_mint_pill"
             android:gravity="center"
-            android:paddingHorizontal="12dp"
+            android:paddingHorizontal="14dp"
             android:text="+ 写笔记"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp"
+            android:textColor="@color/widget_pill_primary_text"
+            android:textSize="12sp"
             android:textStyle="bold" />
     </LinearLayout>
 </LinearLayout>

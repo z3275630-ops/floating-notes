@@ -23,9 +23,7 @@
 // Adapted from Composables UI DropdownMenu.kt, upstream bbaf1ba.
 package io.github.z3275630ops.floatingnotes.ui.designsystem
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -33,6 +31,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -52,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -60,6 +60,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @Composable
 internal fun NoteMenuTrigger(
@@ -111,16 +112,20 @@ internal fun ComposablesMenu(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val isDark = scheme.surface.luminance() < 0.5f
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        modifier = modifier.widthIn(min = 180.dp, max = 320.dp).padding(horizontal = 4.dp).testTag(tag),
+        modifier = modifier
+            .widthIn(min = 196.dp, max = 320.dp)
+            .padding(horizontal = 4.dp)
+            .testTag(tag),
         offset = DpOffset(0.dp, 6.dp),
-        shape = RoundedCornerShape(18.dp),
-        containerColor = scheme.surface,
+        shape = RoundedCornerShape(16.dp),
+        containerColor = if (isDark) Color(0xFF242426) else Color.White,
         tonalElevation = 0.dp,
-        shadowElevation = 10.dp,
-        border = BorderStroke(0.5.dp, scheme.outline.copy(alpha = 0.16f)),
+        shadowElevation = 12.dp,
+        border = null,
         content = content,
     )
 }
@@ -133,6 +138,8 @@ internal fun ComposablesMenuItem(
     onClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val scale = mintFontScale()
+    val isDark = scheme.surface.luminance() < 0.5f
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val hovered by interaction.collectIsHoveredAsState()
@@ -144,7 +151,11 @@ internal fun ComposablesMenuItem(
             Text(
                 text = label,
                 color = textColor,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = (16f * scale).sp,
+                    lineHeight = (22f * scale).sp,
+                    fontWeight = FontWeight.Medium,
+                ),
             )
         },
         leadingIcon = if (icon != null) {
@@ -153,15 +164,17 @@ internal fun ComposablesMenuItem(
                     imageVector = icon,
                     contentDescription = null,
                     tint = if (destructive) scheme.error else scheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(19.dp),
                 )
             }
         } else null,
         onClick = onClick,
         interactionSource = interaction,
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
         modifier = Modifier
-            .heightIn(min = 48.dp)
+            .heightIn(min = 50.dp)
+            .padding(horizontal = 4.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(if (active) scheme.secondaryContainer.copy(alpha = 0.72f) else Color.Transparent),
+            .background(if (active) mintSecondaryFill(isDark) else Color.Transparent),
     )
 }

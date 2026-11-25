@@ -12,6 +12,7 @@ import android.provider.OpenableColumns
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
+import android.util.LruCache
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.core.model.newId
 import io.github.z3275630ops.floatingnotes.data.backup.BackupCodec
@@ -53,6 +54,12 @@ internal class AttachmentStore(
     private val availableBytes: () -> Long = { queryAvailableBytes(root, context.filesDir) },
 ) {
     private val resolver = context.contentResolver
+    private val thumbnailCache: LruCache<String, Bitmap> = object : LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 1024L / 16L).toInt().coerceIn(4 * 1024, 16 * 1024),
+    ) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.allocationByteCount / 1024).coerceAtLeast(1)
+    }
 
     suspend fun import(
         uri: Uri,
@@ -265,6 +272,7 @@ internal class AttachmentStore(
                 try {
                     Os.rename(part.path, dest.path)
                     oldBackup.deleteRecursively()
+                    thumbnailCache.remove(id)
                 } catch (err: Exception) {
                     if (!dest.exists() && oldBackup.exists()) {
                         runCatching { Os.rename(oldBackup.path, dest.path) }
@@ -308,9 +316,30 @@ internal class AttachmentStore(
         return retained
     }
 
-    suspend fun thumbnail(id: String): Bitmap? = withContext(Dispatchers.IO) {
-        if (!BackupCodec.isSafeAttachmentId(id)) return@withContext null
-        BitmapFactory.decodeFile(File(root, "$id/preview.jpg").path)
+    suspend fun thumbnail(id: String): Bitmap? {
+        if (!BackupCodec.isSafeAttachmentId(id)) return null
+        thumbnailCache.get(id)?.takeIf { !it.isRecycled }?.let { return it }
+        return withContext(Dispatchers.IO) {
+            thumbnailCache.get(id)?.takeIf { !it.isRecycled }?.let { return@withContext it }
+            val decoded = BitmapFactory.decodeFile(File(root, "$id/preview.jpg").path)
+            if (decoded != null && !decoded.isRecycled) {
+                thumbnailCache.put(id, decoded)
+            }
+            decoded
+        }
+    }
+
+    fun evictThumbnail(id: String) {
+        thumbnailCache.remove(id)
+    }
+
+    fun clearThumbnailCache() {
+        thumbnailCache.evictAll()
+    }
+
+    suspend fun totalStorageBytes(): Long = withContext(Dispatchers.IO) {
+        if (!root.isDirectory) return@withContext 0L
+        root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
     suspend fun availableSpace(): Long = withContext(Dispatchers.IO) { availableBytes() }
@@ -350,7 +379,10 @@ internal class AttachmentStore(
                 document.blocks.forEach { block -> block.attachmentId?.let(ready::remove) }
             }
         }
-        ready.values.forEach { it.deleteRecursively() }
+        ready.forEach { (id, dir) ->
+            dir.deleteRecursively()
+            thumbnailCache.remove(id)
+        }
     }
 
     private fun requireSpace(bytes: Long) {

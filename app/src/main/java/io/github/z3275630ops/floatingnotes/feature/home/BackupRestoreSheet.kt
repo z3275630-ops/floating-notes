@@ -1,7 +1,5 @@
 package io.github.z3275630ops.floatingnotes.feature.home
 
-import android.appwidget.AppWidgetManager
-import android.content.ComponentName
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,17 +14,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.z3275630ops.floatingnotes.data.backup.BackupUiState
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreMode
 import io.github.z3275630ops.floatingnotes.data.backup.RestoreOutcome
 import io.github.z3275630ops.floatingnotes.data.backup.RestorePreflight
-import io.github.z3275630ops.floatingnotes.feature.widget.FloatingNotesQuickCaptureWidgetProvider
-import io.github.z3275630ops.floatingnotes.feature.widget.FloatingNotesReviewWidgetProvider
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintActivityIndicator
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintAlertDialog
@@ -39,14 +35,15 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.MintPillButton
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSelectionRow
 import io.github.z3275630ops.floatingnotes.ui.designsystem.MintSwitch
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintDestructiveColor
+import io.github.z3275630ops.floatingnotes.ui.designsystem.mintFontScale
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import java.time.LocalDate
 
 @Composable
 internal fun BackupRestoreSheet(
     state: BackupUiState,
-    todoStartupEnabled: Boolean,
-    onToggleTodoStartup: (Boolean) -> Unit,
+    todoStartupEnabled: Boolean = false,
+    onToggleTodoStartup: ((Boolean) -> Unit)? = null,
     backdrop: GlassBackdrop,
     dark: Boolean,
     onDismiss: () -> Unit,
@@ -58,17 +55,11 @@ internal fun BackupRestoreSheet(
     onConfirmRestore: () -> Unit,
     onDismissPreflight: () -> Unit,
     onClearOutcome: () -> Unit,
-    edgeEchoEnabled: Boolean = true,
-    onToggleEdgeEcho: (Boolean) -> Unit = {},
-    widgetPrivacyEnabled: Boolean = true,
-    onToggleWidgetPrivacy: (Boolean) -> Unit = {},
-    onRestoreDiscoveryExclusions: (() -> Unit)? = null,
 ) {
-    val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
+    val scale = mintFontScale()
     val today = remember { LocalDate.now().toString() }
     var showMarkdownConfirm by remember { mutableStateOf(false) }
-    var widgetPinHint by remember { mutableStateOf<String?>(null) }
 
     val fullBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
@@ -86,30 +77,32 @@ internal fun BackupRestoreSheet(
         onDismissRequest = { if (!state.busy) onDismiss() },
         dark = dark,
         backdrop = backdrop,
-        title = "设置与数据管理",
+        title = "备份、恢复与导出",
         subtitle = "本机 ZIP 与 Markdown",
         leadingLabel = "关闭",
         dismissOnClickOutside = !state.busy,
+        maxHeightFraction = 0.92f,
         modifier = Modifier.testTag("backup-restore-sheet"),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 520.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .padding(top = 8.dp, bottom = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             if (state.busy) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(mintSecondaryFill(dark))
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         MintActivityIndicator(color = scheme.primary)
                         Text(
@@ -126,20 +119,20 @@ internal fun BackupRestoreSheet(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(16.dp))
                             .background(mintDestructiveColor(dark).copy(alpha = 0.12f))
-                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                            .padding(horizontal = 16.dp, vertical = 14.dp)
                             .testTag("backup-error-banner"),
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             Text(
                                 text = err,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                                 color = mintDestructiveColor(dark),
                             )
                             Text(
                                 text = "现有笔记库与本地附件未作任何修改。",
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = scheme.onSurfaceVariant,
                             )
                         }
@@ -152,21 +145,21 @@ internal fun BackupRestoreSheet(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(tint.copy(alpha = if (dark) 0.16f else 0.10f))
-                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
                         .testTag("backup-export-outcome"),
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(
                             text = export.message,
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = tint,
                         )
                         export.warnings.forEach { warn ->
                             Text(
                                 text = "• $warn",
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = scheme.onSurfaceVariant,
                             )
                         }
@@ -180,21 +173,21 @@ internal fun BackupRestoreSheet(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(scheme.primary.copy(alpha = if (dark) 0.18f else 0.10f))
-                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
                                 .testTag("backup-restore-outcome"),
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                 Text(
                                     text = "恢复完成：导入 ${outcome.importedNotes} 条笔记，跳过或副本重命名 ${outcome.skippedOrRenamedNotes} 条。",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                     color = scheme.primary,
                                 )
                                 outcome.pausedRemindersNote?.let { note ->
                                     Text(
                                         text = note,
-                                        style = MaterialTheme.typography.labelSmall,
+                                        style = MaterialTheme.typography.bodySmall,
                                         color = scheme.onSurfaceVariant,
                                     )
                                 }
@@ -205,21 +198,21 @@ internal fun BackupRestoreSheet(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(mintDestructiveColor(dark).copy(alpha = 0.12f))
-                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
                                 .testTag("backup-restore-outcome"),
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                 Text(
                                     text = outcome.message,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                     color = mintDestructiveColor(dark),
                                 )
                                 if (outcome.existingLibraryIntact) {
                                     Text(
                                         text = "现有笔记库与附件完整保留，未受任何损坏。",
-                                        style = MaterialTheme.typography.labelSmall,
+                                        style = MaterialTheme.typography.bodySmall,
                                         color = scheme.onSurfaceVariant,
                                     )
                                 }
@@ -229,145 +222,89 @@ internal fun BackupRestoreSheet(
                 }
             }
 
-            Text(
-                text = "备份与恢复",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            MintGroupedSection(dark = dark) {
-                MintGroupedRow(
-                    label = "生成完整备份 (ZIP)",
-                    subtitle = "含笔记、历史、组织、搜索、提醒与附件校验",
-                    leadingIcon = MintIcons.Export,
-                    showChevron = true,
-                    enabled = !state.busy,
-                    dark = dark,
-                    modifier = Modifier.testTag("backup-export-zip"),
-                    onClick = {
-                        onClearOutcome()
-                        fullBackupLauncher.launch("floating-notes-backup-$today.zip")
-                    },
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "备份与恢复",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = (14.5f * scale).sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
                 )
-                MintGroupedDivider(dark = dark, startIndent = 48.dp)
-                MintGroupedRow(
-                    label = "导出 Markdown 压缩包",
-                    subtitle = "导出通用可读 .md 与附件文件，适用于迁移或阅读归档",
-                    leadingIcon = MintIcons.FileDown,
-                    showChevron = true,
-                    enabled = !state.busy,
-                    dark = dark,
-                    modifier = Modifier.testTag("backup-export-markdown"),
-                    onClick = {
-                        onClearOutcome()
-                        showMarkdownConfirm = true
-                    },
-                )
-                MintGroupedDivider(dark = dark, startIndent = 48.dp)
-                MintGroupedRow(
-                    label = "从备份 ZIP 恢复或合并",
-                    subtitle = "先预检版本号、校验和与冲突数量，确认后再执行写入",
-                    leadingIcon = MintIcons.Restore,
-                    showChevron = true,
-                    enabled = !state.busy,
-                    dark = dark,
-                    modifier = Modifier.testTag("backup-import-zip"),
-                    onClick = {
-                        onClearOutcome()
-                        restorePickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
-                    },
-                )
-            }
-
-            Text(
-                text = "通用偏好",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            MintGroupedSection(dark = dark) {
-                MintGroupedRow(
-                    label = "启动默认进入待办",
-                    subtitle = "开启后每次冷启动应用将直接展示待办与提醒列表",
-                    leadingIcon = MintIcons.Checklist,
-                    dark = dark,
-                    trailingContent = {
-                        MintSwitch(
-                            checked = todoStartupEnabled,
-                            onCheckedChange = onToggleTodoStartup,
-                            dark = dark,
-                            modifier = Modifier.testTag("backup-startup-todo-toggle"),
-                        )
-                    },
-                    onClick = { onToggleTodoStartup(!todoStartupEnabled) },
-                )
-                MintGroupedDivider(dark = dark, startIndent = 48.dp)
-                MintGroupedRow(
-                    label = "写作边缘历史回响",
-                    subtitle = "编辑时停顿片刻，在边缘轻提示相关旧笔记，不打断输入",
-                    leadingIcon = MintIcons.Explore,
-                    dark = dark,
-                    trailingContent = {
-                        MintSwitch(
-                            checked = edgeEchoEnabled,
-                            onCheckedChange = onToggleEdgeEcho,
-                            dark = dark,
-                            modifier = Modifier.testTag("settings-edge-echo-toggle"),
-                        )
-                    },
-                    onClick = { onToggleEdgeEcho(!edgeEchoEnabled) },
-                )
-                MintGroupedDivider(dark = dark, startIndent = 48.dp)
-                MintGroupedRow(
-                    label = "桌面组件与锁屏隐私保护",
-                    subtitle = "默认开启：桌面回顾卡片隐藏敏感正文，点击才打开原文",
-                    leadingIcon = MintIcons.Archive,
-                    dark = dark,
-                    trailingContent = {
-                        MintSwitch(
-                            checked = widgetPrivacyEnabled,
-                            onCheckedChange = onToggleWidgetPrivacy,
-                            dark = dark,
-                            modifier = Modifier.testTag("settings-widget-privacy-toggle"),
-                        )
-                    },
-                    onClick = { onToggleWidgetPrivacy(!widgetPrivacyEnabled) },
-                )
-                MintGroupedDivider(dark = dark, startIndent = 48.dp)
-                MintGroupedRow(
-                    label = "添加桌面小组件（回顾 / 快速记录）",
-                    subtitle = widgetPinHint ?: "如手机桌面支持，可尝试直接固定；或长按桌面空白处添加「浮记」",
-                    leadingIcon = MintIcons.Plus,
-                    showChevron = true,
-                    dark = dark,
-                    modifier = Modifier.testTag("settings-pin-widget"),
-                    onClick = {
-                        val mgr = AppWidgetManager.getInstance(context)
-                        val supported = mgr.isRequestPinAppWidgetSupported
-                        if (supported) {
-                            val reviewProvider = ComponentName(context, FloatingNotesReviewWidgetProvider::class.java)
-                            val ok = mgr.requestPinAppWidget(reviewProvider, null, null)
-                            if (!ok) {
-                                val quickProvider = ComponentName(context, FloatingNotesQuickCaptureWidgetProvider::class.java)
-                                mgr.requestPinAppWidget(quickProvider, null, null)
-                            }
-                            widgetPinHint = "已请求系统添加桌面小组件；若桌面未弹出确认，请长按桌面空白处手动添加"
-                        } else {
-                            widgetPinHint = "当前桌面不支持一键固定，请长按手机桌面空白处 → 添加小组件 → 选择「浮记」"
-                        }
-                    },
-                )
-                if (onRestoreDiscoveryExclusions != null) {
+                MintGroupedSection(dark = dark) {
+                    MintGroupedRow(
+                        label = "生成完整备份 (ZIP)",
+                        subtitle = "含笔记、历史、组织、搜索、提醒与附件校验",
+                        leadingIcon = MintIcons.Export,
+                        showChevron = true,
+                        enabled = !state.busy,
+                        dark = dark,
+                        modifier = Modifier.testTag("backup-export-zip"),
+                        onClick = {
+                            onClearOutcome()
+                            fullBackupLauncher.launch("floating-notes-backup-$today.zip")
+                        },
+                    )
                     MintGroupedDivider(dark = dark, startIndent = 48.dp)
                     MintGroupedRow(
-                        label = "恢复已排除的回顾与发现内容",
-                        subtitle = "重新允许此前在回顾或找一找中隐藏的笔记和标签出现",
+                        label = "导出 Markdown 压缩包",
+                        subtitle = "导出通用可读 .md 与附件文件，适用于迁移或阅读归档",
+                        leadingIcon = MintIcons.FileDown,
+                        showChevron = true,
+                        enabled = !state.busy,
+                        dark = dark,
+                        modifier = Modifier.testTag("backup-export-markdown"),
+                        onClick = {
+                            onClearOutcome()
+                            showMarkdownConfirm = true
+                        },
+                    )
+                    MintGroupedDivider(dark = dark, startIndent = 48.dp)
+                    MintGroupedRow(
+                        label = "从备份 ZIP 恢复或合并",
+                        subtitle = "先预检版本号、校验和与冲突数量，确认后再执行写入",
                         leadingIcon = MintIcons.Restore,
                         showChevron = true,
+                        enabled = !state.busy,
                         dark = dark,
-                        modifier = Modifier.testTag("settings-restore-exclusions"),
-                        onClick = onRestoreDiscoveryExclusions,
+                        modifier = Modifier.testTag("backup-import-zip"),
+                        onClick = {
+                            onClearOutcome()
+                            restorePickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+                        },
                     )
+                }
+            }
+
+            if (onToggleTodoStartup != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "快捷偏好",
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontSize = (14.5f * scale).sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                    MintGroupedSection(dark = dark) {
+                        MintGroupedRow(
+                            label = "启动默认进入待办",
+                            subtitle = "开启后每次冷启动应用将直接展示待办与提醒列表",
+                            leadingIcon = MintIcons.Checklist,
+                            dark = dark,
+                            trailingContent = {
+                                MintSwitch(
+                                    checked = todoStartupEnabled,
+                                    onCheckedChange = onToggleTodoStartup,
+                                    dark = dark,
+                                    modifier = Modifier.testTag("backup-startup-todo-toggle"),
+                                )
+                            },
+                            onClick = { onToggleTodoStartup(!todoStartupEnabled) },
+                        )
+                    }
                 }
             }
         }
@@ -419,6 +356,7 @@ private fun RestorePreflightSheet(
     onDismiss: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val scale = mintFontScale()
     MintBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
         dark = dark,
@@ -431,14 +369,16 @@ private fun RestorePreflightSheet(
         trailingEnabled = !busy,
         trailingTag = "backup-preflight-confirm",
         dismissOnClickOutside = !busy,
+        maxHeightFraction = 0.92f,
         modifier = Modifier.testTag("backup-preflight-sheet"),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 480.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .padding(top = 8.dp, bottom = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             MintGroupedSection(dark = dark) {
                 MintGroupedRow(
@@ -468,30 +408,35 @@ private fun RestorePreflightSheet(
                 }
             }
 
-            Text(
-                text = "恢复策略",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            MintGroupedSection(dark = dark) {
-                MintSelectionRow(
-                    label = "合并导入（冲突保留副本）",
-                    subtitle = "保留本机现有笔记，冲突笔记生成独立副本并恢复缺失条目",
-                    selected = mode == RestoreMode.MERGE_KEEP_CONFLICTS,
-                    dark = dark,
-                    semanticsRole = Role.RadioButton,
-                    onClick = { onSelectMode(RestoreMode.MERGE_KEEP_CONFLICTS) },
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "恢复策略",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = (14.5f * scale).sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
                 )
-                MintGroupedDivider(dark = dark)
-                MintSelectionRow(
-                    label = "完整恢复（覆盖当前库）",
-                    subtitle = "将本机笔记、标签与待办还原为备份包快照状态",
-                    selected = mode == RestoreMode.REPLACE_ALL,
-                    dark = dark,
-                    semanticsRole = Role.RadioButton,
-                    onClick = { onSelectMode(RestoreMode.REPLACE_ALL) },
-                )
+                MintGroupedSection(dark = dark) {
+                    MintSelectionRow(
+                        label = "合并导入（冲突保留副本）",
+                        subtitle = "保留本机现有笔记，冲突笔记生成独立副本并恢复缺失条目",
+                        selected = mode == RestoreMode.MERGE_KEEP_CONFLICTS,
+                        dark = dark,
+                        semanticsRole = Role.RadioButton,
+                        onClick = { onSelectMode(RestoreMode.MERGE_KEEP_CONFLICTS) },
+                    )
+                    MintGroupedDivider(dark = dark)
+                    MintSelectionRow(
+                        label = "完整恢复（覆盖当前库）",
+                        subtitle = "将本机笔记、标签与待办还原为备份包快照状态",
+                        selected = mode == RestoreMode.REPLACE_ALL,
+                        dark = dark,
+                        semanticsRole = Role.RadioButton,
+                        onClick = { onSelectMode(RestoreMode.REPLACE_ALL) },
+                    )
+                }
             }
 
             MintGroupedSection(dark = dark) {
