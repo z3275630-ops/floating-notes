@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.os.SystemClock
 import android.os.Bundle
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.room.Room
@@ -34,24 +35,24 @@ class NoteSearchTest {
         val savedName = "筛选 $token"
         val db = NotesDatabase.open(context)
         runBlocking { db.notes().putNote(note(token, token)) }
-        compose.onNodeWithTag("tab-Library").performClick()
+        compose.onNodeWithTag("tab-Library").performSemanticsAction(SemanticsActions.OnClick)
         compose.onNodeWithTag("library-search").performTextInput(token)
         compose.waitUntil(8_000) {
             compose.onAllNodes(hasTestTag("saved-note") and hasText(token)).fetchSemanticsNodes().size == 1 &&
                 compose.onAllNodesWithTag("library-organization-actions").fetchSemanticsNodes().isEmpty()
         }
         compose.onNode(hasTestTag("saved-note") and hasText(token)).assertExists()
-        compose.onNodeWithContentDescription("筛选").performClick()
-        compose.onNodeWithText("仅无标签").performClick()
-        compose.onNodeWithText("应用筛选").performClick()
-        compose.onNodeWithContentDescription("更多搜索操作").performClick()
-        compose.onNodeWithText("保存条件").performClick()
+        compose.onNodeWithContentDescription("筛选").performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText("仅无标签").performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText("应用筛选").performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithContentDescription("更多搜索操作").performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText("保存条件").performSemanticsAction(SemanticsActions.OnClick)
         compose.onNode(hasSetTextAction() and hasAnyAncestor(isDialog())).performTextInput(savedName)
-        compose.onNodeWithText("保存搜索").performClick()
+        compose.onNodeWithText("保存搜索").performSemanticsAction(SemanticsActions.OnClick)
         compose.waitUntil(8_000) { compose.onAllNodesWithText(savedName).fetchSemanticsNodes().size == 1 }
-        compose.onNodeWithText("无标签").performClick()
+        compose.onNodeWithText("无标签").performSemanticsAction(SemanticsActions.OnClick)
         compose.onNodeWithText("无标签").assertDoesNotExist()
-        compose.onNodeWithText(savedName).performClick()
+        compose.onNodeWithText(savedName).performSemanticsAction(SemanticsActions.OnClick)
         compose.onNodeWithText("无标签").assertExists()
     }
 

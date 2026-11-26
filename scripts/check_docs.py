@@ -87,7 +87,7 @@ def validate(value, schema, base, at='$'):
 
 def run(root):
     root = root.resolve()
-    generated = {'.git', '.gradle', '.kotlin', 'build', 'artifacts'}
+    generated = {'.git', '.gradle', '.kotlin', 'build', 'artifacts', 'node_modules'}
     files = [p for p in root.rglob('*') if p.is_file()
              and not generated.intersection(p.relative_to(root).parts[:-1])]
     markdown = [p for p in files if p.suffix == '.md']

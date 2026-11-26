@@ -17,7 +17,9 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ActivityScenario
@@ -258,8 +260,9 @@ class T14UiFlowTest {
             compose.onNodeWithTag("backup-import-zip").assertIsDisplayed()
 
             compose.onNodeWithTag("backup-startup-todo-toggle").assertIsOff()
-            compose.onNodeWithTag("backup-startup-todo-toggle").performClick()
-            assertTrue(todoStartup)
+            compose.onNodeWithTag("backup-startup-todo-toggle").performSemanticsAction(SemanticsActions.OnClick)
+            compose.onNodeWithTag("backup-startup-todo-toggle").assertIsOn()
+            compose.runOnIdle { assertTrue(todoStartup) }
 
             compose.onNodeWithTag("backup-export-markdown").performClick()
             compose.onNodeWithText("导出 Markdown 说明").assertIsDisplayed()
@@ -295,8 +298,8 @@ class T14UiFlowTest {
             assertEquals(RestoreMode.REPLACE_ALL, uiState.preflightMode)
 
             compose.onNodeWithTag("backup-preflight-autobackup").performScrollTo().assertIsOn()
-            compose.onNodeWithTag("backup-preflight-confirm").performClick()
-            assertTrue(confirmed)
+            compose.onNodeWithTag("backup-preflight-confirm").performSemanticsAction(SemanticsActions.OnClick)
+            compose.runOnIdle { assertTrue(confirmed) }
         }
     }
 
