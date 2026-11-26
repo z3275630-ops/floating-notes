@@ -170,9 +170,9 @@ internal class EditorBlock(initialOriginal: NoteBlock) {
     fun markSyncedWith(block: NoteBlock? = null) {
         syncedText = block?.text ?: text.text.toString()
         syncedChecked = block?.checked ?: checked
-        syncedDueDate = block?.dueDate ?: dueDate
-        syncedReminderId = block?.reminderId ?: reminderId
-        syncedOccurrenceId = block?.occurrenceId ?: occurrenceId
+        syncedDueDate = if (block == null) dueDate else block.dueDate
+        syncedReminderId = if (block == null) reminderId else block.reminderId
+        syncedOccurrenceId = if (block == null) occurrenceId else block.occurrenceId
     }
 
     fun documentBlock(): NoteBlock = when {
@@ -231,16 +231,22 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         return sequence
     }
 
-    fun syncAfterExternalCommit(newRevision: Long) {
-        draft = draft.copy(baseRevision = newRevision)
-        trackedDocument = document()
-        checkpointSeq = sequence
-        committedSeq = sequence
-        syncedDocumentBlocks.clear()
+    fun acknowledgeCommit(note: NoteEntity, savedSequence: Long = committedSeq) {
+        if (note.revision < draft.baseRevision) return
+        val persisted = NoteDocument.decode(note.documentJson)
+        draft = draft.copy(baseRevision = note.revision)
+        val current = document()
+        val savedThrough = if (current != trackedDocument && current.encode() == note.documentJson) {
+            trackedDocument = current
+            sequence
+        } else {
+            savedSequence
+        }
+        checkpointSeq = maxOf(checkpointSeq, savedThrough)
+        committedSeq = maxOf(committedSeq, savedThrough)
+        setSyncedBaseline(persisted.blocks)
         blocks.forEach { block ->
-            val docBlock = block.documentBlock()
-            block.markSyncedWith(docBlock)
-            syncedDocumentBlocks[docBlock.id] = docBlock
+            syncedDocumentBlocks[block.id]?.let(block::markSyncedWith)
         }
     }
 
@@ -288,10 +294,17 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
         start: Int? = null,
         end: Int? = null,
         labelOverride: String? = null,
-    ) {
-        if (writing || note.id == draft.noteId) return
+        afterBlockId: String? = null,
+    ): Boolean {
+        if (writing || closing || note.id == draft.noteId) return false
+        val after = if (afterBlockId == null) {
+            blocks.size
+        } else {
+            blocks.indexOfFirst { it.id == afterBlockId }.takeIf { it >= 0 }?.plus(1) ?: return false
+        }
         val label = labelOverride?.takeIf { it.isNotBlank() } ?: referenceLabel(note)
         blocks.add(
+            after,
             EditorBlock(
                 NoteBlock.reference(
                     noteId = note.id,
@@ -304,6 +317,7 @@ internal class EditorSession(initialDraft: DraftEntity, document: NoteDocument, 
             ),
         )
         ensureTailEditableBlock()
+        return true
     }
 
     fun insertTranscript(block: EditorBlock, text: String): Boolean {
@@ -1168,10 +1182,8 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         val mergedSeq = session.sequenceFor(mergedDoc)
         val committed = repository.commit(encode(session, mergedDoc, mergedSeq))
         syncChunksAsync(committed)
-        session.draft = session.draft.copy(baseRevision = committed.revision)
-        session.committedSeq = maxOf(session.committedSeq, mergedSeq)
+        session.acknowledgeCommit(committed, mergedSeq)
         commitSessionExtras(session)
-        session.syncAfterExternalCommit(committed.revision)
         return committed
     }
 
@@ -1224,11 +1236,13 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                 try {
                                     val committed = repository.commit(commitDraft)
                                     syncChunksAsync(committed)
-                                    session.draft = session.draft.copy(baseRevision = committed.revision)
-                                    session.committedSeq = maxOf(session.committedSeq, sequence)
+                                    session.acknowledgeCommit(committed, sequence)
                                     commitSessionExtras(session)
-                                    session.syncAfterExternalCommit(committed.revision)
-                                    session.status = "已保存到本机"
+                                    session.status = if (session.sequenceFor(session.document()) <= session.committedSeq) {
+                                        "已保存到本机"
+                                    } else {
+                                        "等待写入"
+                                    }
                                 } catch (stale: StaleDraftException) {
                                     val merged = tryMergeExternalUpdateAndRetryCommitLocked(session)
                                     if (merged != null) {
@@ -1249,6 +1263,16 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 }
             }
         }
+    }
+
+    suspend fun saveOpenNote(session: EditorSession): Boolean {
+        if (editor !== session || !session.existingNote) return false
+        val hasChanges = session.sequenceFor(session.document()) > session.committedSeq ||
+            session.pendingTagIds.isNotEmpty() || session.blocks.any { it.pendingScheduleChanged }
+        if (!persistAndStopSession(session, save = hasChanges)) return false
+        if (editor !== session) return false
+        watch(session)
+        return true
     }
 
     suspend fun finishEditor(save: Boolean = false, discard: Boolean = false): Boolean {
@@ -1282,7 +1306,6 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
             watcher?.cancelAndJoin()
             stopCheckpoint?.cancelAndJoin()
             val document = session.document()
-            val preCommitEditableSnapshot = session.blocks.map { it.id to it.text.text.toString() }
             val sequence = session.sequenceFor(document)
             val draft = encode(session, document, sequence)
             var didCommit = false
@@ -1300,8 +1323,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                             tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
                         }
                         runCatching { discovery.syncChunksForNote(committed) }
-                        session.draft = session.draft.copy(baseRevision = maxOf(session.draft.baseRevision, committed.revision))
-                        session.committedSeq = maxOf(session.committedSeq, sequence)
+                        session.acknowledgeCommit(committed, sequence)
                         didCommit = true
                     }
                     sequence > session.checkpointSeq -> {
@@ -1326,12 +1348,11 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 }
                 if (!discard && didCommit) {
                     commitSessionExtras(session)
-                    session.syncAfterExternalCommit(session.draft.baseRevision)
                     WidgetUpdater.requestRefreshAll(getApplication())
                 }
             }
-            val editedDuringCommit = !discard &&
-                session.blocks.map { it.id to it.text.text.toString() } != preCommitEditableSnapshot
+            val editedDuringCommit = !discard && session.sequenceFor(session.document()) >
+                maxOf(session.checkpointSeq, session.committedSeq)
             if (editedDuringCommit) {
                 if (editor === session) watch(session)
                 false
@@ -1367,8 +1388,11 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
         val app = getApplication<Application>()
         val zoneId = ZoneId.systemDefault()
-        for (block in session.blocks) {
-            if (!block.pendingScheduleChanged || block.type != "checkbox") continue
+        for (block in session.blocks.toList()) {
+            if (!block.pendingScheduleChanged || block.type != "checkbox" ||
+                session.syncedDocumentBlocks[block.id]?.type != "checkbox" ||
+                session.blocks.none { it === block }
+            ) continue
             val result = if (block.dueDate != null || block.pendingReminderTime != null) {
                 repository.setTaskSchedule(
                     noteId = session.draft.noteId,
@@ -1383,8 +1407,9 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 repository.clearTaskSchedule(session.draft.noteId, block.id)
             }
             ReminderScheduler.syncScheduleResult(app, result)
-            applyScheduleResultToBlock(block, result)
-            session.syncAfterExternalCommit(result.note.revision)
+            session.blocks.firstOrNull { it.id == block.id && it.type == "checkbox" }
+                ?.let { applyScheduleResultToBlock(it, result) }
+            session.acknowledgeCommit(result.note)
         }
         saveDraftExtras(session)
     }
@@ -1454,8 +1479,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         if (document.hasContent && sequence > session.committedSeq) {
                             val committed = repository.commit(encode(session, document, sequence))
                             syncChunksAsync(committed)
-                            session.draft = session.draft.copy(baseRevision = committed.revision)
-                            session.committedSeq = maxOf(session.committedSeq, sequence)
+                            session.acknowledgeCommit(committed, sequence)
                             commitSessionExtras(session)
                         }
                         val noteRow = repository.loadNote(session.draft.noteId)
@@ -1478,7 +1502,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                 block.reminderLocalTime = result.reminder?.localTime
                                 block.recurrenceRule = result.reminder?.recurrenceEnum ?: block.recurrenceRule
                                 block.reminderPolicy = result.reminder?.policyEnum ?: block.reminderPolicy
-                                session.syncAfterExternalCommit(result.note.revision)
+                                session.acknowledgeCommit(result.note)
                                 session.status = result.advancedToDate?.let { next ->
                                     "已完成本次重复任务，已推进至 $next"
                                 } ?: "已保存到本机"
@@ -1526,8 +1550,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                     tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
                                 }
                                 syncChunksAsync(committed)
-                                session.draft = session.draft.copy(baseRevision = committed.revision)
-                                session.committedSeq = maxOf(session.committedSeq, sequence)
+                                session.acknowledgeCommit(committed, sequence)
                             }
                         }
                         val noteAfterCommit = repository.loadNote(session.draft.noteId)
@@ -1544,7 +1567,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                 recurrence = if (reminderTime != null) recurrence else RecurrenceRule.NONE,
                             )
                             applyScheduleResultToBlock(block, result)
-                            session.syncAfterExternalCommit(result.note.revision)
+                            session.acknowledgeCommit(result.note)
                             saveDraftExtras(session)
                             session.status = when {
                                 reminderTime != null && !ReminderScheduler.capability(app).notificationsEnabled ->
@@ -1601,8 +1624,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                                     tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
                                 }
                                 syncChunksAsync(committed)
-                                session.draft = session.draft.copy(baseRevision = committed.revision)
-                                session.committedSeq = maxOf(session.committedSeq, sequence)
+                                session.acknowledgeCommit(committed, sequence)
                             }
                         }
                         val noteRow = repository.loadNote(session.draft.noteId)
@@ -1612,7 +1634,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                         if (blockPersisted) {
                             val result = clearTaskSchedule(session.draft.noteId, block.id)
                             applyScheduleResultToBlock(block, result)
-                            session.syncAfterExternalCommit(result.note.revision)
+                            session.acknowledgeCommit(result.note)
                         } else {
                             block.dueDate = null
                             block.reminderId = null
@@ -1638,7 +1660,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
-    fun attachTagToSession(session: EditorSession, tagId: String) {
+    fun attachTagToSession(session: EditorSession, tagId: String, onAttached: () -> Unit = {}) {
         if (editor !== session || session.closing) return
         viewModelScope.launch {
             persistenceMutex.withLock {
@@ -1650,6 +1672,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     } else {
                         session.addPendingTag(tagId)
                     }
+                    onAttached()
                     refreshRecommendationsForSession(session, extraTagId = tagId)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -1660,7 +1683,12 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
-    fun createAndAttachTag(session: EditorSession, name: String, existingTagId: String? = null) {
+    fun createAndAttachTag(
+        session: EditorSession,
+        name: String,
+        existingTagId: String? = null,
+        onAttached: () -> Unit = {},
+    ) {
         if (editor !== session || session.closing) return
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
@@ -1675,6 +1703,7 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     } else {
                         session.addPendingTag(tagId)
                     }
+                    onAttached()
                     refreshRecommendationsForSession(session, extraTagId = tagId)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -3245,22 +3274,27 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                 val stateSnapshot = _cognitiveMapState.value
                 val (renames, snapshot) = withContext(Dispatchers.IO) {
                     val loadedRenames = cognitiveMapPreferences.loadRenames()
-                    val allNotes = database.notes().allNotes()
+                    val notesDao = database.notes()
                     val orgDao = database.organization()
-                    val allTags = orgDao.tags()
-                    val allNoteTags = orgDao.noteTags()
-                    val allLinks = orgDao.noteLinks()
-                    val built = withContext(Dispatchers.Default) {
-                        CognitiveMapEngine.buildMap(
-                            notes = allNotes,
-                            tags = allTags,
-                            noteTags = allNoteTags,
-                            links = allLinks,
-                            customClusterNames = loadedRenames,
-                            mode = stateSnapshot.mode,
-                            activeMonthFilter = stateSnapshot.activeMonthFilter,
-                            reclusterForMonth = stateSnapshot.reclusterForMonth,
+                    val candidates = notesDao.cognitiveMapCandidates()
+                    val tags = orgDao.tags()
+                    val noteTags = orgDao.noteTags()
+                    val links = orgDao.noteLinks()
+                    val input = withContext(Dispatchers.Default) {
+                        CognitiveMapEngine.prepareMap(
+                            candidates, tags, noteTags, links,
+                            stateSnapshot.activeMonthFilter, stateSnapshot.reclusterForMonth,
                         )
+                    }
+                    val texts = HashMap<String, String>(input.sampled.size)
+                    for (batch in input.sampled.map { it.id }.chunked(100)) {
+                        for (item in notesDao.cognitiveMapText(batch)) texts[item.id] = item.text
+                    }
+                    val built = withContext(Dispatchers.Default) {
+                        val job = currentCoroutineContext()
+                        CognitiveMapEngine.buildMap(input, texts, loadedRenames, stateSnapshot.mode) {
+                            job.ensureActive()
+                        }
                     }
                     loadedRenames to built
                 }
@@ -4888,8 +4922,8 @@ internal class NotesViewModel(application: Application) : AndroidViewModel(appli
                     tryMergeExternalUpdateAndRetryCommitLocked(session) ?: throw stale
                 }
                 runCatching { discovery.syncChunksForNote(committed) }
+                session.acknowledgeCommit(committed, sequence)
                 commitSessionExtras(session)
-                session.syncAfterExternalCommit(committed.revision)
             } else if (sequence > session.checkpointSeq && document.hasContent) {
                 repository.checkpoint(encode(session, document, sequence))
                 session.checkpointSeq = maxOf(session.checkpointSeq, sequence)

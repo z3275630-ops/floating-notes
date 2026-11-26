@@ -55,11 +55,7 @@ internal class ReminderReceiver : BroadcastReceiver() {
                         expectedOccurrenceId = expectedOccurrenceId,
                         expectedRevision = expectedRevision,
                         now = now,
-                    ) ?: run {
-                        AlarmPlaybackService.stopForReminder(appContext, reminderId)
-                        ReminderScheduler.cancelNotification(appContext, reminderId)
-                        return
-                    }
+                    ) ?: return
 
                     val health = ReminderScheduler.inspectAlarmHealth(appContext)
                     val strongEnabled = ReminderScheduler.isStrongAlarmEnabled(appContext)
@@ -103,7 +99,9 @@ internal class ReminderReceiver : BroadcastReceiver() {
                     }
 
                     if (notified) {
-                        repository.markReminderNotifiedOnTime(payload.reminder.id, now = now)
+                        repository.markReminderNotifiedOnTime(
+                            payload.reminder.id, now = now, expectedRevision = payload.reminder.revision,
+                        )
                     }
                 }
 
@@ -114,8 +112,6 @@ internal class ReminderReceiver : BroadcastReceiver() {
                     val occurrenceId = intent.getStringExtra(ReminderScheduler.EXTRA_OCCURRENCE_ID)
                     val expectedRevision = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_REVISION, -1L)
                         .takeIf { it > 0L }
-                    AlarmPlaybackService.stopForReminder(appContext, reminderId)
-                    reminderId?.let { ReminderScheduler.cancelNotification(appContext, it) }
                     val result = repository.completeFromNotification(
                         noteId = noteId,
                         blockId = blockId,
@@ -141,8 +137,6 @@ internal class ReminderReceiver : BroadcastReceiver() {
                         null
                     }
                     val snoozeMinutes = ReminderScheduler.resolveSnoozeMinutes(requestedSnooze)
-                    AlarmPlaybackService.stopForReminder(appContext, reminderId)
-                    ReminderScheduler.cancelNotification(appContext, reminderId)
                     val snoozed = repository.snoozeReminder(
                         reminderId = reminderId,
                         snoozeMinutes = snoozeMinutes,
@@ -151,16 +145,19 @@ internal class ReminderReceiver : BroadcastReceiver() {
                         expectedRevision = expectedRevision,
                     )
                     if (snoozed != null) {
+                        AlarmPlaybackService.stopForReminder(appContext, reminderId)
+                        ReminderScheduler.cancelNotification(appContext, reminderId)
                         ReminderScheduler.scheduleReminder(appContext, snoozed)
                     }
                 }
 
                 ReminderScheduler.ACTION_DISMISS_ALARM -> {
                     val reminderId = intent.getStringExtra(ReminderScheduler.EXTRA_REMINDER_ID)
-                    AlarmPlaybackService.stopForReminder(appContext, reminderId)
-                    reminderId?.let {
-                        ReminderScheduler.cancelNotification(appContext, it)
-                        repository.markReminderNotifiedOnTime(it, now = now)
+                    val expectedRevision = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_REVISION, -1L)
+                        .takeIf { it > 0L }
+                    if (reminderId != null && repository.markReminderNotifiedOnTime(reminderId, now, expectedRevision)) {
+                        AlarmPlaybackService.stopForReminder(appContext, reminderId)
+                        ReminderScheduler.cancelNotification(appContext, reminderId)
                     }
                 }
             }

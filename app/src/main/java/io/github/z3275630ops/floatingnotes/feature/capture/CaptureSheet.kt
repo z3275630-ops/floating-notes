@@ -12,7 +12,6 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -45,7 +44,6 @@ import androidx.compose.ui.unit.dp
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassBackdrop
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassSurface
 import io.github.z3275630ops.floatingnotes.ui.designsystem.GlassTier
-import io.github.z3275630ops.floatingnotes.ui.designsystem.MintIcons
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -102,11 +100,13 @@ internal fun BoxScope.CaptureSheet(
     onDragStart: () -> Unit,
     title: String = "快速记录",
     dismissLabel: String = "关闭",
-    fullScreen: Boolean = false,
     autoFocus: Boolean = false,
+    dismissOnBack: Boolean = true,
     headerActions: (@Composable RowScope.() -> Unit)? = null,
+    pageHeader: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val fullScreen = pageHeader != null
     val dismiss by rememberUpdatedState(onDismiss)
     val dragClose by rememberUpdatedState(onDragClose)
     val dragStart by rememberUpdatedState(onDragStart)
@@ -137,7 +137,7 @@ internal fun BoxScope.CaptureSheet(
     }
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-        PredictiveBackHandler(enabled = open) { events ->
+        PredictiveBackHandler(enabled = open && dismissOnBack) { events ->
             motion.cancelSettle()
             val start = motion.progress
             try {
@@ -151,7 +151,7 @@ internal fun BoxScope.CaptureSheet(
             }
         }
     } else {
-        BackHandler(enabled = open) {
+        BackHandler(enabled = open && dismissOnBack) {
             motion.cancelSettle()
             dismissCleanly { dismiss() }
         }
@@ -194,7 +194,18 @@ internal fun BoxScope.CaptureSheet(
         .fillMaxWidth()
         .fillMaxHeight(heightFraction)
         .onSizeChanged { panelHeight = it.height }
-        .offset { IntOffset(0, ((1f - motion.progress) * (panelHeight + 32.dp.toPx())).roundToInt()) }
+        .then(
+            if (fullScreen) {
+                Modifier.graphicsLayer {
+                    alpha = motion.progress.coerceIn(0f, 1f)
+                    translationX = (1f - alpha) * 24.dp.toPx()
+                }
+            } else {
+                Modifier.offset {
+                    IntOffset(0, ((1f - motion.progress) * (panelHeight + 32.dp.toPx())).roundToInt())
+                }
+            },
+        )
 
     val panelBody: @Composable BoxScope.() -> Unit = {
         Column(
@@ -265,55 +276,8 @@ internal fun BoxScope.CaptureSheet(
             } else {
                 Spacer(Modifier.height(4.dp))
             }
-            if (fullScreen) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .defaultMinSize(minHeight = 48.dp)
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = 48.dp)
-                            .clip(RoundedCornerShape(50))
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                role = Role.Button,
-                                onClick = { dismissCleanly { dismiss() } },
-                            )
-                            .padding(horizontal = 6.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Icon(
-                            imageVector = MintIcons.Back,
-                            contentDescription = null,
-                            tint = scheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text(
-                            text = dismissLabel,
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                            color = scheme.onSurfaceVariant,
-                        )
-                    }
-                    if (title.isNotBlank()) {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = scheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                    } else {
-                        Spacer(Modifier.weight(1f))
-                    }
-                    headerActions?.invoke(this)
-                }
+            if (pageHeader != null) {
+                pageHeader()
             } else {
                 Box(
                     modifier = Modifier
@@ -371,8 +335,8 @@ internal fun BoxScope.CaptureSheet(
     }
 
     if (fullScreen) {
-        val editorPaper = if (dark) Color(0xFF121214) else Color.White
-        Box(modifier = panelModifier.background(editorPaper)) {
+        val editorPaper = if (dark) Color(0xFF171816) else Color(0xFFFCFBF8)
+        Box(modifier = panelModifier.background(editorPaper).testTag("note-page")) {
             Box(
                 modifier = Modifier
                     .matchParentSize()

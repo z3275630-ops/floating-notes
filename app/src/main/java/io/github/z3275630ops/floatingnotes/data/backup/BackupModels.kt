@@ -108,6 +108,7 @@ internal data class BackupDraftRecord(
     val updatedAt: String,
     val sourceType: String,
     val sourceUrl: String?,
+    val extrasJson: String? = null,
 )
 
 internal data class BackupTagRecord(

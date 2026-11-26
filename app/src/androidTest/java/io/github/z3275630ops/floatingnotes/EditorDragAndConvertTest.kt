@@ -3,6 +3,10 @@ package io.github.z3275630ops.floatingnotes
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +26,9 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.withKeyDown
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
@@ -33,7 +40,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextInputSelection
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.text.TextLayoutResult
@@ -45,6 +54,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.github.z3275630ops.floatingnotes.core.model.NoteBlock
 import io.github.z3275630ops.floatingnotes.core.model.NoteDocument
 import io.github.z3275630ops.floatingnotes.data.local.DraftEntity
+import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
+import io.github.z3275630ops.floatingnotes.data.local.TagEntity
 import io.github.z3275630ops.floatingnotes.feature.capture.EditorBlock
 import io.github.z3275630ops.floatingnotes.feature.capture.EditorSession
 import io.github.z3275630ops.floatingnotes.feature.capture.NoteEditor
@@ -293,6 +304,226 @@ class EditorDragAndConvertTest {
         assertTrue(second.center.y in selected.top..selected.bottom)
     }
 
+    @Test
+    fun composingTextStaysTransientAndCommittedChineseUndoesAsOneEdit() {
+        val session = openEditor("甲乙")
+        editor(0).performTouchInput { click() }
+        editor(0).performTextInputSelection(TextRange(1))
+        fun connection(view: View): InputConnection? =
+            view.onCreateInputConnection(EditorInfo()) ?: (view as? ViewGroup)?.let { group ->
+                (0 until group.childCount).firstNotNullOfOrNull { connection(group.getChildAt(it)) }
+            }
+        val input = compose.runOnIdle {
+            requireNotNull(connection(compose.activity.window.decorView))
+        }
+        compose.runOnIdle { assertTrue(input.setComposingText("ni", 1)) }
+        editor(0).assertTextContains("甲ni乙")
+        compose.runOnIdle { assertEquals("甲乙", session.document().text) }
+        compose.onNodeWithContentDescription("撤销").assertIsNotEnabled()
+        compose.runOnIdle { assertTrue(input.commitText("你", 1)) }
+        compose.runOnIdle { assertEquals("甲你乙", session.document().text) }
+        compose.onNodeWithContentDescription("撤销").performClick()
+        compose.runOnIdle { assertEquals("甲乙", session.document().text) }
+        compose.onNodeWithContentDescription("重做").performClick()
+        compose.runOnIdle { assertEquals("甲你乙", session.document().text) }
+    }
+
+    @Test
+    fun multilineCommitCreatesIndependentParagraphsAndUndoesAsOneChange() {
+        val session = openEditor("甲尾", "另外一段")
+        val original = compose.runOnIdle { session.document().blocks.first().id }
+        editor(0).performTouchInput { click() }
+        editor(0).performTextInputSelection(TextRange(1))
+        editor(0).performTextInput("一\r\n二\n三")
+        compose.runOnIdle {
+            val blocks = session.document().blocks
+            assertEquals(listOf("甲一", "二", "三尾", "另外一段"), blocks.map { it.text })
+            assertEquals(original, blocks.first().id)
+        }
+        editor(2).assertIsFocused()
+        editor(2).assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(1)))
+        compose.onNodeWithContentDescription("撤销").performClick()
+        compose.runOnIdle { assertEquals(listOf("甲尾", "另外一段"), session.document().blocks.map { it.text }) }
+    }
+
+    @Test
+    fun inlineReferenceIsInsertedAfterTheParagraphThatContainsTheTrigger() {
+        val target = NoteEntity(
+            id = "inline-target", title = "目标笔记", documentJson = NoteDocument.empty().encode(),
+            searchText = "目标笔记", sourceType = "manual", sourceUrl = null,
+            createdAt = Instant.EPOCH.toString(), updatedAt = Instant.EPOCH.toString(), revision = 1,
+            contentHash = "", lastDraftId = "", committedSeq = 0,
+        )
+        val session = openEditor(
+            NoteDocument(listOf(NoteBlock.paragraph("开头 "), NoteBlock.paragraph("后面的正文"))),
+            candidates = listOf(target),
+        )
+        editor(0).performTouchInput { click() }
+        editor(0).performTextInputSelection(TextRange(3))
+        editor(0).performTextInput("@目标")
+        compose.onNodeWithText("目标笔记").performClick()
+        compose.runOnIdle {
+            val blocks = session.document().blocks
+            assertEquals("开头 ", blocks.first().text)
+            assertEquals(target.id, blocks[1].referenceTarget)
+            assertEquals("后面的正文", blocks[2].text)
+        }
+    }
+
+    @Test
+    fun horizontalArrowKeysMoveThroughTextAndAcrossAdjacentParagraphs() {
+        openEditor(NoteDocument(listOf(
+            NoteBlock.paragraph("甲乙丙"),
+            NoteBlock.divider(),
+            NoteBlock.paragraph("丁戊己"),
+        )))
+        val first = editor(0)
+        val next = editor(2)
+        first.performTouchInput { click() }
+        first.performTextInputSelection(TextRange(1))
+        first.performKeyInput { pressKey(Key.DirectionLeft) }
+        first.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(0)))
+        first.performKeyInput { pressKey(Key.DirectionRight) }
+        first.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(1)))
+        first.performTextInputSelection(TextRange(3))
+        first.performKeyInput { pressKey(Key.DirectionRight) }
+        next.assertIsFocused()
+        next.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(0)))
+        next.performKeyInput { pressKey(Key.DirectionLeft) }
+        first.assertIsFocused()
+        first.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(3)))
+    }
+
+    @Test
+    fun tappingAndDraggingMoveCaretInBothDirectionsWithParagraphControlsVisible() {
+        openEditor("甲乙丙丁戊己庚辛")
+        val field = editor(0)
+        field.performTouchInput { click() }
+        val layouts = mutableListOf<TextLayoutResult>()
+        field.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        val row = compose.onNodeWithTag("editor-block-row-0")
+        val origin = field.fetchSemanticsNode().boundsInRoot.topLeft - row.fetchSemanticsNode().boundsInRoot.topLeft
+        for (offset in listOf(1, 5, 2)) {
+            val x = layout.getCursorRect(offset).left + 4f
+            row.performTouchInput { click(Offset(origin.x + x, origin.y + layout.getLineBottom(0) / 2f)) }
+            field.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(offset)))
+        }
+        val handle = compose.onNode(SemanticsMatcher("native cursor handle") { node ->
+            node.config.any { it.key.name == "SelectionHandleInfo" && it.value.toString().contains("handle=Cursor") }
+        }, useUnmergedTree = true)
+        val distance = layout.getCursorRect(6).left - layout.getCursorRect(2).left
+        handle.performTouchInput {
+            down(center)
+            moveTo(center + Offset(distance, 0f), delayMillis = 120)
+            up()
+        }
+        val afterRight = field.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange].end
+        assertTrue("Dragging right should advance the caret", afterRight > 2)
+        handle.performTouchInput {
+            down(center)
+            moveTo(center - Offset(distance, 0f), delayMillis = 120)
+            up()
+        }
+        val afterLeft = field.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange].end
+        assertTrue("Dragging left should move the caret back", afterLeft < afterRight)
+    }
+
+    @Test
+    fun externalKeyboardUndoAndRedoRestoreParagraphStructure() {
+        val session = openEditor("甲乙")
+        editor(0).performTouchInput { click() }
+        editor(0).performTextInputSelection(TextRange(1))
+        editor(0).performKeyInput { pressKey(Key.Enter) }
+        editor(1).assertIsFocused()
+        editor(1).performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.Z) } }
+        compose.runOnIdle { assertEquals(listOf("甲乙"), session.document().blocks.map { it.text }) }
+        editor(0).assertIsFocused()
+        editor(0).performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.Y) } }
+        compose.runOnIdle { assertEquals(listOf("甲", "乙"), session.document().blocks.map { it.text }) }
+    }
+
+    @Test
+    fun reversibleSwipeAndSweepKeepParagraphWrappingStable() {
+        val document = NoteDocument(listOf(
+            NoteBlock.paragraph("这是一段刚好接近边界并换行的正文。".repeat(2)),
+            NoteBlock.paragraph("第二段"),
+            NoteBlock.paragraph("第三段"),
+        ))
+        openEditor(document)
+        val width = fieldBounds(0).width
+        val lines = fieldLineCount(0)
+        editor(0).performTouchInput {
+            val start = Offset(this.width * 0.25f, centerY)
+            down(start)
+            moveTo(Offset(this.width * 0.78f, centerY), delayMillis = 60)
+            moveTo(start, delayMillis = 60)
+            up()
+        }
+        compose.onNodeWithTag("block-selection-banner").assertDoesNotExist()
+        editor(0).performTouchInput {
+            down(Offset(this.width * 0.78f, centerY))
+            moveTo(Offset(this.width * 0.23f, centerY), delayMillis = 90)
+            up()
+        }
+        compose.onNodeWithText("已选择 1 段").assertIsDisplayed()
+        assertEquals(width, fieldBounds(0).width, 0.5f)
+        assertEquals(lines, fieldLineCount(0))
+        val unchecked = compose.onAllNodesWithContentDescription("选择该段")
+        val next = unchecked[1].fetchSemanticsNode().boundsInRoot.center
+        val origin = unchecked[0].fetchSemanticsNode().boundsInRoot
+        unchecked[0].performTouchInput {
+            down(center)
+            moveTo(next - origin.topLeft, delayMillis = 100)
+            up()
+        }
+        compose.onNodeWithText("已选择 3 段").assertIsDisplayed()
+    }
+
+    @Test
+    fun undoAfterManualKeyboardDismissDoesNotReclaimFocus() {
+        val session = openEditor("甲")
+        editor(0).performTouchInput { click() }
+        editor(0).performTextReplacement("甲乙")
+        hideKeyboard()
+        editor(0).assertIsNotFocused()
+        compose.onNodeWithContentDescription("撤销").performClick()
+        compose.runOnIdle { assertEquals("甲", session.document().text) }
+        editor(0).assertIsNotFocused()
+        compose.onNodeWithTag("editor-blank-canvas").performClick()
+        editor(1).assertIsFocused()
+    }
+
+    @Test
+    fun rejectedTagAndReferenceActionsLeaveTriggerTextIntact() {
+        val target = NoteEntity(
+            "other", "目标引用", NoteDocument.empty().encode(), "",
+            sourceType = "manual", sourceUrl = null,
+            createdAt = Instant.EPOCH.toString(), updatedAt = Instant.EPOCH.toString(),
+            revision = 1, contentHash = "", lastDraftId = "", committedSeq = 0,
+        )
+        val session = openEditor(
+            NoteDocument.empty(), candidates = listOf(target),
+            tags = listOf(TagEntity("tag", "", "Ａ项目", "a项目")),
+        )
+        editor(0).performTouchInput { click() }
+        editor(0).performTextReplacement("#A项目")
+        compose.onNodeWithText("创建 #A项目").assertDoesNotExist()
+        compose.onNodeWithText("#Ａ项目").performClick()
+        editor(0).assertTextContains("#A项目")
+
+        editor(0).performTextReplacement("@目标")
+        compose.runOnIdle { session.writing = true }
+        compose.onNodeWithText("目标引用").performClick()
+        editor(0).assertTextContains("@目标")
+        compose.runOnIdle { session.writing = false }
+        compose.onNodeWithText("目标引用").performClick()
+        compose.runOnIdle {
+            assertTrue(session.document().blocks.any { it.referenceTarget == "other" })
+            assertEquals("", session.document().blocks.first().text)
+        }
+    }
+
     private fun openEditor(vararg lines: String): EditorSession =
         openEditor(NoteDocument(lines.map { NoteBlock.paragraph(it) }))
 
@@ -300,6 +531,8 @@ class EditorDragAndConvertTest {
         document: NoteDocument,
         onSave: (() -> Unit)? = null,
         attachToModel: Boolean = false,
+        candidates: List<NoteEntity> = emptyList(),
+        tags: List<TagEntity> = emptyList(),
     ): EditorSession {
         val id = UUID.randomUUID().toString()
         val draft = DraftEntity(
@@ -334,7 +567,10 @@ class EditorDragAndConvertTest {
             MaterialTheme {
                 Column(Modifier.fillMaxSize().imePadding()) {
                     if (onSave != null) TextButton(onClick = onSave) { Text("保存") }
-                    NoteEditor(session = session, model = model, onSave = onSave ?: {}, onDiscard = {})
+                    NoteEditor(
+                        session = session, model = model, onSave = onSave ?: {}, onDiscard = {},
+                        notes = candidates, tags = tags,
+                    )
                 }
             }
         }

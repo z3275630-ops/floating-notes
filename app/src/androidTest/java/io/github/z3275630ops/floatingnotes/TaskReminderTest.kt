@@ -295,13 +295,15 @@ class TaskReminderTest {
                 zoneId = shanghai,
             )
             val reminder = schedule.reminder!!
+            fun action(actionName: String, row: io.github.z3275630ops.floatingnotes.data.local.ReminderEntity) =
+                ReminderScheduler.actionIntent(appContext, actionName, row.id, row.noteId, row.blockId, row.occurrenceId, row.revision)
 
             val snoozeAt = Instant.parse("2026-11-20T02:00:00Z")
+            assertTrue(repo.markReminderNotifiedOnTime(reminder.id, snoozeAt, reminder.revision))
+            assertEquals(reminder.revision, db.taskReminders().reminder(reminder.id)!!.revision)
             ReminderReceiver.handleIntent(
                 appContext = appContext,
-                intent = Intent(ReminderScheduler.ACTION_SNOOZE_TASK)
-                    .putExtra(ReminderScheduler.EXTRA_REMINDER_ID, reminder.id)
-                    .putExtra(ReminderScheduler.EXTRA_OCCURRENCE_ID, reminder.occurrenceId),
+                intent = action(ReminderScheduler.ACTION_SNOOZE_TASK, reminder),
                 repository = repo,
                 zoneId = shanghai,
                 now = snoozeAt,
@@ -310,13 +312,13 @@ class TaskReminderTest {
             assertEquals(snoozeAt.plusSeconds(15 * 60L).toEpochMilli(), snoozed.snoozedUntilMs)
             assertEquals(ReminderStatus.ACTIVE.name, snoozed.status)
 
+            val oldComplete = action(ReminderScheduler.ACTION_COMPLETE_TASK, reminder)
+            ReminderReceiver.handleIntent(appContext, oldComplete, repo, shanghai, now = snoozeAt)
+            assertEquals(ReminderStatus.ACTIVE.name, db.taskReminders().reminder(reminder.id)!!.status)
+            assertTrue(repo.markReminderNotifiedOnTime(snoozed.id, snoozeAt.plusSeconds(900L), snoozed.revision))
             ReminderReceiver.handleIntent(
                 appContext = appContext,
-                intent = Intent(ReminderScheduler.ACTION_COMPLETE_TASK)
-                    .putExtra(ReminderScheduler.EXTRA_NOTE_ID, note.id)
-                    .putExtra(ReminderScheduler.EXTRA_BLOCK_ID, cb.id)
-                    .putExtra(ReminderScheduler.EXTRA_REMINDER_ID, reminder.id)
-                    .putExtra(ReminderScheduler.EXTRA_OCCURRENCE_ID, reminder.occurrenceId),
+                intent = action(ReminderScheduler.ACTION_COMPLETE_TASK, snoozed),
                 repository = repo,
                 zoneId = shanghai,
                 now = snoozeAt.plusSeconds(60L),

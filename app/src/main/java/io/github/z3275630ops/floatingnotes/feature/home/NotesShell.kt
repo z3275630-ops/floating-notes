@@ -45,6 +45,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.HapticFeedbackConstantsCompat
+import androidx.core.view.ViewCompat
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -164,6 +167,7 @@ internal fun NotesShell(
         var recordFilter by rememberSaveable { mutableStateOf(RecordFilter.All) }
         var showTasksOverlay by rememberSaveable { mutableStateOf(initialStartOnTasks && tasksOverlay != null) }
         var requestedNoteId by rememberSaveable { mutableStateOf<String?>(null) }
+        var writingNoteId by rememberSaveable { mutableStateOf<String?>(null) }
         var requestedCaptureSlot by rememberSaveable { mutableStateOf<String?>(null) }
         var open by rememberSaveable { mutableStateOf(false) }
         var showArchive by rememberSaveable { mutableStateOf(false) }
@@ -342,6 +346,7 @@ internal fun NotesShell(
     var samples by remember { mutableStateOf(emptyList<String>()) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
+    val view = LocalView.current
     var hadEditorSession by remember { mutableStateOf(model.editor != null) }
     var switchingNote by remember { mutableStateOf(false) }
 
@@ -372,6 +377,7 @@ internal fun NotesShell(
                 keyboard?.hide()
                 focus.clearFocus()
                 requestedNoteId = null
+                writingNoteId = null
                 requestedCaptureSlot = null
                 quickCaptureDismissPrompt = false
                 suppressNextAutoFocus = false
@@ -399,6 +405,7 @@ internal fun NotesShell(
             try {
                 if (model.openNote(noteId, captureSlot, focusBlockId)) {
                     requestedNoteId = noteId
+                    writingNoteId = null
                     requestedCaptureSlot = captureSlot
                     quickCaptureDismissPrompt = false
                     suppressNextAutoFocus = startVoice
@@ -439,6 +446,7 @@ internal fun NotesShell(
                 keyboard?.hide()
                 focus.clearFocus()
                 requestedNoteId = null
+                writingNoteId = null
                 requestedCaptureSlot = null
                 quickCaptureDismissPrompt = false
                 suppressNextAutoFocus = false
@@ -446,6 +454,18 @@ internal fun NotesShell(
                 if (velocity == null) motion.settle(false) else motion.settle(false, velocity)
             } else if (open) {
                 motion.settle(true)
+            }
+        }
+    }
+
+    fun finishWriting() {
+        val session = model.editor ?: return
+        scope.launch(Dispatchers.Main.immediate) {
+            if (model.saveOpenNote(session)) {
+                keyboard?.hide()
+                focus.clearFocus(force = true)
+                writingNoteId = null
+                ViewCompat.performHapticFeedback(view, HapticFeedbackConstantsCompat.CONFIRM)
             }
         }
     }
@@ -1584,6 +1604,8 @@ internal fun NotesShell(
             ) {
                 val session = model.editor
                 val editingExisting = session?.existingNote == true
+                val writing = editingExisting && writingNoteId == session?.draft?.noteId
+                BackHandler(enabled = open && writing) { finishWriting() }
                 val activeNote = session?.draft?.noteId?.let { id -> notes.firstOrNull { it.id == id } }
                 val undoHandle = if (session != null && editingExisting) {
                     key(session.draft.id) { rememberEditorUndoHandle() }
@@ -1605,101 +1627,118 @@ internal fun NotesShell(
                     onDragClose = { close(it) },
                     onDragStart = { open = true },
                     title = if (editingExisting) "" else "快速记录",
-                    dismissLabel = if (editingExisting) "关闭" else "取消",
-                    fullScreen = editingExisting,
+                    dismissLabel = "取消",
+                    dismissOnBack = !writing,
                     autoFocus = open && session != null && !editingExisting && !suppressNextAutoFocus,
-                    headerActions = if (editingExisting) {
+                    pageHeader = if (editingExisting) {
                         {
-                            EditorHeaderUndoRedoButtons(
-                                undoHandle = undoHandle,
-                                enabled = session?.closing != true,
-                            )
-                            if (activeNote != null) {
-                                var editorMenu by remember { mutableStateOf(false) }
-                                MintIconButton(
-                                    onClick = { model.pin(activeNote) },
-                                    contentDescription = if (activeNote.pinned) "取消置顶" else "置顶",
+                            Row(
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                                    .padding(horizontal = 12.dp)
+                                    .testTag(if (writing) "note-writing" else "note-reading"),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (!writing) MintIconButton(
+                                    onClick = { close() },
+                                    contentDescription = "返回",
+                                    icon = MintIcons.Back,
+                                    tint = scheme.onSurface,
+                                    containerColor = Color.Transparent,
                                     dark = dark,
-                                    icon = MintIcons.Pin,
-                                    tint = if (activeNote.pinned) mintTodoAccent(dark).fg else scheme.onSurfaceVariant,
-                                    containerColor = if (activeNote.pinned) {
-                                        mintTodoAccent(dark).bg
-                                    } else Color.Transparent,
+                                    modifier = Modifier.testTag("note-page-back"),
                                 )
-                                Box {
-                                    NoteMenuTrigger(
-                                        label = "更多编辑操作",
-                                        tag = "editor-note-actions",
-                                    ) { editorMenu = true }
-                                    ComposablesMenu(expanded = editorMenu, onDismiss = { editorMenu = false }) {
-                                        ComposablesMenuItem(
-                                            label = "版本历史",
-                                            icon = MintIcons.History,
-                                        ) {
-                                            editorMenu = false
-                                            model.openVersionHistory(activeNote.id)
-                                        }
-                                        ComposablesMenuItem(
-                                            label = "生成分享卡片",
-                                            icon = MintIcons.Share,
-                                        ) {
-                                            editorMenu = false
-                                            sharingNoteId = activeNote.id
-                                        }
-                                        ComposablesMenuItem(
-                                            label = if (activeNote.archivedAt == null) "归档" else "取消归档",
-                                            icon = MintIcons.Archive,
-                                        ) {
-                                            editorMenu = false
-                                            model.archive(activeNote)
-                                        }
-                                        ComposablesMenuItem(
-                                            label = "整理笔记",
-                                            icon = MintIcons.Folder,
-                                        ) {
-                                            editorMenu = false
-                                            organizeNote = activeNote.id
-                                        }
-                                        ComposablesMenuItem(
-                                            label = if (activeNote.aiPolicy == "exclude") "允许 AI 整理" else "不参与 AI 整理",
-                                            icon = MintIcons.Lock,
-                                        ) {
-                                            editorMenu = false
-                                            model.setNoteAiPolicy(
-                                                activeNote.id,
-                                                if (activeNote.aiPolicy == "exclude") "inherit" else "exclude",
-                                            )
-                                        }
-                                        ComposablesMenuItem(
-                                            label = "移到废纸篓",
-                                            icon = MintIcons.Trash,
-                                            destructive = true,
-                                        ) {
-                                            editorMenu = false
-                                            keyboard?.hide()
-                                            focus.clearFocus()
-                                            requestedNoteId = null
-                                            requestedCaptureSlot = null
-                                            open = false
-                                            motion.settle(false)
-                                            model.moveToTrash(activeNote)
+                                Spacer(Modifier.weight(1f))
+                                if (writing) EditorHeaderUndoRedoButtons(
+                                     undoHandle = undoHandle,
+                                     enabled = session?.closing != true,
+                                 )
+                                if (activeNote != null) {
+                                    var editorMenu by remember { mutableStateOf(false) }
+                                    Box {
+                                        NoteMenuTrigger(
+                                            label = "更多笔记操作",
+                                            tag = "editor-note-actions",
+                                        ) { editorMenu = true }
+                                        ComposablesMenu(expanded = editorMenu, onDismiss = { editorMenu = false }) {
+                                            ComposablesMenuItem(
+                                                label = if (activeNote.pinned) "取消置顶" else "置顶",
+                                                icon = MintIcons.Pin,
+                                            ) {
+                                                editorMenu = false
+                                                model.pin(activeNote)
+                                            }
+                                            ComposablesMenuItem(
+                                                label = "版本历史",
+                                                icon = MintIcons.History,
+                                            ) {
+                                                editorMenu = false
+                                                model.openVersionHistory(activeNote.id)
+                                            }
+                                            ComposablesMenuItem(
+                                                label = "生成分享卡片",
+                                                icon = MintIcons.Share,
+                                            ) {
+                                                editorMenu = false
+                                                sharingNoteId = activeNote.id
+                                            }
+                                            ComposablesMenuItem(
+                                                label = if (activeNote.archivedAt == null) "归档" else "取消归档",
+                                                icon = MintIcons.Archive,
+                                            ) {
+                                                editorMenu = false
+                                                model.archive(activeNote)
+                                            }
+                                            ComposablesMenuItem(
+                                                label = "整理笔记",
+                                                icon = MintIcons.Folder,
+                                            ) {
+                                                editorMenu = false
+                                                organizeNote = activeNote.id
+                                            }
+                                            ComposablesMenuItem(
+                                                label = if (activeNote.aiPolicy == "exclude") "允许 AI 整理" else "不参与 AI 整理",
+                                                icon = MintIcons.Lock,
+                                            ) {
+                                                editorMenu = false
+                                                model.setNoteAiPolicy(
+                                                    activeNote.id,
+                                                    if (activeNote.aiPolicy == "exclude") "inherit" else "exclude",
+                                                )
+                                            }
+                                            ComposablesMenuItem(
+                                                label = "移到废纸篓",
+                                                icon = MintIcons.Trash,
+                                                destructive = true,
+                                            ) {
+                                                editorMenu = false
+                                                keyboard?.hide()
+                                                focus.clearFocus()
+                                                requestedNoteId = null
+                                                writingNoteId = null
+                                                requestedCaptureSlot = null
+                                                open = false
+                                                motion.settle(false)
+                                                model.moveToTrash(activeNote)
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            TextButton(
-                                onClick = { close(save = true) },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                            ) {
-                                Text(
-                                    text = "完成",
-                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                                    color = scheme.primary,
+                                MintIconButton(
+                                    onClick = {
+                                        if (writing) finishWriting() else writingNoteId = session?.draft?.noteId
+                                    },
+                                    contentDescription = if (writing) "完成" else "编辑笔记",
+                                    icon = if (writing) MintIcons.Check else MintIcons.Compose,
+                                    tint = if (writing) scheme.onPrimary else scheme.primary,
+                                    containerColor = if (writing) scheme.primary else Color.Transparent,
+                                    dark = dark,
+                                    enabled = session?.closing != true && session?.writing != true,
+                                    modifier = Modifier.testTag(if (writing) "note-done" else "note-start-editing"),
                                 )
                             }
                         }
-                    } else if (session != null) {
+                    } else null,
+                    headerActions = if (!editingExisting && session != null) {
                         {
                             val canSave = session.document().hasContent
                             Box(
@@ -1738,7 +1777,7 @@ internal fun NotesShell(
                             NoteEditor(
                                 session = session,
                                 model = model,
-                                onSave = { close(save = true) },
+                                onSave = { if (editingExisting) finishWriting() else close(save = true) },
                                 onDiscard = { close(discard = true) },
                                 notes = notes,
                                 backlinks = notes.filter { it.id in sources },
@@ -1759,6 +1798,7 @@ internal fun NotesShell(
                                         try {
                                             if (model.openNote(id)) {
                                                 requestedNoteId = id
+                                                writingNoteId = null
                                                 requestedCaptureSlot = null
                                             } else if (model.editor == null) {
                                                 open = false
@@ -1786,6 +1826,8 @@ internal fun NotesShell(
                                     }
                                 },
                                 undoHandle = undoHandle,
+                                reading = editingExisting && !writing,
+                                onStartWriting = { writingNoteId = session.draft.noteId },
                             )
                         }
                     } else if (open) {

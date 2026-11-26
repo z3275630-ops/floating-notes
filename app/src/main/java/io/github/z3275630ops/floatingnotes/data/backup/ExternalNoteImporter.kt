@@ -69,6 +69,8 @@ internal data class ExternalImportCommitResult(
 internal object ExternalNoteImporter {
     private const val BATCH_SIZE = 500
     private const val MAX_IMPORT_PREVIEW_CHARS = 12_000_000
+    // Leave space in a default 2 MiB Android CursorWindow for other columns and row overhead.
+    private const val MAX_IMPORTED_ROW_BYTES = 1_750_000
     private const val MEDIA_WARNING = "含媒体附件未自动导入，需保留原备份文件夹"
     private val whitespace = Regex("""[\s\p{Z}]+""")
     private val heading = Regex(""" {0,3}#{1,6}[ \t]+(.+)""")
@@ -88,7 +90,7 @@ internal object ExternalNoteImporter {
     private val remoteTarget = Regex("""^(?:[a-z][a-z\d+.-]*://|//)""", RegexOption.IGNORE_CASE)
     private val attachmentDirectory = Regex("""(?:^|/)attachments/""", RegexOption.IGNORE_CASE)
     private val mediaExtensions = setOf("m4a", "mp3", "mp4", "webm", "ogg", "wav", "pdf", "bin")
-    private val url = Regex("""(?:[a-z][a-z\d+.-]*://|(?<![\w/])//|(?<![\w.])www\.)[^\s<>"“”‘’。，；！？、]+""", RegexOption.IGNORE_CASE)
+    private val url = Regex("""(?:(?<![a-z\d+.-])[a-z][a-z\d+.-]*+://|(?<![\w/])//|(?<![\w.])www\.)[^\s<>"“”‘’。，；！？、]+""", RegexOption.IGNORE_CASE)
     private val hashtag = Regex("""(?<![\p{L}\p{M}\p{N}_/#\\])#([\p{L}\p{M}\p{N}_-]+(?:/[\p{L}\p{M}\p{N}_-]+)*+)""")
     private val htmlToken = Regex(
         """<!--[\s\S]*?(?:-->|$)|<(script|style)\b[^>]*>[\s\S]*?(?:</\1\s*>|$)|<![^>]*>|<(/?)([a-z][a-z\d:-]*)\b((?:"[^"]*"|'[^']*'|[^"'<>]++)*+)>""",
@@ -193,10 +195,12 @@ internal object ExternalNoteImporter {
                     val updatedAt = parseInstant(note.updatedAtIso)?.toString() ?: now.toString().also {
                         warnings.add("部分笔记的更新时间无法识别，已使用导入时间")
                     }
+                    val documentJson = NoteDocument(note.blocks).encode()
+                    validateImportedRow(documentJson, note.searchText, note.title, note.sourceUrl)
                     NoteEntity(
                         id = newId(),
                         title = note.title,
-                        documentJson = NoteDocument(note.blocks).encode(),
+                        documentJson = documentJson,
                         searchText = note.searchText,
                         sourceType = note.sourceType,
                         sourceUrl = note.sourceUrl,
@@ -555,6 +559,8 @@ internal object ExternalNoteImporter {
                 block.copy(id = UUID.nameUUIDFromBytes(key.toByteArray(Charsets.UTF_8)).toString())
             }
             val document = NoteDocument(stableBlocks)
+            val documentJson = document.encode()
+            validateImportedRow(documentJson, document.text, title, sourceUrl)
             val createdAt = importDate(created, nowIso, nowIso, "创建")
             notes.add(
                 ParsedExternalNote(
@@ -562,7 +568,7 @@ internal object ExternalNoteImporter {
                     title = title,
                     blocks = stableBlocks,
                     searchText = document.text,
-                    contentHash = BackupCodec.sha256Hex(document.encode().toByteArray(Charsets.UTF_8)),
+                    contentHash = BackupCodec.sha256Hex(documentJson.toByteArray(Charsets.UTF_8)),
                     createdAtIso = createdAt,
                     updatedAtIso = importDate(updated, createdAt, nowIso, "更新"),
                     tagPaths = tags.mapNotNull(::cleanTagPath).distinctBy(::tagPathKey),
@@ -577,6 +583,15 @@ internal object ExternalNoteImporter {
             return parseInstant(raw)?.toString() ?: fallback.also {
                 warnings.add("部分笔记的${label}时间无法识别，已使用导入时间")
             }
+        }
+    }
+
+    private fun validateImportedRow(documentJson: String, searchText: String, title: String?, sourceUrl: String?) {
+        val bytes = listOfNotNull(documentJson, searchText, title, sourceUrl)
+            .sumOf { it.toByteArray(Charsets.UTF_8).size.toLong() }
+        if (bytes > MAX_IMPORTED_ROW_BYTES) {
+            val label = title?.take(60)?.takeIf { it.isNotBlank() } ?: "无标题笔记"
+            throw BackupValidationException("「$label」的单条笔记过大，请拆分后再导入")
         }
     }
 
@@ -663,8 +678,10 @@ internal object ExternalNoteImporter {
 
     private fun normalizeText(text: String): String = whitespace.replace(text, " ").trim().lowercase()
 
-    private fun inlineTags(text: String): List<String> =
-        hashtag.findAll(url.replace(text, " ")).map { it.groupValues[1] }.toList()
+    private fun inlineTags(text: String): List<String> {
+        if ('#' !in text) return emptyList()
+        return hashtag.findAll(url.replace(text, " ")).map { it.groupValues[1] }.toList()
+    }
 
     private fun cleanTagPath(path: String): String? {
         val segments = path.trim().removePrefix("#").split('/').map(String::trim)

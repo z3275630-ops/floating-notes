@@ -236,14 +236,15 @@ internal class NotesRepository(private val database: NotesDatabase) {
         val block = document.findBlock(blockId)?.takeIf { it.type == "checkbox" }
             ?: return@withTransaction TaskToggleResult.BlockNotFound
         val reminder = taskDao.reminderForBlock(noteId, blockId)
-        if (expectedReminderId != null && reminder != null && reminder.id != expectedReminderId) {
-            return@withTransaction TaskToggleResult.Updated(note, reminder)
+        if (expectedReminderId != null && (reminder?.id != expectedReminderId ||
+                reminder.statusEnum == ReminderStatus.CANCELLED ||
+                block.reminderId != expectedReminderId)
+        ) return@withTransaction TaskToggleResult.StaleReminder
+        if (expectedOccurrenceId != null && (block.occurrenceId ?: reminder?.occurrenceId) != expectedOccurrenceId) {
+            return@withTransaction TaskToggleResult.StaleReminder
         }
-        if (expectedOccurrenceId != null && block.occurrenceId != null && block.occurrenceId != expectedOccurrenceId) {
-            return@withTransaction TaskToggleResult.Updated(note, reminder)
-        }
-        if (expectedRevision != null && expectedRevision > 0L && reminder != null && reminder.revision != expectedRevision) {
-            return@withTransaction TaskToggleResult.Updated(note, reminder)
+        if (expectedRevision != null && expectedRevision > 0L && reminder?.revision != expectedRevision) {
+            return@withTransaction TaskToggleResult.StaleReminder
         }
         if (block.checked) {
             return@withTransaction TaskToggleResult.Updated(note, reminder)
@@ -664,17 +665,18 @@ internal class NotesRepository(private val database: NotesDatabase) {
         )
     }
 
-    suspend fun markReminderNotifiedOnTime(reminderId: String, now: Instant = Instant.now()) = database.withTransaction {
-        val reminder = taskDao.reminder(reminderId) ?: return@withTransaction
-        if (!reminder.missedSummarized && reminder.statusEnum == ReminderStatus.ACTIVE) {
-            taskDao.upsertReminder(
-                reminder.copy(
-                    missedSummarized = true,
-                    revision = reminder.revision + 1L,
-                    updatedAt = timestamp.format(now),
-                ),
-            )
+    suspend fun markReminderNotifiedOnTime(
+        reminderId: String,
+        now: Instant = Instant.now(),
+        expectedRevision: Long? = null,
+    ): Boolean = database.withTransaction {
+        val reminder = taskDao.reminder(reminderId) ?: return@withTransaction false
+        if (expectedRevision != null && reminder.revision != expectedRevision) return@withTransaction false
+        if (reminder.statusEnum != ReminderStatus.ACTIVE) return@withTransaction false
+        if (!reminder.missedSummarized) {
+            taskDao.upsertReminder(reminder.copy(missedSummarized = true, updatedAt = timestamp.format(now)))
         }
+        true
     }
 
     suspend fun rebuildTaskIndex() = database.withTransaction {

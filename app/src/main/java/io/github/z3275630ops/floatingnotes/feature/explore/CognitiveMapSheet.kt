@@ -115,6 +115,9 @@ private val DarkClusterColors = listOf(
 )
 
 @OptIn(ExperimentalLayoutApi::class)
+internal fun mapClusterLabelY(y: Float, height: Float, edge: Float): Float? =
+    if (height < edge * 2) null else y.coerceIn(edge, height - edge)
+
 @Composable
 internal fun CognitiveMapSheet(
     state: CognitiveMapUiState,
@@ -583,10 +586,13 @@ internal fun CognitiveMapSheet(
                                 val metrics = clusterLabelPaint.fontMetrics
                                 val baselineOffset = -(metrics.ascent + metrics.descent) / 2f
 
+                                val labelEdge = 18.dp.toPx()
                                 for (cluster in snapshot.clusters) {
                                     val anchor = toScreen(cluster.centerX, cluster.centerY)
-                                    val labelY = (anchor.y - cluster.radius * worldSize * zoom * 0.72f)
-                                        .coerceIn(18.dp.toPx(), size.height - 18.dp.toPx())
+                                    val labelY = mapClusterLabelY(
+                                        anchor.y - cluster.radius * worldSize * zoom * 0.72f,
+                                        size.height, labelEdge,
+                                    ) ?: break
                                     if (anchor.x !in -80f..(size.width + 80f) || labelY !in -40f..(size.height + 40f)) {
                                         continue
                                     }

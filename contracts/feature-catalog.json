@@ -31,7 +31,8 @@
       ],
       "evidence": [
         "docs/quality/T08-validation.md",
-        "docs/quality/T35-validation.md"
+        "docs/quality/T35-validation.md",
+        "docs/handoffs/2026-11-26-note-reading-and-editing.md"
       ]
     },
     {
@@ -67,7 +68,8 @@
       ],
       "evidence": [
         "docs/quality/T09-validation.md",
-        "docs/handoffs/2026-11-14-T13-ui-todos.md"
+        "docs/handoffs/2026-11-14-T13-ui-todos.md",
+        "docs/handoffs/2026-11-26-note-reading-and-editing.md"
       ]
     },
     {

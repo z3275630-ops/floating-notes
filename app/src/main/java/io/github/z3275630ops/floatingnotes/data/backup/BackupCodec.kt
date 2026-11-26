@@ -2,7 +2,6 @@ package io.github.z3275630ops.floatingnotes.data.backup
 
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
-import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
@@ -385,6 +384,7 @@ internal object BackupCodec {
     fun readAndValidateArchive(
         zipFile: File,
         attachmentStagingDir: File? = null,
+        recordStagingDir: File? = null,
     ): ParsedBackupArchive {
         if (!zipFile.isFile || zipFile.length() == 0L) {
             throw BackupValidationException("备份文件不存在或为空")
@@ -399,65 +399,52 @@ internal object BackupCodec {
                 val totalCounter = header.totalCounter
                 val notePaths = header.notePaths
 
-                val notes = ArrayList<BackupNoteRecord>(manifest.counts.notes.coerceAtLeast(0))
-                val seenNoteIds = HashSet<String>(manifest.counts.notes.coerceAtLeast(0))
-
-                if (manifest.backupSchemaVersion == 1) {
-                    for (notePath in notePaths) {
-                        val expected = manifest.files.getValue(notePath)
-                        val bytes = readAndVerifyEntry(zf, entriesByPath.getValue(notePath), expected, totalCounter)
-                        val record = parseNoteRecord(String(bytes, StandardCharsets.UTF_8))
-                        // Validate embedded document_json matches schema v1 cleanly.
+                val seenNoteIds = HashSet<String>()
+                val notes = BackupRecordBuffer(recordStagingDir, "notes", ::parseNoteRecord).use { records ->
+                    fun accept(raw: String, path: String) {
+                        val record = parseNoteRecord(raw)
                         VersionDiff.parseBlocks(record.documentJson)
-                        if (record.id.isBlank()) {
-                            throw BackupValidationException("笔记 ID 不能为空: $notePath")
-                        }
+                        if (record.id.isBlank()) throw BackupValidationException("笔记 ID 不能为空: $path")
                         if (!seenNoteIds.add(record.id)) {
                             throw BackupValidationException("备份包包含重复笔记 ID: ${record.id}")
                         }
-                        notes.add(record)
+                        records.add(raw, record)
                     }
-                } else {
-                    for (shardPath in notePaths) {
-                        val expected = manifest.files.getValue(shardPath)
-                        val shardNotes = readAndVerifyJsonLines(zf, entriesByPath.getValue(shardPath), expected, totalCounter) { obj ->
-                            parseNoteRecord(obj).also { record ->
-                                VersionDiff.parseBlocks(record.documentJson)
-                                if (record.id.isBlank()) {
-                                    throw BackupValidationException("笔记 ID 不能为空: $shardPath")
-                                }
-                                if (!seenNoteIds.add(record.id)) {
-                                    throw BackupValidationException("备份包包含重复笔记 ID: ${record.id}")
-                                }
-                            }
+                    for (path in notePaths) {
+                        val expected = manifest.files.getValue(path)
+                        val entry = entriesByPath.getValue(path)
+                        if (manifest.backupSchemaVersion == 1) {
+                            val raw = readAndVerifyEntry(zf, entry, expected, totalCounter, MAX_RECORD_BYTES)
+                            accept(String(raw, StandardCharsets.UTF_8), path)
+                        } else {
+                            streamAndVerifyJsonLines(zf, entry, expected, totalCounter) { accept(it, path) }
                         }
-                        notes.addAll(shardNotes)
                     }
+                    records.asList()
                 }
 
-                val versionsEntry = entriesByPath.getValue("metadata/versions.jsonl")
-                val versionsExpected = manifest.files.getValue("metadata/versions.jsonl")
-                val versions = readAndVerifyJsonLines(zf, versionsEntry, versionsExpected, totalCounter) { obj ->
-                    parseVersionRecord(obj).also { VersionDiff.parseBlocks(it.documentJson) }
-                }
-
-                val draftsEntry = entriesByPath.getValue("metadata/drafts.jsonl")
-                val draftsExpected = manifest.files.getValue("metadata/drafts.jsonl")
-                val drafts = readAndVerifyJsonLines(zf, draftsEntry, draftsExpected, totalCounter) { obj ->
-                    parseDraftRecord(obj).also { VersionDiff.parseBlocks(it.documentJson) }
-                }
+                val versions = readAndVerifyJsonLines(
+                    zf, entriesByPath.getValue("metadata/versions.jsonl"),
+                    manifest.files.getValue("metadata/versions.jsonl"), totalCounter, recordStagingDir, "versions",
+                    ::parseVersionRecord, { VersionDiff.parseBlocks(it.documentJson) },
+                )
+                val drafts = readAndVerifyJsonLines(
+                    zf, entriesByPath.getValue("metadata/drafts.jsonl"),
+                    manifest.files.getValue("metadata/drafts.jsonl"), totalCounter, recordStagingDir, "drafts",
+                    ::parseDraftRecord, { VersionDiff.parseBlocks(it.documentJson) },
+                )
 
                 val orgEntry = entriesByPath.getValue("metadata/organization.json")
                 val orgExpected = manifest.files.getValue("metadata/organization.json")
                 val orgMap = MiniJson.parseObject(
-                    String(readAndVerifyEntry(zf, orgEntry, orgExpected, totalCounter), StandardCharsets.UTF_8),
+                    String(readAndVerifyEntry(zf, orgEntry, orgExpected, totalCounter, MAX_METADATA_BYTES), StandardCharsets.UTF_8),
                 )
                 val (tags, notebooks, noteTags, notebookNotes, noteLinks, savedSearches) = parseOrganization(orgMap)
 
                 val tasksEntry = entriesByPath.getValue("metadata/tasks.json")
                 val tasksExpected = manifest.files.getValue("metadata/tasks.json")
                 val tasksMap = MiniJson.parseObject(
-                    String(readAndVerifyEntry(zf, tasksEntry, tasksExpected, totalCounter), StandardCharsets.UTF_8),
+                    String(readAndVerifyEntry(zf, tasksEntry, tasksExpected, totalCounter, MAX_METADATA_BYTES), StandardCharsets.UTF_8),
                 )
                 val (reminders, occurrences) = parseTasks(tasksMap)
 
@@ -554,6 +541,8 @@ internal object BackupCodec {
             throw BackupValidationException("备份压缩包已损坏或格式无效", err)
         } catch (err: IOException) {
             throw BackupValidationException("无法读取备份文件", err)
+        } catch (err: OutOfMemoryError) {
+            throw BackupValidationException("设备可用内存不足，无法读取这份备份", err)
         }
     }
 
@@ -860,8 +849,10 @@ internal object BackupCodec {
         entry: ZipEntry,
         expected: BackupFileChecksum,
         totalCounter: LongCounter,
+        maxBytes: Long = BackupConstants.MAX_ENTRY_BYTES,
     ): ByteArray {
-        val (bytes, sha256) = readEntryChecked(zipFile, entry, BackupConstants.MAX_ENTRY_BYTES, totalCounter)
+        if (expected.bytes > maxBytes) throw BackupValidationException("备份记录过大: ${entry.name}")
+        val (bytes, sha256) = readEntryChecked(zipFile, entry, maxBytes, totalCounter)
         if (bytes.size.toLong() != expected.bytes || !sha256.equals(expected.sha256, ignoreCase = true)) {
             throw BackupValidationException("备份条目校验失败: ${entry.name}")
         }
@@ -1033,21 +1024,76 @@ internal object BackupCodec {
         return count
     }
 
+    private const val MAX_RECORD_BYTES = 8L * 1024 * 1024
+    private const val MAX_METADATA_BYTES = 24L * 1024 * 1024
+
+    private class BackupRecordBuffer<T>(
+        directory: File?,
+        name: String,
+        private val decode: (String) -> T,
+    ) : java.io.Closeable {
+        private val file = directory?.let {
+            it.mkdirs()
+            File(it, "$name.records")
+        }
+        private val output = file?.let { java.io.DataOutputStream(it.outputStream().buffered()) }
+        private val offsets = ArrayList<Long>()
+        private val inMemory = ArrayList<T>()
+        private var position = 0L
+
+        fun add(raw: String, record: T) {
+            if (output == null) {
+                inMemory.add(record)
+                return
+            }
+            val bytes = raw.toByteArray(StandardCharsets.UTF_8)
+            if (bytes.size > MAX_RECORD_BYTES) throw BackupValidationException("单条备份记录过大")
+            offsets.add(position)
+            output.writeInt(bytes.size)
+            output.write(bytes)
+            position += Int.SIZE_BYTES + bytes.size.toLong()
+        }
+
+        fun asList(): List<T> {
+            val recordFile = file ?: return inMemory
+            return object : AbstractList<T>() {
+                override val size: Int get() = offsets.size
+                override fun get(index: Int): T = java.io.RandomAccessFile(recordFile, "r").use { input ->
+                    input.seek(offsets[index])
+                    val bytes = ByteArray(input.readInt())
+                    input.readFully(bytes)
+                    decode(String(bytes, StandardCharsets.UTF_8))
+                }
+            }
+        }
+
+        override fun close() {
+            output?.close()
+        }
+    }
+
     private fun <T> readAndVerifyJsonLines(
         zipFile: ZipFile,
         entry: ZipEntry,
         expected: BackupFileChecksum,
         totalCounter: LongCounter,
+        recordStagingDir: File?,
+        name: String,
         mapper: (Map<String, Any?>) -> T,
+        validate: (T) -> Unit,
     ): List<T> {
-        val records = ArrayList<T>()
-        streamAndVerifyJsonLines(zipFile, entry, expected, totalCounter) { line ->
-            records.add(mapper(MiniJson.parseObject(line)))
+        fun decode(line: String) = mapper(MiniJson.parseObject(line))
+        return BackupRecordBuffer(recordStagingDir, name, ::decode).use { records ->
+            streamAndVerifyJsonLines(zipFile, entry, expected, totalCounter) { line ->
+                val record = decode(line)
+                validate(record)
+                records.add(line, record)
+            }
+            records.asList()
         }
-        return records
     }
 
-    private inline fun streamAndVerifyJsonLines(
+    private fun streamAndVerifyJsonLines(
         zipFile: ZipFile,
         entry: ZipEntry,
         expected: BackupFileChecksum,
@@ -1082,12 +1128,29 @@ internal object BackupCodec {
 
             override fun close() = delegate.close()
         }
-        BufferedReader(InputStreamReader(checkedStream, StandardCharsets.UTF_8)).use { reader ->
-            while (true) {
-                val line = reader.readLine() ?: break
-                if (line.isBlank()) continue
-                onLine(line)
+        InputStreamReader(checkedStream, StandardCharsets.UTF_8).use { reader ->
+            val buffer = CharArray(BUFFER_SIZE)
+            val line = StringBuilder()
+            fun appendRange(start: Int, end: Int) {
+                if (line.length.toLong() + end - start > MAX_RECORD_BYTES) {
+                    throw BackupValidationException("单条备份记录过大: ${entry.name}")
+                }
+                line.append(buffer, start, end - start)
             }
+            while (true) {
+                val length = reader.read(buffer)
+                if (length < 0) break
+                var start = 0
+                for (index in 0 until length) {
+                    if (buffer[index] != '\n' && buffer[index] != '\r') continue
+                    appendRange(start, index)
+                    if (line.isNotBlank()) onLine(line.toString())
+                    line.setLength(0)
+                    start = index + 1
+                }
+                appendRange(start, length)
+            }
+            if (line.isNotBlank()) onLine(line.toString())
         }
         val sha = digest.digest().joinToString("") { "%02x".format(it) }
         if (entryBytes != expected.bytes || !sha.equals(expected.sha256, ignoreCase = true)) {
@@ -1184,7 +1247,7 @@ internal object BackupCodec {
         attachmentRefs = m.optString("attachment_refs") ?: "[]",
     )
 
-    private fun draftToJsonMap(d: BackupDraftRecord): Map<String, Any?> = linkedMapOf(
+    private fun draftToJsonMap(d: BackupDraftRecord): Map<String, Any?> = linkedMapOf<String, Any?>(
         "id" to d.id,
         "slot" to d.slot,
         "note_id" to d.noteId,
@@ -1194,7 +1257,9 @@ internal object BackupCodec {
         "updated_at" to d.updatedAt,
         "source_type" to d.sourceType,
         "source_url" to d.sourceUrl,
-    )
+    ).apply {
+        if (d.extrasJson != null) put("draft_extras_json", d.extrasJson)
+    }
 
     private fun parseDraftRecord(m: Map<String, Any?>): BackupDraftRecord = BackupDraftRecord(
         id = m.reqString("id"),
@@ -1206,6 +1271,7 @@ internal object BackupCodec {
         updatedAt = m.reqString("updated_at"),
         sourceType = m.optString("source_type") ?: "manual",
         sourceUrl = m.optString("source_url"),
+        extrasJson = m.optString("draft_extras_json")?.also { MiniJson.parseObject(it) },
     )
 
     private fun organizationToJsonMap(s: BackupSnapshot): Map<String, Any?> = linkedMapOf(

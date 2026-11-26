@@ -1,8 +1,16 @@
 # 项目实际状态
 
-更新时间：2026-11-25。规格版本 3.1。
+更新时间：2026-11-26。规格版本 3.1。
 
 ## 当前开发轮次
+
+- **GitHub 编辑器稳定基线（T08）**，完成多行粘贴拆段、回车选区格式、行内引用插入位置与录音转写撤销。荣耀 X10 共 114 项真机测试，JVM 158 项，全部通过。统一文档选区在独立的新内核试验中验证。见[本轮交接](docs/handoffs/2026-11-26-note-reading-and-editing.md)。
+
+- **T08 段间光标补修**，右方向键从段尾续到下一段，左方向键可回上一段。荣耀 X10 上 21 项编辑器回归通过，包含双向点选、拖光标和段间移动。见[本轮交接](docs/handoffs/2026-11-26-note-reading-and-editing.md)。
+
+- **T08（F01、F20）笔记阅读页与光标回归**，已有笔记先阅读，点击正文和页边落光标，完成保存后留在同一篇。收拢编辑工具，勾选、拖排和完成触感走系统设置。157 项 JVM 和荣耀 X10 的 110 项真机测试全部通过，Lint 0 错误。见[本轮交接](docs/handoffs/2026-11-26-note-reading-and-editing.md)。
+
+- **编辑器与数据审查修复**，在 `fix/editor-data-audit` 基于 `dba62f2` 完成 P0、P1、P2 共 17 项。修复范围覆盖保存竞态、v2 草稿与分片恢复、提醒版本、全文检索、导入和地图边界，以及编辑器候选输入、快捷撤销和手势。Room 保持 v8。157 项 JVM 测试和荣耀 X10 上 109 项真机测试全部通过，Lint 0 错误。见[修复交接](docs/handoffs/2026-11-26-editor-data-audit.md)。
 
 - **T08（F01、F20）编辑器拖排间距、焦点与复审修复**，依赖现有 T01/T07 编辑与持久化链路，在 `fix/editor-drag-keyboard-audit` 分支基于 `a9463fc` 完成并同步至 `main`：修复长按拖排后标题与正文间距骤变（连续正文统一 `3dp`，标题前后分别为 `7dp`、`6dp`，段尾控件显示前后保持文字宽度与行高一致，结束位移归零并在顶部重排保视口）、菜单无焦点化防键盘跳动与外层透明拦截防误触、撤销/重做正文保留待办独立排期、跨屏自动滚动预览跟手、外接键盘复选框/折叠按钮焦点兼容（触屏复位 `setInTouchMode(true)`）及收起键盘后按选中段落插入/多选。改动文件为 `EditorBlockEngine.kt`、`NoteEditor.kt`、`ComposablesMenu.kt`、`EditorDragAndFocusUnitTest.kt`、`EditorDragAndConvertTest.kt`，Room 仍保持 `SCHEMA_VERSION = 8`。
   - 全量验证（Windows 临时 `V:` + Android Studio JBR，最后一次修改后实测）：`python scripts/check_docs.py`（89 Markdown / 19 JSON / 20 features / 37 tasks）通过；`:app:testDebugUnitTest` **154/154 通过**（20 类，0 失败/0 跳过）；`:app:lintDebug` **0 错误通过**；荣耀 X10（`TEL-AN00a`，Android 10）`:app:connectedDebugAndroidTest` **101/101 通过**（0 失败/0 跳过），保留原笔记覆盖安装 `app-debug.apk` 并启动 `MainActivity` 存活无报错（`PID 20870`）。

@@ -160,8 +160,6 @@ class AlarmAlertActivity : ComponentActivity() {
         actionName: String,
         snoozeMinutes: Long? = null,
     ) {
-        AlarmPlaybackService.stopForReminder(this, payload.reminderId)
-        ReminderScheduler.cancelNotification(this, payload.reminderId)
         val receiverIntent = ReminderScheduler.actionIntent(
             context = this,
             actionName = actionName,

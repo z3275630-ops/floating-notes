@@ -1,6 +1,20 @@
 package io.github.z3275630ops.floatingnotes
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextRange
+import org.junit.Assert.assertTrue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -37,6 +51,7 @@ class EditorSwipeSelectionTest {
         await(card)
         compose.onNode(card).performClick()
         await(hasTestTag("capture-editor"))
+        enterWriting()
         await(hasTestTag("editor-blank-canvas"))
 
         compose.onNodeWithTag("editor-blank-canvas").performClick()
@@ -44,7 +59,7 @@ class EditorSwipeSelectionTest {
         compose.onNodeWithTag("block-editor-1").performTextReplacement(secondLine)
         await(hasText("已保存到本机"))
 
-        compose.onNodeWithText("关闭").performClick()
+        finishWritingAndReturn()
         await(hasTestTag("saved-note") and hasText(secondLine, substring = true))
         moveCardToTrash(firstLine)
     }
@@ -65,6 +80,7 @@ class EditorSwipeSelectionTest {
         val card = hasTestTag("saved-note") and hasText(bodyLine, substring = true)
         await(card)
         compose.onNode(card).performClick()
+        enterWriting()
         await(hasTestTag("capture-editor"))
 
         compose.onNodeWithTag("capture-editor").performTouchInput {
@@ -85,9 +101,89 @@ class EditorSwipeSelectionTest {
             compose.onAllNodes(hasText("已选择 1 段")).fetchSemanticsNodes().isEmpty()
         }
 
-        compose.onNodeWithText("关闭").performClick()
+        finishWritingAndReturn()
         await(card)
         moveCardToTrash(bodyLine)
+    }
+
+    @Test
+    fun readingAndWritingUseTheParagraphUnderTheRightMargin() {
+        val first = "窗边记录-${UUID.randomUUID().toString().take(8)}"
+        val second = "把回信留给明天"
+        val wrapped = "今天沿着河边走了一会儿路旁的树开始变黄回家前记得买一束花"
+        compose.onNodeWithTag("new-note").performClick()
+        await(hasTestTag("capture-editor"))
+        compose.onNodeWithTag("capture-editor").performTextReplacement(first)
+        appendParagraph(1, second)
+        appendParagraph(2, wrapped)
+        compose.onNodeWithText("保存").performClick()
+
+        val card = hasTestTag("saved-note") and hasText(first, substring = true)
+        await(card)
+        compose.onNode(card).performClick()
+        await(hasTestTag("note-reading"))
+        compose.onNodeWithTag("capture-editor").assert(!isFocused())
+        compose.onNodeWithTag("note-done").assertDoesNotExist()
+        compose.onNodeWithContentDescription("更多插入").assertDoesNotExist()
+        compose.onNodeWithTag("editor-blank-canvas").performTouchInput { click() }
+        compose.onNodeWithTag("note-reading").assertIsDisplayed()
+
+        tapRightOfRow(1)
+        await(hasTestTag("note-writing"))
+        val secondField = compose.onNodeWithTag("block-editor-1")
+        secondField.assertIsFocused()
+        secondField.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(second.length)))
+        secondField.performTextInput("。")
+
+        val wrappedField = compose.onNodeWithTag("block-editor-2")
+        val layouts = mutableListOf<TextLayoutResult>()
+        wrappedField.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        assertTrue(layout.lineCount > 1)
+        val firstVisualLineEnd = layout.getLineEnd(0, visibleEnd = true)
+        val rowTop = compose.onNodeWithTag("editor-block-row-2").fetchSemanticsNode().boundsInRoot.top
+        val fieldTop = wrappedField.fetchSemanticsNode().boundsInRoot.top
+        tapRightOfRow(2, y = fieldTop - rowTop + (layout.getLineTop(0) + layout.getLineBottom(0)) / 2f)
+        wrappedField.assertIsFocused()
+        wrappedField.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(firstVisualLineEnd)))
+
+        compose.onNodeWithTag("note-done").performClick()
+        await(hasTestTag("note-reading"))
+        secondField.assertTextEquals("$second。")
+        secondField.assert(!isFocused())
+        compose.onNodeWithTag("note-done").assertDoesNotExist()
+        compose.onNodeWithTag("note-page-back").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("note-page")).fetchSemanticsNodes().isEmpty() }
+
+        compose.onNode(card).performClick()
+        await(hasTestTag("note-reading"))
+        secondField.assertTextEquals("$second。")
+        compose.onNodeWithTag("note-page-back").performClick()
+        moveCardToTrash(first)
+    }
+
+    private fun tapRightOfRow(index: Int, y: Float? = null) {
+        compose.onNodeWithTag("editor-block-row-$index").performTouchInput {
+            click(Offset(width - 6f, y ?: center.y))
+        }
+    }
+
+    private fun appendParagraph(index: Int, text: String) {
+        compose.onNodeWithTag("editor-blank-canvas").performClick()
+        await(hasTestTag("block-editor-$index"))
+        compose.onNodeWithTag("block-editor-$index").performTextReplacement(text)
+    }
+
+    private fun enterWriting() {
+        await(hasTestTag("note-start-editing"))
+        compose.onNodeWithTag("note-start-editing").performClick()
+        await(hasTestTag("note-writing"))
+    }
+
+    private fun finishWritingAndReturn() {
+        compose.onNodeWithTag("note-done").performClick()
+        await(hasTestTag("note-reading"))
+        compose.onNodeWithTag("note-page-back").performClick()
     }
 
     private fun moveCardToTrash(snippet: String) {

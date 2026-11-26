@@ -139,6 +139,18 @@ internal class SearchRepository(private val database: NotesDatabase) {
         if (trimmed.isEmpty()) return observe("", scope, limit)
         val fuzzyPoolLimit = maxOf(limit * 8, 2_000)
         return observe(trimmed, scope, limit)
+            .flatMapLatest { indexedMatches ->
+                if (indexedMatches.size >= limit ||
+                    NoteFtsTokenizer.buildFtsMatchQuery(trimmed) == null
+                ) {
+                    flowOf(indexedMatches)
+                } else {
+                    val literalQuery = buildSearchQuery("n.*", trimmed, scope, limit, requireFts = false)
+                    database.search().observe(literalQuery).map { literalMatches ->
+                        (indexedMatches + literalMatches).distinctBy { it.id }.take(limit)
+                    }
+                }
+            }
             .flatMapLatest { exactMatches ->
                 if (exactMatches.size >= limit) {
                     flowOf(exactMatches.take(limit))
@@ -226,6 +238,7 @@ private fun buildSearchQuery(
     keyword: String,
     scope: NoteScope,
     limit: Int,
+    requireFts: Boolean = true,
 ): SimpleSQLiteQuery {
     require(limit > 0)
     val bindings = mutableListOf<Any>()
@@ -268,7 +281,7 @@ private fun buildSearchQuery(
     if (scope.excludeTags.isNotEmpty()) conditions.add("NOT ${matchesTags(scope.excludeTags)}")
     val phrase = keyword.trim()
     if (phrase.isNotEmpty()) {
-        val ftsMatch = NoteFtsTokenizer.buildFtsMatchQuery(phrase)
+        val ftsMatch = if (requireFts) NoteFtsTokenizer.buildFtsMatchQuery(phrase) else null
         if (ftsMatch != null) {
             conditions.add("n.id IN (SELECT note_id FROM notes_fts WHERE notes_fts MATCH ${bind(ftsMatch)})")
         }

@@ -159,6 +159,7 @@ internal data class MissedReminderSummaryItem(
 internal sealed interface TaskToggleResult {
     data object NotFound : TaskToggleResult
     data object BlockNotFound : TaskToggleResult
+    data object StaleReminder : TaskToggleResult
     data class Updated(
         val note: NoteEntity,
         val reminder: ReminderEntity?,

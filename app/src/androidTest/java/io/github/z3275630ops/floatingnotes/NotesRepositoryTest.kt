@@ -10,6 +10,7 @@ import io.github.z3275630ops.floatingnotes.data.local.NotesDatabase
 import io.github.z3275630ops.floatingnotes.data.local.NotesRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import io.github.z3275630ops.floatingnotes.feature.capture.EditorSession
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
@@ -66,6 +67,32 @@ class NotesRepositoryTest {
             assertEquals("保留原文", repository.commit(draft).searchText)
         }
         Unit
+    }
+
+    @Test fun acknowledgingOlderWriteKeepsConcurrentEditorTextDirty() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        Room.inMemoryDatabaseBuilder(context, NotesDatabase::class.java).build().withClose { db ->
+            val repo = NotesRepository(db)
+            val paragraph = NoteBlock.paragraph("原文")
+            val seed = NoteDocument(listOf(paragraph))
+            val note = repo.commit(repo.newDraft("seed").copy(documentJson = seed.encode(), editSeq = 1L))
+            val session = EditorSession(repo.newDraft("note:${note.id}", note), seed, existingNote = true)
+            val field = session.blocks.single().text
+            field.edit { append(" A") }
+            val first = session.document()
+            val firstSeq = session.sequenceFor(first)
+            field.edit { append(" B") }
+
+            val saved = repo.commit(session.draft.copy(documentJson = first.encode(), editSeq = firstSeq))
+            session.acknowledgeCommit(saved, firstSeq)
+            assertEquals("原文 A", session.syncedDocumentBlocks.getValue(paragraph.id).text)
+            val latest = session.document()
+            val latestSeq = session.sequenceFor(latest)
+            assertTrue(latestSeq > session.committedSeq)
+            assertTrue(latestSeq > session.checkpointSeq)
+            repo.commit(session.draft.copy(documentJson = latest.encode(), editSeq = latestSeq))
+            assertEquals("原文 A B", NoteDocument.decode(repo.loadNote(note.id)!!.documentJson).text)
+        }
     }
 
     @Test fun delayedCheckpointCannotOverwriteNewerText() = runBlocking {

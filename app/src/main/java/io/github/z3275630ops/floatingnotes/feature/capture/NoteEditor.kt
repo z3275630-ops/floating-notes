@@ -8,19 +8,20 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -59,7 +60,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -75,17 +80,22 @@ import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.HapticFeedbackConstantsCompat
+import androidx.core.view.ViewCompat
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -100,6 +110,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -118,6 +129,7 @@ import io.github.z3275630ops.floatingnotes.core.model.safeUtf16Slice
 import io.github.z3275630ops.floatingnotes.data.discovery.EvidenceHit
 import io.github.z3275630ops.floatingnotes.data.discovery.LocalFuzzyMatcher
 import io.github.z3275630ops.floatingnotes.data.discovery.TagRecommendation
+import io.github.z3275630ops.floatingnotes.data.local.tagNameKey
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NotebookEntity
 import io.github.z3275630ops.floatingnotes.data.local.RecurrenceRule
@@ -126,6 +138,7 @@ import io.github.z3275630ops.floatingnotes.data.local.TagEntity
 import io.github.z3275630ops.floatingnotes.feature.explore.EdgeEchoPreviewSheet
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorEdgeEchoStrip
 import io.github.z3275630ops.floatingnotes.feature.explore.EditorRelatedNotesSheet
+import io.github.z3275630ops.floatingnotes.data.local.TaskItemProjection
 import io.github.z3275630ops.floatingnotes.feature.tasks.ReminderScheduler
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskRecurrence
 import io.github.z3275630ops.floatingnotes.feature.tasks.TaskScheduleModal
@@ -154,6 +167,7 @@ import io.github.z3275630ops.floatingnotes.ui.designsystem.mintSecondaryFill
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTertiaryTextColor
 import io.github.z3275630ops.floatingnotes.ui.designsystem.mintTodoAccent
 import io.github.z3275630ops.floatingnotes.ui.designsystem.rememberGlassBackdrop
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -235,8 +249,12 @@ internal fun ColumnScope.NoteEditor(
     isAiExcluded: Boolean = activeNote?.aiPolicy == "exclude",
     onToggleAiExcluded: (() -> Unit)? = null,
     undoHandle: EditorUndoHandle? = null,
+    reading: Boolean = false,
+    onStartWriting: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
+    val pageTextInset = if (session.existingNote) 24.dp else 20.dp
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -365,16 +383,32 @@ internal fun ColumnScope.NoteEditor(
         batchFormatSheetOpen = false
     }
 
+    LaunchedEffect(reading) {
+        if (reading) {
+            clearEditorFocus()
+            selectedControlBlockId = null
+            openBlockMenuId = null
+            moreInsertMenuOpen = false
+            formatPanelOpen = false
+            exitSelectionMode()
+        }
+    }
+
+    val isComposing = engine.isComposing(focusedBlockId, focusedIsToggleTitle)
+    val inputMode = LocalInputModeManager.current.inputMode
+    val keyboardVisible = WindowInsets.isImeVisible
+    val showKeyboardDismiss = keyboardVisible || !session.existingNote
+    val keepInputFocus = focusedBlockId != null && (keyboardVisible || inputMode != InputMode.Touch)
     val performUndoAction: () -> Unit = {
-        if (!session.closing) engine.performUndo(focusedBlockId, focusedIsToggleTitle)
+        if (!session.closing) engine.performUndo(focusedBlockId, focusedIsToggleTitle, keepInputFocus)
     }
     val performRedoAction: () -> Unit = {
-        if (!session.closing) engine.performRedo(focusedBlockId, focusedIsToggleTitle)
+        if (!session.closing) engine.performRedo(focusedBlockId, focusedIsToggleTitle, keepInputFocus)
     }
     SideEffect {
         undoHandle?.bind(
-            canUndo = engine.canUndo && !session.closing,
-            canRedo = engine.canRedo && !session.closing,
+            canUndo = engine.canUndo && !session.closing && !isComposing,
+            canRedo = engine.canRedo && !session.closing && !isComposing,
             onUndo = performUndoAction,
             onRedo = performRedoAction,
         )
@@ -408,7 +442,7 @@ internal fun ColumnScope.NoteEditor(
         EditorHeaderMetadata(
             activeNote = activeNote,
             notebook = notebooks.firstOrNull { it.id == noteNotebookId },
-            charCount = liveCharCount,
+            charCount = liveCharCount.takeUnless { reading },
             availableTags = availableTags,
             noteTagIds = noteTagIds,
             pendingTagIds = session.pendingTagIds,
@@ -416,9 +450,9 @@ internal fun ColumnScope.NoteEditor(
             dark = dark,
             isAiExcluded = isAiExcluded,
             onToggleAiExcluded = onToggleAiExcluded,
-            showInlineUndoRedo = undoHandle == null,
-            canUndo = engine.canUndo && !session.closing,
-            canRedo = engine.canRedo && !session.closing,
+            showInlineUndoRedo = undoHandle == null && !reading,
+            canUndo = engine.canUndo && !session.closing && !isComposing,
+            canRedo = engine.canRedo && !session.closing && !isComposing,
             onUndo = performUndoAction,
             onRedo = performRedoAction,
             onOpenOrganize = onOpenOrganize,
@@ -443,8 +477,8 @@ internal fun ColumnScope.NoteEditor(
                     modifier = Modifier.weight(1f),
                 )
                 InlineUndoRedoButtons(
-                    canUndo = engine.canUndo && !session.closing,
-                    canRedo = engine.canRedo && !session.closing,
+                    canUndo = engine.canUndo && !session.closing && !isComposing,
+                    canRedo = engine.canRedo && !session.closing && !isComposing,
                     onUndo = performUndoAction,
                     onRedo = performRedoAction,
                 )
@@ -547,7 +581,7 @@ internal fun ColumnScope.NoteEditor(
         moveToEnd: Boolean = false,
         cursorOffset: Int? = null,
         toggleTitle: Boolean = false,
-        showKeyboard: Boolean = false,
+        showKeyboard: Boolean = true,
     ) {
         val targetBlock = session.blocks.firstOrNull { it.id == targetId && it.editable } ?: return
         val docBlock = targetBlock.documentBlock()
@@ -571,14 +605,14 @@ internal fun ColumnScope.NoteEditor(
         engine.requestFocus(targetBlock.id, effectiveTitle, showKeyboard = showKeyboard)
     }
 
-    LaunchedEffect(session.focusBlockId) {
+    LaunchedEffect(session.focusBlockId, reading) {
         val targetId = session.focusBlockId ?: return@LaunchedEffect
         val targetBlock = session.blocks.firstOrNull { it.id == targetId }
         if (targetBlock == null) {
             session.focusBlockId = null
             return@LaunchedEffect
         }
-        if (targetBlock.editable) {
+        if (targetBlock.editable && !reading) {
             val doc = targetBlock.documentBlock()
             val focusTitle = doc.type == "toggle" && doc.collapsed
             val textLen = if (focusTitle) doc.title.length else doc.text.length
@@ -590,7 +624,8 @@ internal fun ColumnScope.NoteEditor(
         session.focusBlockId = null
     }
 
-    LaunchedEffect(engine.pendingFocus?.token) {
+    LaunchedEffect(engine.pendingFocus?.token, reading) {
+        if (reading) return@LaunchedEffect
         val req = engine.pendingFocus ?: return@LaunchedEffect
         try {
             if (session.closing || isSelectionMode) return@LaunchedEffect
@@ -609,7 +644,7 @@ internal fun ColumnScope.NoteEditor(
             repeat(14) {
                 if (engine.pendingFocus?.token != req.token || session.closing) return@LaunchedEffect
                 if (req.blockId in attached && requesters[req.blockId]?.requestFocus() == true) {
-                    keyboard?.show()
+                    if (req.showKeyboard) keyboard?.show()
                     focusBlockRequesters[req.blockId]?.bringIntoView()
                     return@LaunchedEffect
                 }
@@ -667,6 +702,8 @@ internal fun ColumnScope.NoteEditor(
     fun buildDragHandlers(blockId: String, sourceTopInRoot: () -> Float?): BlockDragHandlers = BlockDragHandlers(
         blockId = blockId,
         enabled = !session.closing,
+        onPrepare = { engine.dragController.prepare(blockId) },
+        onClearPreparation = { engine.dragController.clearPreparation(blockId) },
         onStartDrag = { rootY ->
             val index = blockIds.indexOf(blockId)
             val sourceTop = sourceTopInRoot()
@@ -746,7 +783,6 @@ internal fun ColumnScope.NoteEditor(
 
     val goldDropIndicator = if (dark) Color(0xFFF2C14E) else Color(0xFFD99B16)
     val swipeTriggerPx = with(density) { 26.dp.toPx() }
-    val swipeReleaseTriggerPx = with(density) { 18.dp.toPx() }
     val swipeMaxVisualPx = with(density) { 44.dp.toPx() }
     val swipeTriggerVisualPx = (swipeTriggerPx * 0.55f).coerceAtLeast(1f)
     val latestSelectionMode by rememberUpdatedState(isSelectionMode)
@@ -755,6 +791,53 @@ internal fun ColumnScope.NoteEditor(
     val latestEnterSelectionMode by rememberUpdatedState<(String) -> Unit>({ blockId -> enterSelectionMode(blockId) })
     val selectedCardBg = if (dark) Color(0xFF3B3118) else Color(0xFFFFF2C6)
     val selectedCardBorder = if (dark) Color(0xFFE5B84B).copy(alpha = 0.45f) else Color(0xFFE2B94B).copy(alpha = 0.7f)
+
+    val listDirection = LocalLayoutDirection.current
+    val latestBlockIds by rememberUpdatedState(blockIds)
+    var sweepAnchor by remember(session.draft.id) { mutableIntStateOf(-1) }
+    var sweepPointerY by remember(session.draft.id) { mutableFloatStateOf(Float.NaN) }
+    var sweepBaseline by remember(session.draft.id) { mutableStateOf(emptySet<String>()) }
+
+    fun visibleBlockAt(y: Float, requireHit: Boolean = false): Int {
+        val layout = listState.layoutInfo
+        val localY = y + layout.viewportStartOffset
+        return layout.visibleItemsInfo.asSequence()
+            .filter {
+                latestBlockIds.getOrNull(it.index) == it.key &&
+                    (!requireHit || localY >= it.offset && localY < it.offset + it.size)
+            }
+            .minByOrNull { item ->
+                when {
+                    localY < item.offset -> item.offset - localY
+                    localY >= item.offset + item.size -> localY - (item.offset + item.size)
+                    else -> 0f
+                }
+            }?.index ?: -1
+    }
+
+    fun updateSweep(y: Float) {
+        val current = visibleBlockAt(y)
+        if (sweepAnchor >= 0 && current >= 0) {
+            selectedBlockIds = EditorBlockOps.sweepBlockSelection(latestBlockIds, sweepBaseline, sweepAnchor, current)
+        }
+    }
+
+    LaunchedEffect(sweepAnchor, isSelectionMode) {
+        if (sweepAnchor < 0 || !isSelectionMode) return@LaunchedEffect
+        while (true) {
+            withFrameNanos { }
+            val y = sweepPointerY
+            val distance = when {
+                y < edgeThresholdPx -> y - edgeThresholdPx
+                y > editorBoxHeightPx - edgeThresholdPx -> y - (editorBoxHeightPx - edgeThresholdPx)
+                else -> 0f
+            }
+            if (distance != 0f) {
+                listState.scrollBy(maxScrollStepPx * (distance / edgeThresholdPx).coerceIn(-1f, 1f))
+                updateSweep(y)
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -771,7 +854,44 @@ internal fun ColumnScope.NoteEditor(
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().pointerInput(isSelectionMode, session.draft.id, listDirection) {
+                if (!isSelectionMode) return@pointerInput
+                val edge = 20.dp.toPx()
+                val handleWidth = BlockControlWidth.toPx()
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    val x = if (listDirection == LayoutDirection.Rtl) size.width - down.position.x else down.position.x
+                    val fromRight = size.width - x
+                    if (fromRight < edge + handleWidth || fromRight >= edge + handleWidth * 2) return@awaitEachGesture
+                    val index = visibleBlockAt(down.position.y, requireHit = true)
+                    if (index < 0 || engine.dragController.isDragging) return@awaitEachGesture
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (event.changes.any { it.id != down.id && it.pressed } || engine.dragController.isDragging) break
+                            if (!change.pressed) {
+                                if (sweepAnchor >= 0) change.consume()
+                                break
+                            }
+                            if (sweepAnchor < 0) {
+                                val dx = abs(change.position.x - down.position.x)
+                                val dy = abs(change.position.y - down.position.y)
+                                if (dx > viewConfiguration.touchSlop && dx > dy) break
+                                if (dy <= viewConfiguration.touchSlop || dy < dx) continue
+                                sweepBaseline = selectedBlockIds
+                                sweepAnchor = index
+                            }
+                            change.consume()
+                            sweepPointerY = change.position.y
+                            updateSweep(sweepPointerY)
+                        }
+                    } finally {
+                        sweepAnchor = -1
+                        sweepPointerY = Float.NaN
+                    }
+                }
+            },
             contentPadding = PaddingValues(
                 top = 10.dp,
                 bottom = 28.dp,
@@ -801,7 +921,12 @@ internal fun ColumnScope.NoteEditor(
                     engine.dragController.targetDropIndex == index &&
                     engine.dragController.draggingIndex < index
                 val isBlockSelected = isSelectionMode && block.id in selectedBlockIds
-                val swipeOffsetX = remember(block.id) { Animatable(0f) }
+                var swipeOffsetX by remember(block.id) { mutableFloatStateOf(0f) }
+                var swipeRebound by remember(block.id) { mutableStateOf<Job?>(null) }
+                val pressScale by animateFloatAsState(
+                    if (engine.dragController.preparedBlockId == block.id) 0.985f else 1f,
+                    label = "block-drag-press",
+                )
                 val animatedRowBg by animateColorAsState(
                     targetValue = if (isBlockSelected) selectedCardBg else Color.Transparent,
                     label = "block-selection-bg",
@@ -809,18 +934,54 @@ internal fun ColumnScope.NoteEditor(
 
                 val previousType = session.blocks.getOrNull(index - 1)?.type
                 val blockSpacing = when {
-                    previousType == null -> 0.dp
-                    doc.type == "heading" -> 7.dp
-                    previousType == "heading" -> 6.dp
+                    previousType == null -> if (session.existingNote) 8.dp else 0.dp
+                    doc.type == "heading" -> if (session.existingNote) 15.dp else 7.dp
+                    previousType == "heading" -> if (session.existingNote) 8.dp else 6.dp
                     doc.type in LIST_BLOCK_TYPES && previousType in LIST_BLOCK_TYPES -> 2.dp
-                    else -> 3.dp
+                    else -> if (session.existingNote) 5.dp else 3.dp
+                }
+                val textHit = remember(block.id) { EditorTextHitTarget() }
+                val titleHit = remember(block.id) { EditorTextHitTarget() }
+                var rowCoordinates by remember(block.id) { mutableStateOf<LayoutCoordinates?>(null) }
+                val latestDoc by rememberUpdatedState(doc)
+                val placeCursor by rememberUpdatedState<(Boolean, Int) -> Unit> { title, offset ->
+                    if (reading) onStartWriting()
+                    focusEditableBlock(block.id, cursorOffset = offset, toggleTitle = title)
                 }
 
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .zIndex(if (isDraggingThis) 10f else 0f)
-                        .pointerInput(block.id) {
+                        .onGloballyPositioned { rowCoordinates = it }
+                        .testTag("editor-block-row-$index")
+                        .pointerInput(block.id, reading) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown()
+                                val hitDoc = latestDoc
+                                if (!hitDoc.editable || latestSelectionMode || latestSessionClosing ||
+                                    latestBlockMenuOpen || engine.dragController.isDragging
+                                ) return@awaitEachGesture
+                                val row = rowCoordinates?.takeIf { it.isAttached } ?: return@awaitEachGesture
+                                // Text fields and controls handle their own taps before the row sees them.
+                                val up = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                    waitForUpOrCancellation()
+                                } ?: return@awaitEachGesture
+                                if ((up.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                                    return@awaitEachGesture
+                                }
+                                val title = hitDoc.type == "toggle" && (
+                                    hitDoc.collapsed || titleHit.verticalDistance(row, up.position) <=
+                                        textHit.verticalDistance(row, up.position)
+                                    )
+                                val hit = if (title) titleHit else textHit
+                                val offset = hit.offsetAt(row, up.position) ?: return@awaitEachGesture
+                                up.consume()
+                                placeCursor(title, offset)
+                            }
+                        }
+                        .pointerInput(block.id, reading) {
+                            if (reading) return@pointerInput
                             val touchSlop = viewConfiguration.touchSlop
                             val lockSlop = touchSlop
                             val longPressTimeout = viewConfiguration.longPressTimeoutMillis
@@ -835,7 +996,8 @@ internal fun ColumnScope.NoteEditor(
                                 val startX = down.position.x
                                 val startY = down.position.y
                                 var horizontalLocked = false
-                                var selectionTriggered = false
+                                swipeRebound?.cancel()
+                                swipeOffsetX = 0f
                                 var lastDx = 0f
                                 try {
                                     while (true) {
@@ -847,10 +1009,9 @@ internal fun ColumnScope.NoteEditor(
                                         if (!change.pressed) {
                                             if (horizontalLocked) {
                                                 change.consume()
-                                                if (!selectionTriggered && lastDx >= swipeReleaseTriggerPx) {
-                                                    selectionTriggered = true
-                                                    latestEnterSelectionMode(block.id)
-                                                }
+                                                if (!latestSelectionMode && !latestSessionClosing &&
+                                                    !latestBlockMenuOpen && abs(lastDx) >= swipeTriggerPx
+                                                ) latestEnterSelectionMode(block.id)
                                             }
                                             break
                                         }
@@ -859,9 +1020,8 @@ internal fun ColumnScope.NoteEditor(
                                         lastDx = dx
                                         if (!horizontalLocked) {
                                             if (change.isConsumed || change.uptimeMillis - down.uptimeMillis >= longPressTimeout) break
-                                            if (abs(dy) > touchSlop && dx <= abs(dy) * 1.15f) break
-                                            if (dx < -touchSlop) break
-                                            if (dx > lockSlop && dx > abs(dy) * 1.15f) {
+                                            if (abs(dy) > touchSlop && abs(dx) <= abs(dy) * 1.15f) break
+                                            if (abs(dx) > lockSlop && abs(dx) > abs(dy) * 1.15f) {
                                                 horizontalLocked = true
                                             } else {
                                                 val afterChildren = awaitPointerEvent(PointerEventPass.Final)
@@ -873,30 +1033,23 @@ internal fun ColumnScope.NoteEditor(
                                         }
                                         if (horizontalLocked) {
                                             change.consume()
-                                            val targetVisual = (dx * 0.55f).coerceIn(0f, swipeMaxVisualPx)
-                                            scope.launch { swipeOffsetX.snapTo(targetVisual) }
-                                            if (!selectionTriggered && dx >= swipeTriggerPx) {
-                                                selectionTriggered = true
-                                                latestEnterSelectionMode(block.id)
-                                            }
+                                            swipeOffsetX = (dx * 0.55f).coerceIn(-swipeMaxVisualPx, swipeMaxVisualPx)
                                         }
                                     }
                                 } finally {
-                                    if (horizontalLocked || swipeOffsetX.value > 0f) {
-                                        scope.launch {
-                                            swipeOffsetX.animateTo(
+                                    if (horizontalLocked && swipeOffsetX != 0f) {
+                                        swipeRebound = scope.launch {
+                                            animate(
+                                                initialValue = swipeOffsetX,
                                                 targetValue = 0f,
-                                                animationSpec = spring(
-                                                    dampingRatio = 0.78f,
-                                                    stiffness = 520f,
-                                                ),
-                                            )
+                                                animationSpec = spring(dampingRatio = 0.78f, stiffness = 520f),
+                                            ) { value, _ -> swipeOffsetX = value }
                                         }
                                     }
                                 }
                             }
                         }
-                        .padding(horizontal = 20.dp)
+                        .padding(horizontal = pageTextInset)
                         .bringIntoViewRequester(bringIntoViewReq)
                         .padding(top = blockSpacing),
                 ) {
@@ -906,7 +1059,7 @@ internal fun ColumnScope.NoteEditor(
                         }
                     }
 
-                    val isFocusedRow = selectedControlBlockId == block.id || isDraggingThis
+                    val isFocusedRow = !reading && (selectedControlBlockId == block.id || isDraggingThis)
                     val indentDp = (doc.indent.coerceIn(0, NoteBlock.MAX_INDENT) * 20).dp
                     val effectiveRowClosing = session.closing || isSelectionMode
                     var sourceCoordinates by remember(block.id) { mutableStateOf<LayoutCoordinates?>(null) }
@@ -925,12 +1078,12 @@ internal fun ColumnScope.NoteEditor(
                                 }
                             },
                     ) {
-                        if (swipeOffsetX.value > 1f) {
-                            val progress = (swipeOffsetX.value / swipeTriggerVisualPx).coerceIn(0f, 1f)
+                        if (abs(swipeOffsetX) > 1f) {
+                            val progress = (abs(swipeOffsetX) / swipeTriggerVisualPx).coerceIn(0f, 1f)
                             val reached = progress >= 1f
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.CenterStart)
+                                    .align(if (swipeOffsetX > 0f) Alignment.CenterStart else Alignment.CenterEnd)
                                     .size(20.dp)
                                     .alpha(progress)
                                     .clip(CircleShape)
@@ -958,13 +1111,11 @@ internal fun ColumnScope.NoteEditor(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .graphicsLayer {
-                                    translationX = swipeOffsetX.value
+                                    translationX = swipeOffsetX
                                     translationY = if (isDraggingThis) engine.dragController.dragOffsetY else 0f
-                                    if (isDraggingThis) {
-                                        alpha = 0.88f
-                                        scaleX = 1.02f
-                                        scaleY = 1.02f
-                                    }
+                                    scaleX = if (isDraggingThis) 1.02f else pressScale
+                                    scaleY = scaleX
+                                    if (isDraggingThis) alpha = 0.88f
                                 }
                                 .then(
                                     when {
@@ -976,7 +1127,6 @@ internal fun ColumnScope.NoteEditor(
                                             .clip(RoundedCornerShape(14.dp))
                                             .background(animatedRowBg, RoundedCornerShape(14.dp))
                                             .border(0.8.dp, selectedCardBorder, RoundedCornerShape(14.dp))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
                                         animatedRowBg != Color.Transparent -> Modifier
                                             .clip(RoundedCornerShape(14.dp))
                                             .background(animatedRowBg, RoundedCornerShape(14.dp))
@@ -1012,6 +1162,7 @@ internal fun ColumnScope.NoteEditor(
                                     isFocused = isFocusedRow && !isSelectionMode,
                                     dark = dark,
                                     sessionClosing = effectiveRowClosing,
+                                    reading = reading,
                                     engine = engine,
                                     focusRequester = blockFocusReq,
                                     highlightBg = highlightBg,
@@ -1020,7 +1171,10 @@ internal fun ColumnScope.NoteEditor(
                                     openBlockMenuId = openBlockMenuId,
                                     onOpenBlockMenu = { openBlockMenuId = it },
                                     onFocusChange = { onEditorFieldFocus(block.id, false, it) },
-                                    onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
+                                    onCursorLayout = { coords, layout, cursorIdx ->
+                                        textHit.update(coords, layout)
+                                        updateCursorAnchor(block.id, coords, layout, cursorIdx)
+                                    },
                                     onBackspaceAtStart = { handleBackspaceAtStart(block.id, isToggleTitle = false) },
                                     onEnterKey = { handleEnterKey(block.id, isToggleTitle = false) },
                                     onCycleTone = cycleTone,
@@ -1052,6 +1206,7 @@ internal fun ColumnScope.NoteEditor(
                                     isFocused = isFocusedRow && !isSelectionMode,
                                     dark = dark,
                                     sessionClosing = effectiveRowClosing,
+                                    reading = reading,
                                     engine = engine,
                                     titleFocusRequester = titleFocusReq,
                                     bodyFocusRequester = blockFocusReq,
@@ -1071,7 +1226,11 @@ internal fun ColumnScope.NoteEditor(
                                     },
                                     onFocusTitleChange = { onEditorFieldFocus(block.id, true, it) },
                                     onFocusBodyChange = { onEditorFieldFocus(block.id, false, it) },
-                                    onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
+                                    onCursorLayout = { coords, layout, cursorIdx ->
+                                        textHit.update(coords, layout)
+                                        updateCursorAnchor(block.id, coords, layout, cursorIdx)
+                                    },
+                                    onTitleLayout = titleHit::update,
                                     onBackspaceAtStart = { isTitle -> handleBackspaceAtStart(block.id, isToggleTitle = isTitle) },
                                     onEnterKey = { isTitle -> handleEnterKey(block.id, isToggleTitle = isTitle) },
                                     blockMenuContent = {
@@ -1098,6 +1257,7 @@ internal fun ColumnScope.NoteEditor(
                                     index = index,
                                     dark = dark,
                                     selected = isFocusedRow && !isSelectionMode,
+                                    reading = reading,
                                     openBlockMenuId = openBlockMenuId,
                                     onSelect = {
                                         selectedControlBlockId = block.id
@@ -1145,7 +1305,8 @@ internal fun ColumnScope.NoteEditor(
                                         isFocused = isFocusedRow && !isSelectionMode,
                                         dark = dark,
                                         sessionClosing = effectiveRowClosing,
-                                        sessionWriting = session.writing,
+                                        reading = reading,
+                                         sessionWriting = session.writing,
                                         engine = engine,
                                         focusRequester = blockFocusReq,
                                         highlightBg = highlightBg,
@@ -1153,9 +1314,15 @@ internal fun ColumnScope.NoteEditor(
                                         enableSlashShortcuts = enableSlashShortcuts,
                                         openBlockMenuId = openBlockMenuId,
                                         onOpenBlockMenu = { openBlockMenuId = it },
-                                        onToggleCheckbox = { checked -> model.toggleEditorTask(session, block, checked) },
+                                        onToggleCheckbox = { checked ->
+                                             model.toggleEditorTask(session, block, checked)
+                                             ViewCompat.performHapticFeedback(view, HapticFeedbackConstantsCompat.VIRTUAL_KEY)
+                                         },
                                         onFocusChange = { onEditorFieldFocus(block.id, false, it) },
-                                        onCursorLayout = { coords, layout, cursorIdx -> updateCursorAnchor(block.id, coords, layout, cursorIdx) },
+                                        onCursorLayout = { coords, layout, cursorIdx ->
+                                            textHit.update(coords, layout)
+                                            updateCursorAnchor(block.id, coords, layout, cursorIdx)
+                                        },
                                         onBackspaceAtStart = { handleBackspaceAtStart(block.id, isToggleTitle = false) },
                                         onEnterKey = { handleEnterKey(block.id, isToggleTitle = false) },
                                         blockMenuContent = {
@@ -1199,8 +1366,8 @@ internal fun ColumnScope.NoteEditor(
                                                 reminderTime = if (hasActiveReminder) effectiveTime else null,
                                                 recurrence = effectiveRecurrence,
                                                 notificationsEnabled = capability.notificationsEnabled,
-                                                enabled = !session.writing && !isSelectionMode,
-                                                dark = dark,
+                                                 enabled = !session.writing && !isSelectionMode,
+                                                 dark = dark,
                                                 startIndentDp = indentDp + 44.dp,
                                                 onClick = {
                                                     clearEditorFocus()
@@ -1225,7 +1392,16 @@ internal fun ColumnScope.NoteEditor(
                                             store = model.attachments,
                                             id = attachmentId,
                                             enabled = !session.writing && !session.voiceBusy && !isSelectionMode,
-                                            insertTranscript = { text -> session.insertTranscript(block, text) },
+                                            editable = !reading,
+                                            insertTranscript = { text ->
+                                                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                                                session.insertTranscript(block, text).also { inserted ->
+                                                    if (inserted) {
+                                                        engine.undoStack.recordStructuralChange(before)
+                                                        engine.refreshUndoFlags()
+                                                    }
+                                                }
+                                            },
                                             aiCleanEnabled = agentUiState.remoteAiEnabled,
                                             aiCleaning = activeForAttachment && voiceCleanState.cleaning,
                                             cleanedTranscriptPreview = if (activeForAttachment) {
@@ -1264,11 +1440,8 @@ internal fun ColumnScope.NoteEditor(
                                             engine.refreshUndoFlags()
                                         }
                                     }
-                                    if (!isSelectionMode) {
-                                        BlockDragOnlyHandle(
-                                            dark = dark,
-                                            dragHandlers = dragHandlers,
-                                        )
+                                    if (!reading) Box(Modifier.width(BlockControlsWidth), contentAlignment = Alignment.CenterEnd) {
+                                        if (!isSelectionMode) BlockDragOnlyHandle(dark, dragHandlers = dragHandlers)
                                     }
                                 }
                             }
@@ -1293,19 +1466,16 @@ internal fun ColumnScope.NoteEditor(
                                             onOpen = if (target != null && onOpenRelated != null && !isSelectionMode) {
                                                 { onOpenRelated(target.id) }
                                             } else null,
-                                            onRemove = {
+                                            onRemove = if (reading) null else ({
                                                 val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
                                                 engine.undoStack.recordStructuralChange(before)
                                                 session.removeReference(block)
                                                 engine.refreshUndoFlags()
-                                            },
+                                            }),
                                         )
                                     }
-                                    if (!isSelectionMode) {
-                                        BlockDragOnlyHandle(
-                                            dark = dark,
-                                            dragHandlers = dragHandlers,
-                                        )
+                                    if (!reading) Box(Modifier.width(BlockControlsWidth), contentAlignment = Alignment.CenterEnd) {
+                                        if (!isSelectionMode) BlockDragOnlyHandle(dark, dragHandlers = dragHandlers)
                                     }
                                 }
                             }
@@ -1315,7 +1485,7 @@ internal fun ColumnScope.NoteEditor(
                                     text = block.text.text.toString().ifBlank { "只读区块 · ${block.type}" },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = scheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    modifier = Modifier.padding(end = BlockControlsWidth).padding(vertical = 6.dp),
                                 )
                             }
                         }
@@ -1335,15 +1505,15 @@ internal fun ColumnScope.NoteEditor(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
-                        .heightIn(min = 240.dp)
+                        .padding(horizontal = pageTextInset)
+                        .heightIn(min = if (reading) 120.dp else 240.dp)
                         .focusProperties { canFocus = false }
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
-                            enabled = !session.closing,
-                            onClick = {
-                                if (isSelectionMode) {
+                             enabled = !session.closing && !reading,
+                             onClick = {
+                                 if (isSelectionMode) {
                                     exitSelectionMode()
                                 } else {
                                     val currentBlocks = session.blocks.map { it.documentBlock() }
@@ -1433,7 +1603,7 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
-    val activeBlock = session.blocks.firstOrNull { it.id == focusedBlockId && it.editable }
+    val activeBlock = if (reading) null else session.blocks.firstOrNull { it.id == focusedBlockId && it.editable }
     val activeBlockIndex = if (activeBlock != null) session.blocks.indexOf(activeBlock) else -1
     val activeTfv = if (activeBlock != null) {
         if (focusedIsToggleTitle && activeBlock.type == "toggle") {
@@ -1468,28 +1638,31 @@ internal fun ColumnScope.NoteEditor(
             onPickExistingTag = { tag ->
                 val latest = currentTrigger()
                 if (latest != null) {
-                    removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
-                    model.attachTagToSession(session, tag.id)
+                    model.attachTagToSession(session, tag.id) {
+                        if (currentTrigger() == latest) removeTriggerText(activeBlock, engine, isTitle, latest.triggerIndex, latest.cursorIndex)
+                    }
                 }
             },
             onCreateTag = { tagName ->
                 val latest = currentTrigger()
                 if (latest != null) {
-                    removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
                     val existing = availableTags.firstOrNull {
-                        it.parentId.isEmpty() && it.name.equals(tagName, ignoreCase = true)
+                        it.parentId.isEmpty() && it.nameKey == tagNameKey(tagName)
                     }
-                    model.createAndAttachTag(session, tagName, existing?.id)
+                    model.createAndAttachTag(session, tagName, existing?.id) {
+                        if (currentTrigger() == latest) removeTriggerText(activeBlock, engine, isTitle, latest.triggerIndex, latest.cursorIndex)
+                    }
                 }
             },
             onPickNoteFull = { targetNote ->
                 val latest = currentTrigger()
                 if (latest != null) {
                     val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
-                    engine.undoStack.recordStructuralChange(before)
-                    removeTriggerText(activeBlock, engine, focusedIsToggleTitle, latest.triggerIndex, latest.cursorIndex)
-                    session.addReference(targetNote)
-                    engine.refreshUndoFlags()
+                    if (session.addReference(targetNote, afterBlockId = activeBlock.id)) {
+                        removeTriggerText(activeBlock, engine, isTitle, latest.triggerIndex, latest.cursorIndex)
+                        engine.undoStack.recordStructuralChange(before)
+                        engine.refreshUndoFlags()
+                    }
                 }
             },
             onPickNoteExcerpt = { targetNote ->
@@ -1522,7 +1695,7 @@ internal fun ColumnScope.NoteEditor(
     }
 
     val bannerStatus = engine.transientHint ?: session.status
-    if (bannerStatus.isNotEmpty()) {
+    if (bannerStatus.isNotEmpty() && (!reading || "失败" in bannerStatus)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1584,26 +1757,24 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
-    EditorEdgeEchoStrip(
+    if (!reading) EditorEdgeEchoStrip(
         hit = discoveryState.edgeEcho,
         dark = dark,
         onPreview = { hit -> echoPreviewHit = hit },
         onDismiss = { model.dismissEdgeEcho(suppressNoteForSession = true) },
     )
 
-    if (session.existingNote) {
+    if (session.existingNote && !keyboardVisible) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            contentAlignment = Alignment.CenterEnd,
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            contentAlignment = Alignment.CenterStart,
         ) {
-            val aiAccent = mintAiAccent(dark)
             val relatedCount = discoveryState.relatedNotes.size
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
-                    .background(aiAccent.bg)
                     .focusProperties { canFocus = false }
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -1622,20 +1793,20 @@ internal fun ColumnScope.NoteEditor(
                 Icon(
                     imageVector = MintIcons.Sparkles,
                     contentDescription = null,
-                    tint = aiAccent.fg,
+                    tint = scheme.onSurfaceVariant,
                     modifier = Modifier.size(14.dp),
                 )
                 Text(
                     text = if (relatedCount > 0) "相关笔记 $relatedCount" else "相关笔记",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = aiAccent.fg,
+                    color = scheme.onSurfaceVariant,
                 )
             }
         }
     }
 
     val visibleRecommendedTags = discoveryState.recommendedTags.filter { it.tag.id !in attachedTagIdsSnapshot }
-    if (visibleRecommendedTags.isNotEmpty()) {
+    if (!reading && visibleRecommendedTags.isNotEmpty()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1714,7 +1885,7 @@ internal fun ColumnScope.NoteEditor(
         }
     }
 
-    AnimatedVisibility(visible = formatPanelOpen && !isSelectionMode) {
+    AnimatedVisibility(visible = !reading && formatPanelOpen && !isSelectionMode) {
         EditorFormatPanel(
             targetDoc = formatTargetDoc,
             activeMarks = activeMarks,
@@ -1749,7 +1920,7 @@ internal fun ColumnScope.NoteEditor(
         )
     }
 
-    HorizontalDivider(
+    if (!reading) HorizontalDivider(
         thickness = 0.5.dp,
         color = scheme.outlineVariant.copy(alpha = 0.35f),
         modifier = Modifier.padding(top = 4.dp),
@@ -1784,148 +1955,54 @@ internal fun ColumnScope.NoteEditor(
                 exitSelectionMode()
             },
         )
-    } else {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 54.dp)
-                .focusProperties { canFocus = false }
-                .padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                EditorAccessoryPill(
-                    icon = MintIcons.Checklist,
-                    label = "添加待办",
-                    enabled = !session.writing && !session.closing,
-                    dark = dark,
-                    onClick = {
-                        val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
-                        val curBlocks = session.blocks.map { it.documentBlock() }
-                        val targetIdx = formatTargetIdx.takeIf { it in curBlocks.indices } ?: curBlocks.lastIndex
-                        val targetBlock = curBlocks.getOrNull(targetIdx)
-                        engine.undoStack.recordStructuralChange(before)
-                        if (targetIdx > 0 && targetBlock?.type == "paragraph" && targetBlock.text.isEmpty()) {
-                            val outcome = EditorBlockOps.convertFromControls(before, targetIdx, "checkbox")
-                            engine.applyOutcome(outcome)
-                        } else {
-                            val insertAt = (targetIdx + 1).coerceIn(0, curBlocks.size)
-                            val newCb = NoteBlock.checkbox()
-                            val nextList = curBlocks.toMutableList()
-                            nextList.add(insertAt, newCb)
-                            if (insertAt == nextList.lastIndex) {
-                                nextList.add(NoteBlock.paragraph())
-                            }
-                            engine.applyOutcome(BlockEditOutcome(nextList, newCb.id, 0))
-                        }
-                    },
-                )
-                EditorAccessoryPill(
-                    icon = EditorIcons.TextFormat,
-                    label = "格式",
-                    enabled = !session.closing && session.blocks.isNotEmpty(),
-                    active = formatPanelOpen,
-                    dark = dark,
-                    contentDescription = "展开格式面板",
-                    onClick = { formatPanelOpen = !formatPanelOpen },
-                )
-                if (hasReferenceOption) {
-                    EditorAccessoryPill(
-                        icon = MintIcons.AtSign,
-                        label = "@ 引用",
-                        enabled = !session.writing && !session.closing,
-                        dark = dark,
-                        onClick = {
-                            excerptTarget = null
-                            pendingTriggerReplace = null
-                            picker = "引用笔记"
-                        },
-                    )
-                }
-                if (!session.recording && !session.voicePending) {
-                    EditorAccessoryPill(
-                        icon = MintIcons.Audio,
-                        label = "录音",
-                        enabled = !session.writing && !session.importing && !session.voiceBusy && !session.closing,
-                        dark = dark,
-                        onClick = { microphone.launch(Manifest.permission.RECORD_AUDIO) },
-                    )
-                }
-                Box {
-                    ToolbarIconButton(
-                        icon = MintIcons.Plus,
-                        contentDescription = "更多插入",
-                        enabled = !session.closing,
-                        active = moreInsertMenuOpen,
-                        iconSize = 22.dp,
-                        onClick = { moreInsertMenuOpen = true },
-                    )
-                    ComposablesMenu(
-                        expanded = moreInsertMenuOpen,
-                        onDismiss = { moreInsertMenuOpen = false },
-                        tag = "editor-more-insert-menu",
-                        focusable = false,
-                    ) {
-                        ComposablesMenuItem(
-                            label = if (session.importFailed) "重选图片/文件附件" else "插入图片/视频/附件",
-                            icon = MintIcons.Paperclip,
-                        ) {
-                            moreInsertMenuOpen = false
-                            if (!session.writing && !session.importing && !session.voiceBusy) {
-                                showImport = true
-                            }
-                        }
-                        ComposablesMenuItem(
-                            label = "# 添加标签",
-                            icon = MintIcons.Tag,
-                        ) {
-                            moreInsertMenuOpen = false
-                            if (!session.writing) tagPickerOpen = true
-                        }
-                        ComposablesMenuItem(
-                            label = "插入分割线",
-                            icon = EditorIcons.DividerLine,
-                        ) {
-                            moreInsertMenuOpen = false
-                            insertOrConvertDivider()
-                        }
-                        ComposablesMenuItem(
-                            label = "多选整理段落",
-                            icon = EditorIcons.SelectAll,
-                        ) {
-                            moreInsertMenuOpen = false
-                            val seed = focusedBlockId ?: selectedControlBlockId ?: session.blocks.firstOrNull()?.id
-                            if (seed != null) enterSelectionMode(seed)
-                        }
+    } else if (!reading) {
+        EditorAccessoryBar(
+            session = session,
+            dark = dark,
+            showKeyboardDismiss = showKeyboardDismiss,
+            hasReferenceOption = hasReferenceOption,
+            formatPanelOpen = formatPanelOpen,
+            moreInsertMenuOpen = moreInsertMenuOpen,
+            onAddTodo = {
+                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                val curBlocks = session.blocks.map { it.documentBlock() }
+                val targetIdx = formatTargetIdx.takeIf { it in curBlocks.indices } ?: curBlocks.lastIndex
+                val targetBlock = curBlocks.getOrNull(targetIdx)
+                engine.undoStack.recordStructuralChange(before)
+                if (targetIdx > 0 && targetBlock?.type == "paragraph" && targetBlock.text.isEmpty()) {
+                    val outcome = EditorBlockOps.convertFromControls(before, targetIdx, "checkbox")
+                    engine.applyOutcome(outcome)
+                } else {
+                    val insertAt = (targetIdx + 1).coerceIn(0, curBlocks.size)
+                    val newCb = NoteBlock.checkbox()
+                    val nextList = curBlocks.toMutableList()
+                    nextList.add(insertAt, newCb)
+                    if (insertAt == nextList.lastIndex) {
+                        nextList.add(NoteBlock.paragraph())
                     }
+                    engine.applyOutcome(BlockEditOutcome(nextList, newCb.id, 0))
                 }
-            }
-
-            Box(
-                modifier = Modifier
-                    .padding(horizontal = 4.dp)
-                    .width(0.8.dp)
-                    .height(22.dp)
-                    .background(mintDividerColor(dark)),
-            )
-            // Right fixed: Collapse Keyboard
-            ToolbarIconButton(
-                icon = EditorIcons.KeyboardHide,
-                contentDescription = "收起键盘",
-                enabled = true,
-                iconSize = 22.dp,
-                onClick = {
-                    formatPanelOpen = false
-                    clearEditorFocus()
-                },
-            )
-        }
+            },
+            onToggleFormat = { formatPanelOpen = !formatPanelOpen },
+            onOpenReferences = {
+                excerptTarget = null
+                pendingTriggerReplace = null
+                picker = "引用笔记"
+            },
+            onRecord = { microphone.launch(Manifest.permission.RECORD_AUDIO) },
+            onShowInsertMenu = { moreInsertMenuOpen = it },
+            onImport = { showImport = true },
+            onAddTag = { tagPickerOpen = true },
+            onInsertDivider = { insertOrConvertDivider() },
+            onSelectBlocks = {
+                val seed = focusedBlockId ?: selectedControlBlockId ?: session.blocks.firstOrNull()?.id
+                if (seed != null) enterSelectionMode(seed)
+            },
+            onHideKeyboard = {
+                formatPanelOpen = false
+                clearEditorFocus()
+            },
+        )
     }
 
     if (batchFormatSheetOpen && isSelectionMode) {
@@ -1990,34 +2067,31 @@ internal fun ColumnScope.NoteEditor(
                 pendingTriggerReplace = null
             },
             onPickFull = { note ->
-                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
-                clearPendingInlineTrigger(session, engine, pendingTriggerReplace)
-                pendingTriggerReplace = null
-                picker = null
-                excerptTarget = null
                 if (mode == "引用笔记") {
+                    val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                    if (!session.addReference(note, afterBlockId = pendingTriggerReplace?.blockId)) {
+                        return@ReferencePickerDialog
+                    }
+                    clearPendingInlineTrigger(session, engine, pendingTriggerReplace)
                     engine.undoStack.recordStructuralChange(before)
-                    session.addReference(note)
                     engine.refreshUndoFlags()
                 } else {
                     onOpenRelated?.invoke(note.id)
                 }
-            },
-            onPickExcerpt = { note, blockId, start, end, labelOverride ->
-                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
-                engine.undoStack.recordStructuralChange(before)
-                clearPendingInlineTrigger(session, engine, pendingTriggerReplace)
                 pendingTriggerReplace = null
                 picker = null
                 excerptTarget = null
-                session.addReference(
-                    note = note,
-                    targetBlockId = blockId,
-                    start = start,
-                    end = end,
-                    labelOverride = labelOverride,
-                )
-                engine.refreshUndoFlags()
+            },
+            onPickExcerpt = { note, blockId, start, end, labelOverride ->
+                val before = engine.snapshot(focusedBlockId, focusedIsToggleTitle)
+                if (session.addReference(note, blockId, start, end, labelOverride, pendingTriggerReplace?.blockId)) {
+                    clearPendingInlineTrigger(session, engine, pendingTriggerReplace)
+                    pendingTriggerReplace = null
+                    picker = null
+                    excerptTarget = null
+                    engine.undoStack.recordStructuralChange(before)
+                    engine.refreshUndoFlags()
+                }
             },
         )
     }
@@ -2091,100 +2165,266 @@ internal fun ColumnScope.NoteEditor(
         )
     }
 
-    val scheduleBlock = scheduleBlockId?.let { targetId ->
-        session.blocks.firstOrNull { it.id == targetId && it.type == "checkbox" }
+    scheduleBlockId?.let { targetId ->
+        val scheduleBlock = session.blocks.firstOrNull { it.id == targetId && it.type == "checkbox" }
+        if (scheduleBlock != null) {
+            EditorTaskSchedule(
+                block = scheduleBlock,
+                session = session,
+                model = model,
+                noteTaskItems = noteTaskItems,
+                notificationsEnabled = capability.notificationsEnabled,
+                backdrop = localBackdrop,
+                tier = tier,
+                dark = dark,
+                onDismiss = { scheduleBlockId = null },
+                requestNotifications = requestNotifications,
+            )
+        }
     }
-    if (scheduleBlock != null) {
-        val zoneId = ZoneId.systemDefault()
-        val today = LocalDate.now(zoneId)
-        val liveTask = noteTaskItems.firstOrNull {
-            it.noteId == session.draft.noteId && it.blockId == scheduleBlock.id
-        }
-        val initialDue = if (scheduleBlock.pendingScheduleChanged) {
-            scheduleBlock.dueDate
-        } else {
-            liveTask?.dueDate ?: scheduleBlock.dueDate
-        }
-        val initialTime = if (scheduleBlock.pendingScheduleChanged) {
-            scheduleBlock.pendingReminderTime ?: scheduleBlock.reminderLocalTime
-        } else {
-            liveTask?.reminderLocalTime ?: scheduleBlock.reminderLocalTime
-        }
-        val initialStatus = scheduleBlock.reminderStatus ?: liveTask?.reminderStatus
-        val initialRecurrence = if (scheduleBlock.pendingScheduleChanged) {
-            scheduleBlock.recurrenceRule
-        } else {
-            liveTask?.recurrence ?: scheduleBlock.recurrenceRule
-        }
-        val initialPolicy = if (scheduleBlock.pendingScheduleChanged) {
-            scheduleBlock.reminderPolicy
-        } else {
-            liveTask?.policy ?: scheduleBlock.reminderPolicy
-        }
-        val initialReminderId = scheduleBlock.reminderId ?: liveTask?.reminderId
+}
 
-        val initialDraft = TasksScheduleDraft(
-            noteId = session.draft.noteId,
-            blockId = scheduleBlock.id,
-            taskText = scheduleBlock.text.text.toString().ifBlank { "待办事项" },
-            reminderId = initialReminderId,
-            reminderStatus = initialStatus,
-            dueDateText = initialDue.orEmpty(),
-            reminderEnabled = initialTime != null && initialStatus != ReminderStatus.CANCELLED,
-            reminderTimeText = initialTime ?: "09:00",
-            recurrence = initialRecurrence,
-            policy = initialPolicy,
-        )
+@Composable
+private fun EditorTaskSchedule(
+    block: EditorBlock,
+    session: EditorSession,
+    model: NotesViewModel,
+    noteTaskItems: List<TaskItemProjection>,
+    notificationsEnabled: Boolean,
+    backdrop: GlassBackdrop,
+    tier: GlassTier,
+    dark: Boolean,
+    onDismiss: () -> Unit,
+    requestNotifications: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val zoneId = ZoneId.systemDefault()
+    val today = LocalDate.now(zoneId)
+    val liveTask = noteTaskItems.firstOrNull {
+        it.noteId == session.draft.noteId && it.blockId == block.id
+    }
+    val initialDue = if (block.pendingScheduleChanged) {
+        block.dueDate
+    } else {
+        liveTask?.dueDate ?: block.dueDate
+    }
+    val initialTime = if (block.pendingScheduleChanged) {
+        block.pendingReminderTime ?: block.reminderLocalTime
+    } else {
+        liveTask?.reminderLocalTime ?: block.reminderLocalTime
+    }
+    val initialStatus = block.reminderStatus ?: liveTask?.reminderStatus
+    val initialRecurrence = if (block.pendingScheduleChanged) {
+        block.recurrenceRule
+    } else {
+        liveTask?.recurrence ?: block.recurrenceRule
+    }
+    val initialPolicy = if (block.pendingScheduleChanged) {
+        block.reminderPolicy
+    } else {
+        liveTask?.policy ?: block.reminderPolicy
+    }
+    val initialReminderId = block.reminderId ?: liveTask?.reminderId
 
-        TaskScheduleModal(
-            initial = initialDraft,
-            notificationsEnabled = capability.notificationsEnabled,
-            onDismiss = { scheduleBlockId = null },
-            onSave = { updated ->
-                val parsedDue = TaskRecurrence.parseDueDate(updated.dueDateText)
-                val parsedTime = if (updated.reminderEnabled) {
-                    TaskRecurrence.parseLocalTime(updated.reminderTimeText)
-                } else null
-                when {
-                    updated.dueDateText.isNotBlank() && parsedDue == null -> {
-                        session.status = "截止日期格式需为 YYYY-MM-DD"
+    val initialDraft = TasksScheduleDraft(
+        noteId = session.draft.noteId,
+        blockId = block.id,
+        taskText = block.text.text.toString().ifBlank { "待办事项" },
+        reminderId = initialReminderId,
+        reminderStatus = initialStatus,
+        dueDateText = initialDue.orEmpty(),
+        reminderEnabled = initialTime != null && initialStatus != ReminderStatus.CANCELLED,
+        reminderTimeText = initialTime ?: "09:00",
+        recurrence = initialRecurrence,
+        policy = initialPolicy,
+    )
+
+    TaskScheduleModal(
+        initial = initialDraft,
+        notificationsEnabled = notificationsEnabled,
+        onDismiss = onDismiss,
+        onSave = { updated ->
+            val parsedDue = TaskRecurrence.parseDueDate(updated.dueDateText)
+            val parsedTime = if (updated.reminderEnabled) {
+                TaskRecurrence.parseLocalTime(updated.reminderTimeText)
+            } else null
+            when {
+                updated.dueDateText.isNotBlank() && parsedDue == null -> {
+                    session.status = "截止日期格式需为 YYYY-MM-DD"
+                }
+                updated.reminderEnabled && parsedTime == null -> {
+                    session.status = "提醒时间格式需为 HH:mm"
+                }
+                else -> {
+                    if (parsedTime != null && !notificationsEnabled) {
+                        requestNotifications()
                     }
-                    updated.reminderEnabled && parsedTime == null -> {
-                        session.status = "提醒时间格式需为 HH:mm"
-                    }
-                    else -> {
-                        if (parsedTime != null && !capability.notificationsEnabled) {
-                            requestNotifications()
+                    model.scheduleEditorTask(
+                        session = session,
+                        block = block,
+                        dueDate = parsedDue?.toString(),
+                        reminderTime = parsedTime?.let(TaskRecurrence::formatLocalTime),
+                        policy = updated.policy,
+                        recurrence = if (parsedTime != null) updated.recurrence else RecurrenceRule.NONE,
+                    )
+                    onDismiss()
+                }
+            }
+        },
+        onClear = {
+            model.clearEditorTaskSchedule(session, block)
+            onDismiss()
+        },
+        onSnooze = { remId ->
+            scope.launch {
+                model.snoozeReminder(remId)
+                session.status = "已延后 15 分钟提醒"
+                onDismiss()
+            }
+        },
+        backdrop = backdrop,
+        tier = tier.supportedOn(Build.VERSION.SDK_INT),
+        dark = dark,
+        zoneId = zoneId,
+        today = today,
+        onRequestNotificationPermission = requestNotifications,
+    )
+}
+
+@Composable
+private fun EditorAccessoryBar(
+    session: EditorSession,
+    dark: Boolean,
+    showKeyboardDismiss: Boolean,
+    hasReferenceOption: Boolean,
+    formatPanelOpen: Boolean,
+    moreInsertMenuOpen: Boolean,
+    onAddTodo: () -> Unit,
+    onToggleFormat: () -> Unit,
+    onOpenReferences: () -> Unit,
+    onRecord: () -> Unit,
+    onShowInsertMenu: (Boolean) -> Unit,
+    onImport: () -> Unit,
+    onAddTag: () -> Unit,
+    onInsertDivider: () -> Unit,
+    onSelectBlocks: () -> Unit,
+    onHideKeyboard: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 54.dp)
+            .focusProperties { canFocus = false }
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            EditorAccessoryPill(
+                icon = MintIcons.Checklist,
+                label = "添加待办",
+                showLabel = !session.existingNote,
+                enabled = !session.writing && !session.closing,
+                dark = dark,
+                onClick = onAddTodo,
+            )
+            EditorAccessoryPill(
+                icon = EditorIcons.TextFormat,
+                label = "格式",
+                showLabel = !session.existingNote,
+                enabled = !session.closing && session.blocks.isNotEmpty(),
+                active = formatPanelOpen,
+                dark = dark,
+                contentDescription = "展开格式面板",
+                onClick = onToggleFormat,
+            )
+            if (hasReferenceOption) {
+                EditorAccessoryPill(
+                    icon = MintIcons.AtSign,
+                    label = "@ 引用",
+                    showLabel = !session.existingNote,
+                    enabled = !session.writing && !session.closing,
+                    dark = dark,
+                    onClick = onOpenReferences,
+                )
+            }
+            if (!session.recording && !session.voicePending) {
+                EditorAccessoryPill(
+                    icon = MintIcons.Audio,
+                    label = "录音",
+                    showLabel = !session.existingNote,
+                    enabled = !session.writing && !session.importing && !session.voiceBusy && !session.closing,
+                    dark = dark,
+                    onClick = onRecord,
+                )
+            }
+            Box {
+                ToolbarIconButton(
+                    icon = MintIcons.Plus,
+                    contentDescription = "更多插入",
+                    enabled = !session.closing,
+                    active = moreInsertMenuOpen,
+                    iconSize = 22.dp,
+                    onClick = { onShowInsertMenu(true) },
+                )
+                ComposablesMenu(
+                    expanded = moreInsertMenuOpen,
+                    onDismiss = { onShowInsertMenu(false) },
+                    tag = "editor-more-insert-menu",
+                    focusable = false,
+                ) {
+                    ComposablesMenuItem(
+                        label = if (session.importFailed) "重选图片/文件附件" else "插入图片/视频/附件",
+                        icon = MintIcons.Paperclip,
+                    ) {
+                        onShowInsertMenu(false)
+                        if (!session.writing && !session.importing && !session.voiceBusy) {
+                            onImport()
                         }
-                        model.scheduleEditorTask(
-                            session = session,
-                            block = scheduleBlock,
-                            dueDate = parsedDue?.toString(),
-                            reminderTime = parsedTime?.let(TaskRecurrence::formatLocalTime),
-                            policy = updated.policy,
-                            recurrence = if (parsedTime != null) updated.recurrence else RecurrenceRule.NONE,
-                        )
-                        scheduleBlockId = null
+                    }
+                    ComposablesMenuItem(
+                        label = "# 添加标签",
+                        icon = MintIcons.Tag,
+                    ) {
+                        onShowInsertMenu(false)
+                        if (!session.writing) onAddTag()
+                    }
+                    ComposablesMenuItem(
+                        label = "插入分割线",
+                        icon = EditorIcons.DividerLine,
+                    ) {
+                        onShowInsertMenu(false)
+                        onInsertDivider()
+                    }
+                    ComposablesMenuItem(
+                        label = "多选整理段落",
+                        icon = EditorIcons.SelectAll,
+                    ) {
+                        onShowInsertMenu(false)
+                        onSelectBlocks()
                     }
                 }
-            },
-            onClear = {
-                model.clearEditorTaskSchedule(session, scheduleBlock)
-                scheduleBlockId = null
-            },
-            onSnooze = { remId ->
-                scope.launch {
-                    model.snoozeReminder(remId)
-                    session.status = "已延后 15 分钟提醒"
-                    scheduleBlockId = null
-                }
-            },
-            backdrop = localBackdrop,
-            tier = tier.supportedOn(Build.VERSION.SDK_INT),
-            dark = dark,
-            zoneId = zoneId,
-            today = today,
-            onRequestNotificationPermission = requestNotifications,
+            }
+        }
+
+        if (showKeyboardDismiss) Box(
+            modifier = Modifier
+                .padding(horizontal = 4.dp)
+                .width(0.8.dp)
+                .height(22.dp)
+                .background(mintDividerColor(dark)),
+        )
+        if (showKeyboardDismiss) ToolbarIconButton(
+            icon = EditorIcons.KeyboardHide,
+            contentDescription = "收起键盘",
+            enabled = true,
+            iconSize = 22.dp,
+            onClick = onHideKeyboard,
         )
     }
 }
@@ -2202,6 +2442,7 @@ private fun EditableStandardBlockRow(
     isFocused: Boolean,
     dark: Boolean,
     sessionClosing: Boolean,
+    reading: Boolean,
     sessionWriting: Boolean,
     engine: EditorEngineState,
     focusRequester: FocusRequester,
@@ -2289,9 +2530,9 @@ private fun EditableStandardBlockRow(
             block = block,
             tfvState = tfvState,
             textStyle = baseStyle,
-            placeholder = placeholder,
+            placeholder = if (reading) "" else placeholder,
             visualTransformation = visual,
-            enabled = !sessionClosing,
+            enabled = !sessionClosing && !reading,
             engine = engine,
             focusRequester = focusRequester,
             attachedSet = engine.attachedFocusRequesters,
@@ -2308,7 +2549,7 @@ private fun EditableStandardBlockRow(
             onEnterKey = onEnterKey,
         )
 
-        if (isFocused || openBlockMenuId == block.id) {
+        if (!reading && (isFocused || openBlockMenuId == block.id)) {
             BlockTrailingControls(
                 blockId = block.id,
                 index = index,
@@ -2318,7 +2559,7 @@ private fun EditableStandardBlockRow(
                 menuContent = blockMenuContent,
                 dragHandlers = dragHandlers,
             )
-        } else {
+        } else if (!reading) {
             BlockTrailingControlsSpace()
         }
     }
@@ -2361,6 +2602,7 @@ private fun CalloutBlockRow(
     isFocused: Boolean,
     dark: Boolean,
     sessionClosing: Boolean,
+    reading: Boolean,
     engine: EditorEngineState,
     focusRequester: FocusRequester,
     highlightBg: Color,
@@ -2412,6 +2654,7 @@ private fun CalloutBlockRow(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     role = Role.Button,
+                    enabled = !reading && !sessionClosing,
                     onClick = onCycleTone,
                 )
                 .semantics { contentDescription = "切换提示框配色" },
@@ -2428,9 +2671,9 @@ private fun CalloutBlockRow(
             block = block,
             tfvState = tfvState,
             textStyle = style,
-            placeholder = "输入提示内容…",
+            placeholder = if (reading) "" else "输入提示内容…",
             visualTransformation = visual,
-            enabled = !sessionClosing,
+            enabled = !sessionClosing && !reading,
             engine = engine,
             focusRequester = focusRequester,
             attachedSet = engine.attachedFocusRequesters,
@@ -2442,7 +2685,7 @@ private fun CalloutBlockRow(
             onBackspaceAtStart = onBackspaceAtStart,
             onEnterKey = onEnterKey,
         )
-        if (isFocused || openBlockMenuId == block.id) {
+        if (!reading && (isFocused || openBlockMenuId == block.id)) {
             BlockTrailingControls(
                 blockId = block.id,
                 index = index,
@@ -2452,7 +2695,7 @@ private fun CalloutBlockRow(
                 menuContent = blockMenuContent,
                 dragHandlers = dragHandlers,
             )
-        } else {
+        } else if (!reading) {
             BlockTrailingControlsSpace()
         }
     }
@@ -2467,6 +2710,7 @@ private fun ToggleBlockRow(
     isFocused: Boolean,
     dark: Boolean,
     sessionClosing: Boolean,
+    reading: Boolean,
     engine: EditorEngineState,
     titleFocusRequester: FocusRequester,
     bodyFocusRequester: FocusRequester,
@@ -2478,6 +2722,7 @@ private fun ToggleBlockRow(
     onFocusTitleChange: (Boolean) -> Unit,
     onFocusBodyChange: (Boolean) -> Unit,
     onCursorLayout: (LayoutCoordinates, TextLayoutResult, Int) -> Unit,
+    onTitleLayout: (LayoutCoordinates, TextLayoutResult) -> Unit,
     onBackspaceAtStart: (Boolean) -> Boolean,
     onEnterKey: (Boolean) -> Boolean,
     blockMenuContent: @Composable () -> Unit,
@@ -2539,15 +2784,17 @@ private fun ToggleBlockRow(
                 block = block,
                 tfvState = titleTfvState,
                 textStyle = titleStyle,
-                enabled = !sessionClosing,
+                enabled = !sessionClosing && !reading,
+                showPlaceholder = !reading,
                 engine = engine,
                 focusRequester = titleFocusRequester,
                 modifier = Modifier.weight(1f),
                 onFocusChange = onFocusTitleChange,
+                onTextPositioned = onTitleLayout,
                 onBackspaceAtStart = { onBackspaceAtStart(true) },
                 onEnterKey = { onEnterKey(true) },
             )
-            if (isFocused || openBlockMenuId == block.id) {
+            if (!reading && (isFocused || openBlockMenuId == block.id)) {
                 BlockTrailingControls(
                     blockId = block.id,
                     index = index,
@@ -2557,7 +2804,7 @@ private fun ToggleBlockRow(
                     menuContent = blockMenuContent,
                     dragHandlers = dragHandlers,
                 )
-            } else {
+            } else if (!reading) {
                 BlockTrailingControlsSpace()
             }
         }
@@ -2581,9 +2828,9 @@ private fun ToggleBlockRow(
                     block = block,
                     tfvState = bodyTfvState,
                     textStyle = bodyStyle,
-                    placeholder = "展开内容…",
+                    placeholder = if (reading) "" else "展开内容…",
                     visualTransformation = bodyVisual,
-                    enabled = !sessionClosing,
+                    enabled = !sessionClosing && !reading,
                     engine = engine,
                     focusRequester = bodyFocusRequester,
                     attachedSet = engine.attachedFocusRequesters,
@@ -2606,6 +2853,7 @@ private fun DividerBlockRow(
     index: Int,
     dark: Boolean,
     selected: Boolean,
+    reading: Boolean,
     openBlockMenuId: String?,
     onSelect: () -> Unit,
     onOpenBlockMenu: (String?) -> Unit,
@@ -2624,6 +2872,7 @@ private fun DividerBlockRow(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 role = Role.Button,
+                enabled = !reading,
                 onClick = onSelect,
             )
             .padding(horizontal = 4.dp),
@@ -2645,7 +2894,7 @@ private fun DividerBlockRow(
                 pathEffect = pathEffect,
             )
         }
-        if (selected || openBlockMenuId == block.id) {
+        if (!reading && (selected || openBlockMenuId == block.id)) {
             BlockTrailingControls(
                 blockId = block.id,
                 index = index,
@@ -2655,6 +2904,8 @@ private fun DividerBlockRow(
                 menuContent = blockMenuContent,
                 dragHandlers = dragHandlers,
             )
+        } else if (!reading) {
+            BlockTrailingControlsSpace()
         }
     }
 }
@@ -2688,7 +2939,7 @@ private fun BlockBasicTextField(
         onDispose { attachedSet.remove(block.id) }
     }
 
-    var recordedCompositionEdit by remember(block.id) { mutableStateOf(false) }
+    var compositionStart by remember(block.id) { mutableStateOf<TextFieldValue?>(null) }
     val currentTfvState by rememberUpdatedState(tfvState)
     val latestOnBackspace by rememberUpdatedState(onBackspaceAtStart)
     val latestOnEnter by rememberUpdatedState(onEnterKey)
@@ -2713,10 +2964,17 @@ private fun BlockBasicTextField(
                 if (liveDoc.editorFieldBranch() != inputBranch || (liveDoc.type == "toggle" && liveDoc.collapsed)) {
                     return@BasicTextField
                 }
-                val prev = tfvState.value
-                if (next.text == prev.text) {
-                    if (next.composition == null) recordedCompositionEdit = false
-                    if (next.selection != prev.selection && prev.composition == null && next.composition == null) {
+                val previousValue = tfvState.value
+                if (next.composition != null) {
+                    if (compositionStart == null) compositionStart = previousValue
+                    tfvState.value = next
+                    return@BasicTextField
+                }
+                val composingBefore = compositionStart
+                compositionStart = null
+                val prev = composingBefore ?: previousValue
+                if (next.text == liveDoc.text) {
+                    if (next.selection != prev.selection && composingBefore == null) {
                         engine.pendingTypingMarks = emptySet()
                     }
                     tfvState.value = next
@@ -2731,12 +2989,14 @@ private fun BlockBasicTextField(
                     return@BasicTextField
                 }
 
-                // Undo/Redo or focus restores clear composition directly without passing through onValueChange.
-                if (prev.composition == null) recordedCompositionEdit = false
                 val idx = engine.indexOfBlock(block.id)
-                val before = if (!recordedCompositionEdit) engine.snapshot(block.id, false) else null
-                var nextMarks = adjustMarksForTextEdit(liveDoc.marks, prev.text, next.text, next.selection.end)
-                if (before != null && prev.composition == null && next.composition == null) {
+                val oldSelection = clampSelection(prev.selection, liveDoc.text.length)
+                val before = engine.snapshot(block.id, false).copy(selection = oldSelection, cursorOffset = oldSelection.start)
+                var nextMarks = adjustMarksForTextEdit(
+                    liveDoc.marks, liveDoc.text, next.text, next.selection.end,
+                    replacedRange = (oldSelection.min until oldSelection.max).takeUnless { oldSelection.collapsed },
+                )
+                if (composingBefore == null) {
                     val splitAt = EditorBlockOps.isSingleNewlineInsertion(prev.text, next.text, prev.selection, next.selection)
                     if (splitAt != null) {
                         val outcome = EditorBlockOps.applyEnter(
@@ -2746,6 +3006,11 @@ private fun BlockBasicTextField(
                             afterCursor = next.text.substring(splitAt + 1),
                         )
                         engine.applyOutcome(outcome, recordUndoBefore = before)
+                        return@BasicTextField
+                    }
+                    val multiline = EditorBlockOps.insertMultilineText(before.blocks, idx, prev, next, nextMarks)
+                    if (multiline != null) {
+                        engine.applyOutcome(multiline, recordUndoBefore = before)
                         return@BasicTextField
                     }
                     if (enableSlashShortcuts) {
@@ -2760,9 +3025,8 @@ private fun BlockBasicTextField(
                 }
 
                 if (engine.pendingTypingMarks.isNotEmpty()) {
-                    val insertedLen = next.text.length - (prev.text.length - (prev.selection.max - prev.selection.min))
-                    val composingRange = next.composition
-                    val markedRange = composingRange ?: if (insertedLen > 0) {
+                    val insertedLen = next.text.length - (liveDoc.text.length - (oldSelection.max - oldSelection.min))
+                    val markedRange = if (insertedLen > 0) {
                         TextRange((next.selection.end - insertedLen).coerceAtLeast(0), next.selection.end)
                     } else null
                     if (markedRange != null && !markedRange.collapsed) {
@@ -2770,35 +3034,29 @@ private fun BlockBasicTextField(
                         nextMarks = normalizeMarks(nextMarks + additions, next.text)
                     }
                 }
-                recordedCompositionEdit = next.composition != null
                 tfvState.value = next
                 liveBlock.replaceOriginal(liveDoc.copy(text = next.text, marks = nextMarks))
                 liveBlock.text.edit {
                     replace(0, length, next.text)
                     selection = clampSelection(next.selection, length)
                 }
-                if (before != null) {
-                    val forceBreak = next.composition != null || next.text.length != prev.text.length + 1 ||
-                        next.text.getOrNull(next.selection.end - 1) in WORD_BOUNDARY_CHARS
-                    engine.undoStack.recordTypingChange(before, forceBreak = forceBreak, composing = next.composition != null)
-                    engine.refreshUndoFlags()
-                }
+                val forceBreak = composingBefore != null || next.text.length != liveDoc.text.length + 1 ||
+                    next.text.getOrNull(next.selection.end - 1) in WORD_BOUNDARY_CHARS
+                engine.undoStack.recordTypingChange(before, forceBreak = forceBreak, composing = composingBefore != null)
+                engine.refreshUndoFlags()
             },
             enabled = enabled,
             modifier = modifier
-                .onGloballyPositioned { coords ->
-                    fieldCoords = coords
-                    if (coords.isAttached) {
-                        attachedSet.add(block.id)
-                        lastTextLayout?.let { onCursorLayout(coords, it, tfvState.value.selection.end) }
-                    }
-                }
                 .focusRequester(focusRequester)
                 .onFocusChanged { state ->
                     onFocusChange(state.isFocused)
                     if (!state.isFocused) {
-                        recordedCompositionEdit = false
-                        if (tfvState.value.composition != null) tfvState.value = tfvState.value.copy(composition = null)
+                        if (tfvState.value.composition != null) {
+                            val committed = engine.blockForInput(block.id)?.documentBlock()?.text.orEmpty()
+                            val selection = compositionStart?.selection ?: TextRange(committed.length)
+                            tfvState.value = TextFieldValue(committed, clampSelection(selection, committed.length))
+                        }
+                        compositionStart = null
                     } else {
                         val coords = fieldCoords
                         val layout = lastTextLayout
@@ -2811,6 +3069,10 @@ private fun BlockBasicTextField(
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val tfv = tfvState.value
                     if (tfv.composition != null) return@onPreviewKeyEvent false
+                    if (engine.handleUndoKey(event, block.id, false)) return@onPreviewKeyEvent true
+                    if (engine.handleCaretBoundaryKey(event, block.id, false, tfv, lastTextLayout)) {
+                        return@onPreviewKeyEvent true
+                    }
                     when {
                         event.key == Key.Backspace && tfv.selection.collapsed && tfv.selection.start == 0 -> {
                             latestOnBackspace()
@@ -2838,7 +3100,13 @@ private fun BlockBasicTextField(
                 }
             },
             decorationBox = { innerTextField ->
-                Box(Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth().onGloballyPositioned { coords ->
+                    fieldCoords = coords
+                    if (coords.isAttached) {
+                        attachedSet.add(block.id)
+                        lastTextLayout?.let { onCursorLayout(coords, it, tfvState.value.selection.end) }
+                    }
+                }) {
                     if (tfvState.value.text.isEmpty() && placeholder.isNotEmpty()) {
                         Text(
                             text = placeholder,
@@ -2860,18 +3128,22 @@ private fun ToggleTitleTextField(
     tfvState: MutableState<TextFieldValue>,
     textStyle: TextStyle,
     enabled: Boolean,
+    showPlaceholder: Boolean,
     engine: EditorEngineState,
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier,
     onFocusChange: (Boolean) -> Unit,
+    onTextPositioned: (LayoutCoordinates, TextLayoutResult) -> Unit,
     onBackspaceAtStart: () -> Boolean,
     onEnterKey: () -> Boolean,
 ) {
     val scheme = MaterialTheme.colorScheme
+    var fieldCoords by remember(block.id) { mutableStateOf<LayoutCoordinates?>(null) }
+    var lastTextLayout by remember(block.id) { mutableStateOf<TextLayoutResult?>(null) }
     DisposableEffect(block.id) {
         onDispose { engine.attachedTitleFocusRequesters.remove(block.id) }
     }
-    var recordedCompositionEdit by remember(block.id) { mutableStateOf(false) }
+    var compositionStart by remember(block.id) { mutableStateOf<TextFieldValue?>(null) }
     val currentTfvState by rememberUpdatedState(tfvState)
     val latestOnBackspace by rememberUpdatedState(onBackspaceAtStart)
     val latestOnEnter by rememberUpdatedState(onEnterKey)
@@ -2893,16 +3165,23 @@ private fun ToggleTitleTextField(
             onValueChange = { next ->
                 val liveBlock = engine.blockForInput(block.id) ?: return@BasicTextField
                 if (liveBlock.type != "toggle") return@BasicTextField
-                val prev = tfvState.value
-                if (next.text == prev.text) {
-                    if (next.composition == null) recordedCompositionEdit = false
+                val previousValue = tfvState.value
+                if (next.composition != null) {
+                    if (compositionStart == null) compositionStart = previousValue
                     tfvState.value = next
                     return@BasicTextField
                 }
-                // Undo/Redo or focus restores clear composition directly without passing through onValueChange.
-                if (prev.composition == null) recordedCompositionEdit = false
-                val before = if (!recordedCompositionEdit) engine.snapshot(block.id, true) else null
-                if (before != null && prev.composition == null && next.composition == null) {
+                val composingBefore = compositionStart
+                compositionStart = null
+                val prev = composingBefore ?: previousValue
+                val liveDoc = liveBlock.documentBlock()
+                if (next.text == liveDoc.title) {
+                    tfvState.value = next
+                    return@BasicTextField
+                }
+                val oldSelection = clampSelection(prev.selection, liveDoc.title.length)
+                val before = engine.snapshot(block.id, true).copy(selection = oldSelection, cursorOffset = oldSelection.start)
+                if (composingBefore == null) {
                     val splitAt = EditorBlockOps.isSingleNewlineInsertion(prev.text, next.text, prev.selection, next.selection)
                     if (splitAt != null) {
                         val outcome = EditorBlockOps.applyEnter(
@@ -2916,31 +3195,25 @@ private fun ToggleTitleTextField(
                         return@BasicTextField
                     }
                 }
-                recordedCompositionEdit = next.composition != null
                 tfvState.value = next
-                liveBlock.replaceOriginal(liveBlock.documentBlock().withToggleState(title = next.text))
-                if (before != null) {
-                    engine.undoStack.recordTypingChange(
-                        before,
-                        forceBreak = next.composition != null,
-                        composing = next.composition != null,
-                    )
-                    engine.refreshUndoFlags()
-                }
+                liveBlock.replaceOriginal(liveDoc.withToggleState(title = next.text))
+                engine.undoStack.recordTypingChange(before, forceBreak = composingBefore != null, composing = composingBefore != null)
+                engine.refreshUndoFlags()
             },
             enabled = enabled,
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { latestOnEnter() }),
             modifier = modifier
-                .onGloballyPositioned { coords ->
-                    if (coords.isAttached) engine.attachedTitleFocusRequesters.add(block.id)
-                }
                 .focusRequester(focusRequester)
                 .onFocusChanged { state ->
                     if (!state.isFocused) {
-                        recordedCompositionEdit = false
-                        if (tfvState.value.composition != null) tfvState.value = tfvState.value.copy(composition = null)
+                        if (tfvState.value.composition != null) {
+                            val committed = engine.blockForInput(block.id)?.documentBlock()?.title.orEmpty()
+                            val selection = compositionStart?.selection ?: TextRange(committed.length)
+                            tfvState.value = TextFieldValue(committed, clampSelection(selection, committed.length))
+                        }
+                        compositionStart = null
                     }
                     onFocusChange(state.isFocused)
                 }
@@ -2948,6 +3221,10 @@ private fun ToggleTitleTextField(
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val tfv = tfvState.value
                     if (tfv.composition != null) return@onPreviewKeyEvent false
+                    if (engine.handleUndoKey(event, block.id, true)) return@onPreviewKeyEvent true
+                    if (engine.handleCaretBoundaryKey(event, block.id, true, tfv, lastTextLayout)) {
+                        return@onPreviewKeyEvent true
+                    }
                     when {
                         event.key == Key.Backspace && tfv.selection.collapsed && tfv.selection.start == 0 -> latestOnBackspace()
                         event.key == Key.Enter || event.key == Key.NumPadEnter -> latestOnEnter()
@@ -2957,9 +3234,19 @@ private fun ToggleTitleTextField(
                 .padding(vertical = 3.dp, horizontal = 2.dp),
             textStyle = textStyle,
             cursorBrush = SolidColor(scheme.primary),
+            onTextLayout = { layout ->
+                lastTextLayout = layout
+                fieldCoords?.takeIf { it.isAttached }?.let { onTextPositioned(it, layout) }
+            },
             decorationBox = { inner ->
-                Box(Modifier.fillMaxWidth()) {
-                    if (tfvState.value.text.isEmpty()) {
+                Box(Modifier.fillMaxWidth().onGloballyPositioned { coords ->
+                    fieldCoords = coords
+                    if (coords.isAttached) {
+                        engine.attachedTitleFocusRequesters.add(block.id)
+                        lastTextLayout?.let { onTextPositioned(coords, it) }
+                    }
+                }) {
+                    if (showPlaceholder && tfvState.value.text.isEmpty()) {
                         Text(
                             text = "折叠标题…",
                             color = scheme.onSurfaceVariant.copy(alpha = 0.65f),
@@ -2973,6 +3260,43 @@ private fun ToggleTitleTextField(
     }
 }
 
+private class EditorTextHitTarget {
+    private var coordinates: LayoutCoordinates? = null
+    private var layout: TextLayoutResult? = null
+
+    fun update(coordinates: LayoutCoordinates, layout: TextLayoutResult) {
+        this.coordinates = coordinates
+        this.layout = layout
+    }
+
+    fun offsetAt(row: LayoutCoordinates, position: Offset): Int? {
+        val field = coordinates?.takeIf { it.isAttached } ?: return null
+        val textLayout = layout ?: return null
+        val local = field.localPositionOf(row, position)
+        val line = textLayout.getLineForVerticalPosition(local.y)
+        val start = textLayout.getLineStart(line)
+        val end = textLayout.getLineEnd(line, visibleEnd = true)
+        if (start == end) return start
+        val rightToLeft = textLayout.getParagraphDirection(start) == ResolvedTextDirection.Rtl
+        // Android's hit test can choose the preceding character at an automatic wrap boundary.
+        return when {
+            local.x >= textLayout.getLineRight(line) -> if (rightToLeft) start else end
+            local.x <= textLayout.getLineLeft(line) -> if (rightToLeft) end else start
+            else -> textLayout.getOffsetForPosition(local)
+        }
+    }
+
+    fun verticalDistance(row: LayoutCoordinates, position: Offset): Float {
+        val field = coordinates?.takeIf { it.isAttached } ?: return Float.POSITIVE_INFINITY
+        val y = field.localPositionOf(row, position).y
+        return when {
+            y < 0f -> -y
+            y > field.size.height -> y - field.size.height
+            else -> 0f
+        }
+    }
+}
+
 private val WORD_BOUNDARY_CHARS = setOf(' ', '，', '。', '！', '？', '.', ',', '\n')
 
 @Composable
@@ -2980,15 +3304,15 @@ private fun blockTextStyle(doc: NoteBlock, scheme: ColorScheme): TextStyle {
     return when (doc.type) {
         "heading" -> when (doc.level) {
             1 -> MaterialTheme.typography.headlineSmall.copy(
-                fontSize = 26.sp,
-                lineHeight = 34.sp,
+                fontSize = 29.sp,
+                lineHeight = 37.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.4).sp,
                 color = scheme.onSurface,
             )
             2 -> MaterialTheme.typography.titleLarge.copy(
-                fontSize = 21.sp,
-                lineHeight = 28.sp,
+                fontSize = 22.sp,
+                lineHeight = 30.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.2).sp,
                 color = scheme.onSurface,
@@ -3017,8 +3341,8 @@ private fun blockTextStyle(doc: NoteBlock, scheme: ColorScheme): TextStyle {
             color = scheme.onSurface.copy(alpha = 0.86f),
         )
         else -> MaterialTheme.typography.bodyLarge.copy(
-            fontSize = 17.5.sp,
-            lineHeight = 25.5.sp,
+            fontSize = 17.sp,
+            lineHeight = 26.sp,
             color = scheme.onSurface,
         )
     }
@@ -3095,6 +3419,24 @@ private fun Modifier.longPressBlockDrag(
     var handleCoords by remember(dragHandlers.blockId) { mutableStateOf<LayoutCoordinates?>(null) }
     val dragEnabled = enabled && dragHandlers.enabled
     return onGloballyPositioned { handleCoords = it }
+        .pointerInput(dragHandlers.blockId, dragEnabled) {
+            if (!dragEnabled) return@pointerInput
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                latest.onPrepare()
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed || (change.position - down.position).getDistance() > viewConfiguration.touchSlop ||
+                            event.changes.any { it.id != down.id && it.pressed }
+                        ) break
+                    }
+                } finally {
+                    latest.onClearPreparation()
+                }
+            }
+        }
         .pointerInput(dragHandlers.blockId, dragEnabled) {
             if (!dragEnabled) return@pointerInput
             var pin: PinnableContainer.PinnedHandle? = null
@@ -3246,54 +3588,45 @@ private fun SelectionAwareBlockSlot(
     content: @Composable () -> Unit,
 ) {
     var lastRowDragEndedAtMs by remember { mutableLongStateOf(0L) }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(modifier = Modifier.weight(1f)) {
-            content()
-            if (isSelectionMode) {
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .focusProperties { canFocus = false }
-                        .longPressBlockDrag(
-                            enabled = selected,
-                            dragHandlers = dragHandlers.copy(
-                                onDragFinish = {
-                                    lastRowDragEndedAtMs = System.currentTimeMillis()
-                                    dragHandlers.onDragFinish()
-                                },
-                                onDragCancel = {
-                                    lastRowDragEndedAtMs = System.currentTimeMillis()
-                                    dragHandlers.onDragCancel()
-                                },
-                            ),
-                        )
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Checkbox,
-                            onClick = {
-                                if (System.currentTimeMillis() - lastRowDragEndedAtMs > 250L) {
-                                    onToggleSelect()
-                                }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        content()
+        if (isSelectionMode) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .focusProperties { canFocus = false }
+                    .longPressBlockDrag(
+                        enabled = selected,
+                        dragHandlers = dragHandlers.copy(
+                            onDragFinish = {
+                                lastRowDragEndedAtMs = System.currentTimeMillis()
+                                dragHandlers.onDragFinish()
+                            },
+                            onDragCancel = {
+                                lastRowDragEndedAtMs = System.currentTimeMillis()
+                                dragHandlers.onDragCancel()
                             },
                         ),
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Checkbox,
+                        onClick = {
+                            if (System.currentTimeMillis() - lastRowDragEndedAtMs > 250L) {
+                                onToggleSelect()
+                            }
+                        },
+                    ),
+            )
+            Box(Modifier.matchParentSize(), contentAlignment = Alignment.CenterEnd) {
+                BlockSelectionTrailingControls(
+                    selected = selected,
+                    dark = dark,
+                    onToggle = onToggleSelect,
+                    dragHandlers = dragHandlers,
                 )
             }
-        }
-        AnimatedVisibility(
-            visible = isSelectionMode,
-            enter = fadeIn() + expandHorizontally(),
-            exit = fadeOut() + shrinkHorizontally(),
-        ) {
-            BlockSelectionTrailingControls(
-                selected = selected,
-                dark = dark,
-                onToggle = onToggleSelect,
-                dragHandlers = dragHandlers,
-            )
         }
     }
 }
@@ -3307,12 +3640,12 @@ private fun BlockSelectionTrailingControls(
 ) {
     val scheme = MaterialTheme.colorScheme
     Row(
-        modifier = Modifier.padding(start = 4.dp),
+        modifier = Modifier.width(BlockControlsWidth).padding(start = BlockControlStartPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(width = 36.dp, height = 40.dp)
+                .size(width = BlockControlWidth, height = 40.dp)
                 .focusProperties { canFocus = false }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -3356,6 +3689,8 @@ private fun BlockSelectionTrailingControls(
 private data class BlockDragHandlers(
     val blockId: String,
     val enabled: Boolean,
+    val onPrepare: () -> Unit,
+    val onClearPreparation: () -> Unit,
     val onStartDrag: (Float) -> Unit,
     val onDragDelta: (Float) -> Unit,
     val onDragFinish: () -> Unit,
@@ -3717,6 +4052,40 @@ private fun CompactUndoRedoButton(
     }
 }
 
+private fun EditorEngineState.handleCaretBoundaryKey(
+    event: KeyEvent,
+    blockId: String,
+    toggleTitle: Boolean,
+    value: TextFieldValue,
+    layout: TextLayoutResult?,
+): Boolean {
+    val right = when (event.key) {
+        Key.DirectionRight -> true
+        Key.DirectionLeft -> false
+        else -> return false
+    }
+    if (!value.selection.collapsed || event.isShiftPressed || event.isAltPressed ||
+        event.isCtrlPressed || event.isMetaPressed
+    ) return false
+    val caret = value.selection.end
+    if (caret != 0 && caret != value.text.length) return false
+    val rightToLeft = layout?.takeIf { it.layoutInput.text.text == value.text && value.text.isNotEmpty() }
+        ?.getParagraphDirection(caret) == ResolvedTextDirection.Rtl
+    val forward = right != rightToLeft
+    if (caret != if (forward) value.text.length else 0) return false
+    return moveCaretToAdjacentField(blockId, toggleTitle, forward)
+}
+
+private fun EditorEngineState.handleUndoKey(event: KeyEvent, blockId: String, toggleTitle: Boolean): Boolean {
+    if (!event.isCtrlPressed) return false
+    when {
+        event.key == Key.Y || (event.key == Key.Z && event.isShiftPressed) -> performRedo(blockId, toggleTitle)
+        event.key == Key.Z -> performUndo(blockId, toggleTitle)
+        else -> return false
+    }
+    return true
+}
+
 private fun removeTriggerText(
     block: EditorBlock,
     engine: EditorEngineState,
@@ -3769,7 +4138,7 @@ private fun clearPendingInlineTrigger(
 private fun EditorHeaderMetadata(
     activeNote: NoteEntity?,
     notebook: NotebookEntity?,
-    charCount: Int,
+    charCount: Int?,
     availableTags: List<TagEntity>,
     noteTagIds: Set<String>,
     pendingTagIds: List<String>,
@@ -3792,27 +4161,21 @@ private fun EditorHeaderMetadata(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+            .padding(horizontal = 24.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        val timeText = activeNote?.let { note ->
-            val updated = formatNoteTimestamp(note.updatedAt)
-            val created = formatNoteTimestamp(note.createdAt)
-            if (updated == created) updated else "$updated (创建于 $created)"
-        }
-        val summaryParts = buildList {
-            if (timeText != null) add(timeText)
-            add("$charCount 字")
-            if (notebook != null) add(notebook.name)
+         val summaryParts = buildList {
+            activeNote?.let { add(formatNoteTimestamp(it.updatedAt)) }
+            if (charCount != null) add("$charCount 字")
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = summaryParts.joinToString(" | "),
-                style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.5.sp),
-                color = mintTertiaryTextColor(dark),
+                text = summaryParts.joinToString("  ·  "),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
@@ -3899,12 +4262,14 @@ private fun InlineTriggerSuggestionBar(
 
     when (trigger.kind) {
         InlineTriggerKind.TAG -> {
+            val queryKey = tagNameKey(query)
             val matches = remember(trigger.kind, query, availableTags, attachedTagIds) {
                 availableTags.asSequence()
                     .filter {
                         it.id !in attachedTagIds &&
                             (
                                 query.isEmpty() ||
+                                    it.nameKey == queryKey ||
                                     it.name.contains(query, ignoreCase = true) ||
                                     LocalFuzzyMatcher.matchesTagOrNoteQuery(query, it.name)
                                 )
@@ -3916,7 +4281,7 @@ private fun InlineTriggerSuggestionBar(
                 query.length <= 60 &&
                 '/' !in query &&
                 query.none(Char::isISOControl) &&
-                availableTags.none { it.parentId.isEmpty() && it.name.equals(query, ignoreCase = true) }
+                availableTags.none { it.parentId.isEmpty() && it.nameKey == queryKey }
 
             if (matches.isNotEmpty() || canCreate) {
                 Row(
@@ -4086,7 +4451,7 @@ private fun ReferenceBlockCard(
     dark: Boolean,
     enabled: Boolean,
     onOpen: (() -> Unit)?,
-    onRemove: () -> Unit,
+    onRemove: (() -> Unit)?,
 ) {
     val scheme = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(14.dp)
@@ -4175,7 +4540,7 @@ private fun ReferenceBlockCard(
                 )
             }
         }
-        TextButton(
+        if (onRemove != null) TextButton(
             onClick = onRemove,
             enabled = enabled,
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
@@ -4277,6 +4642,7 @@ private fun EditorAccessoryPill(
     enabled: Boolean,
     dark: Boolean,
     active: Boolean = false,
+    showLabel: Boolean = true,
     contentDescription: String = label,
     onClick: () -> Unit,
 ) {
@@ -4308,11 +4674,11 @@ private fun EditorAccessoryPill(
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = null,
+            contentDescription = if (showLabel) null else contentDescription,
             tint = if (enabled) scheme.primary else fg,
             modifier = Modifier.size(22.dp),
         )
-        Text(
+        if (showLabel) Text(
             text = label,
             style = MaterialTheme.typography.labelMedium.copy(
                 fontSize = 13.sp,

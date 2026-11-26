@@ -37,9 +37,13 @@ class LocalRecordingTest {
         compose.onNodeWithTag("capture-editor").assertTextEquals("本机记录验证")
         compose.onNodeWithTag("block-editor-1").assertTextEquals("读完这一页")
         compose.onNodeWithTag("checkbox-1").assertIsOn()
+        compose.onNodeWithTag("note-start-editing").performClick()
+        await(hasTestTag("note-writing"))
         compose.onNodeWithTag("capture-editor").performTextReplacement("编辑已自动保存")
         await(hasText("已保存到本机"))
-        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithTag("note-done").performClick()
+        await(hasTestTag("note-reading"))
+        compose.onNodeWithTag("note-page-back").performClick()
         await(hasTestTag("saved-note") and hasText("编辑已自动保存", substring = true))
     }
 
@@ -75,7 +79,7 @@ class LocalRecordingTest {
         compose.onNode(hasText(source) and !hasTestTag("editor-edge-echo")).performClick()
         await(hasText(source))
         compose.onNodeWithTag("capture-editor").assertTextEquals(source)
-        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithTag("note-page-back").performClick()
         await(hasTestTag("new-note"))
     }
 

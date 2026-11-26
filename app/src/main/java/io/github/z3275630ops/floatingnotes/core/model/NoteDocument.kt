@@ -725,6 +725,7 @@ internal fun adjustMarksForTextEdit(
     oldText: String,
     newText: String,
     cursorAfterEdit: Int? = null,
+    replacedRange: IntRange? = null,
 ): List<NoteTextMark> {
     if (marks.isEmpty() || oldText == newText) return normalizeMarks(marks, newText)
     if (newText.isEmpty()) return emptyList()
@@ -758,6 +759,22 @@ internal fun adjustMarksForTextEdit(
             editStart = candidateStart
             oldEnd = candidateStart
             newEnd = cursorAfterEdit
+        }
+    }
+
+    // Prefer the actual edit range when identical surrounding text makes the diff ambiguous.
+    if (replacedRange != null) {
+        val start = replacedRange.first
+        val end = replacedRange.last + 1
+        val newRangeEnd = end + newText.length - oldText.length
+        if (start in 0..oldText.length && end in start..oldText.length &&
+            newRangeEnd in start..newText.length &&
+            oldText.regionMatches(0, newText, 0, start) &&
+            oldText.regionMatches(end, newText, newRangeEnd, oldText.length - end)
+        ) {
+            editStart = start
+            oldEnd = end
+            newEnd = newRangeEnd
         }
     }
 

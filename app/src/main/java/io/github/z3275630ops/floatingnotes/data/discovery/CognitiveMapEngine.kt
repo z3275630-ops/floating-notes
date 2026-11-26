@@ -1,5 +1,6 @@
 package io.github.z3275630ops.floatingnotes.data.discovery
 
+import androidx.room.ColumnInfo
 import io.github.z3275630ops.floatingnotes.core.model.safeUtf16Slice
 import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteLinkEntity
@@ -64,12 +65,35 @@ internal data class CognitiveMapSnapshot(
     val isSparse: Boolean,
 )
 
+internal data class CognitiveMapCandidate(
+    val id: String,
+    val title: String?,
+    @ColumnInfo(name = "created_at") val createdAt: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: String,
+)
+
+internal data class CognitiveMapText(val id: String, val text: String)
+
+internal data class CognitiveMapInput(
+    val sampled: List<CognitiveMapCandidate>,
+    val monthsById: Map<String, String>,
+    val availableMonths: List<String>,
+    val tagsById: Map<String, TagEntity>,
+    val tagIdsByNote: Map<String, List<String>>,
+    val explicitEdges: List<CognitiveMapEdge>,
+    val eligibleCount: Int,
+    val workingCount: Int,
+    val activeMonthFilter: String?,
+    val reclustered: Boolean,
+)
+
 internal object CognitiveMapEngine {
     private const val UNKNOWN_MONTH = "未知"
     private const val SPARSE_CLUSTER_ID = "sparse"
     private const val EPSILON = 1e-12
     private const val NODE_SPACING = 0.024
     private const val HASH_RANGE = 4294967296.0
+    private const val SHARED_TAG_NEIGHBORS = 8
     private val monthPrefix = Regex("[0-9]{4}-(?:0[1-9]|1[0-2])")
 
     fun buildMap(
@@ -88,6 +112,24 @@ internal object CognitiveMapEngine {
             it.deletedAt == null && it.archivedAt == null && it.aiPolicy != "exclude" &&
                 (it.searchText.isNotBlank() || !it.title.isNullOrBlank() || it.mediaMask != 0)
         }
+        val input = prepareMap(
+            eligible.map { CognitiveMapCandidate(it.id, it.title, it.createdAt, it.updatedAt) },
+            tags, noteTags, links, activeMonthFilter, reclusterForMonth, maxSampledNotes,
+        )
+        val sampledIds = input.sampled.mapTo(HashSet()) { it.id }
+        val texts = eligible.asSequence().filter { it.id in sampledIds }.associate { it.id to it.searchText }
+        return buildMap(input, texts, customClusterNames, mode, nowIso)
+    }
+
+    fun prepareMap(
+        eligible: List<CognitiveMapCandidate>,
+        tags: List<TagEntity>,
+        noteTags: List<NoteTagEntity>,
+        links: List<NoteLinkEntity>,
+        activeMonthFilter: String?,
+        reclusterForMonth: Boolean,
+        maxSampledNotes: Int = 800,
+    ): CognitiveMapInput {
         val monthsById = eligible.associate { it.id to yearMonth(it) }
         val availableMonths = monthsById.values.distinct().sortedWith(
             compareBy<String> { it == UNKNOWN_MONTH }.thenByDescending { it },
@@ -119,10 +161,27 @@ internal object CognitiveMapEngine {
         }
         val sampledIds = sampled.mapTo(HashSet()) { it.id }
         val explicitSample = explicit.filter { it.sourceNoteId in sampledIds && it.targetNoteId in sampledIds }
+        return CognitiveMapInput(
+            sampled, monthsById, availableMonths, tagsById, tagIdsByNote, explicitSample,
+            eligible.size, workingPool.size, activeMonthFilter, reclustered,
+        )
+    }
+
+    fun buildMap(
+        input: CognitiveMapInput,
+        texts: Map<String, String>,
+        customClusterNames: Map<String, String>,
+        mode: CognitiveMapMode,
+        nowIso: String = Instant.now().toString(),
+        checkActive: () -> Unit = {},
+    ): CognitiveMapSnapshot {
+        val sampled = input.sampled
+        val tagIdsByNote = input.tagIdsByNote
+        val tagsById = input.tagsById
         val edges = if (mode == CognitiveMapMode.RELATIONSHIP_GRAPH) {
-            explicitSample + sharedTagEdges(sampled, tagIdsByNote, tagsById, explicitSample)
+            input.explicitEdges + sharedTagEdges(sampled, tagIdsByNote, tagsById, input.explicitEdges, checkActive)
         } else {
-            explicitSample
+            input.explicitEdges
         }
         val degree = countDegrees(edges)
         val clusters = mutableListOf<CognitiveMapCluster>()
@@ -137,9 +196,9 @@ internal object CognitiveMapEngine {
             }
             positions.forEachIndexed { index, point -> points[index] = point }
         } else {
-            val vectors = buildVectors(sampled, tagIdsByNote, tagsById)
+            val vectors = buildVectors(sampled, texts, tagIdsByNote, tagsById, checkActive)
             val k = sqrt(sampled.size / 2.0).roundToInt().coerceIn(3, 8)
-            val groups = cluster(vectors, k)
+            val groups = cluster(vectors, k, checkActive)
             groups.forEachIndexed { index, group ->
                 val noteIds = group.members.map { sampled[it].id }
                 val label = topicLabel(group, vectors, noteIds, tagIdsByNote, tagsById)
@@ -172,26 +231,28 @@ internal object CognitiveMapEngine {
                 }
             }
             val clustersById = clusters.associateBy { it.clusterId }
-            repel(points, clusterIds.map { clustersById.getValue(it) })
+            repel(points, clusterIds.map { clustersById.getValue(it) }, checkActive)
         }
 
         val nodes = sampled.mapIndexed { index, note ->
-            val month = monthsById.getValue(note.id)
-            val title = LocalRetrievalEngine.displayNoteTitle(note)
-            val excerpt = note.searchText.trim().ifEmpty { title }
+            checkActive()
+            val month = input.monthsById.getValue(note.id)
+            val text = texts[note.id].orEmpty()
+            val title = LocalRetrievalEngine.displayNoteTitle(note.title, text)
+            val excerpt = text.trim().ifEmpty { title }
             CognitiveMapNode(
                 note.id, title, safeUtf16Slice(excerpt, 0, 160), clusterIds[index],
                 points[index].x.toFloat(), points[index].y.toFloat(), month,
                 tagIdsByNote[note.id].orEmpty().map { tagsById.getValue(it).name }.distinct().sorted(),
-                degree[note.id] ?: 0, activeMonthFilter == null || month == activeMonthFilter,
+                degree[note.id] ?: 0, input.activeMonthFilter == null || month == input.activeMonthFilter,
             )
         }
         val covered = nodes.size
         return CognitiveMapSnapshot(
-            mode, clusters, nodes, edges, availableMonths, activeMonthFilter, reclustered,
-            covered, eligible.size,
-            if (covered < workingPool.size) {
-                "按时间与关联度抽样覆盖 ${covered}/${eligible.size} 篇"
+            mode, clusters, nodes, edges, input.availableMonths, input.activeMonthFilter, input.reclustered,
+            covered, input.eligibleCount,
+            if (covered < input.workingCount) {
+                "按时间与关联度抽样覆盖 ${covered}/${input.eligibleCount} 篇"
             } else {
                 "已覆盖全部 ${covered} 篇笔记"
             },
@@ -227,7 +288,7 @@ internal object CognitiveMapEngine {
         return dx * dx + dy * dy
     }
 
-    private fun yearMonth(note: NoteEntity): String =
+    private fun yearMonth(note: CognitiveMapCandidate): String =
         note.updatedAt.take(7).takeIf(monthPrefix::matches)
             ?: note.createdAt.take(7).takeIf(monthPrefix::matches)
             ?: UNKNOWN_MONTH
@@ -242,19 +303,19 @@ internal object CognitiveMapEngine {
     }
 
     private fun sample(
-        pool: List<NoteEntity>,
+        pool: List<CognitiveMapCandidate>,
         monthsById: Map<String, String>,
         tagIdsByNote: Map<String, List<String>>,
         linkDegree: Map<String, Int>,
         limit: Int,
-    ): List<NoteEntity> {
-        val ranked = compareByDescending<NoteEntity> {
+    ): List<CognitiveMapCandidate> {
+        val ranked = compareByDescending<CognitiveMapCandidate> {
             (linkDegree[it.id] ?: 0) + tagIdsByNote[it.id].orEmpty().size
         }.thenBy { it.id }
         val buckets = pool.groupBy { monthsById.getValue(it.id) }.values
             .map { it.sortedWith(ranked) }
             .sortedWith { a, b -> ranked.compare(a.first(), b.first()) }
-        val selected = ArrayList<NoteEntity>(limit)
+        val selected = ArrayList<CognitiveMapCandidate>(limit)
         // One note per month per pass, returning unused slots to the remaining months.
         for (rank in 0 until buckets.maxOf { it.size }) {
             for (bucket in buckets) {
@@ -274,10 +335,11 @@ internal object CognitiveMapEngine {
     )
 
     private fun sharedTagEdges(
-        sampled: List<NoteEntity>,
+        sampled: List<CognitiveMapCandidate>,
         tagIdsByNote: Map<String, List<String>>,
         tagsById: Map<String, TagEntity>,
         explicit: List<CognitiveMapEdge>,
+        checkActive: () -> Unit,
     ): List<CognitiveMapEdge> {
         val indexById = sampled.mapIndexed { index, note -> note.id to index }.toMap()
         val size = sampled.size
@@ -295,10 +357,14 @@ internal object CognitiveMapEngine {
         val candidates = HashMap<Long, TagMatch>()
         for ((tagId, members) in membersByTag) {
             val weight = ln(1 + size.toDouble() / (members.size + 1))
+            val maxOffset = minOf(SHARED_TAG_NEIGHBORS, members.size / 2)
             for (i in members.indices) {
-                for (j in i + 1 until members.size) {
-                    val left = members[i]
-                    val right = members[j]
+                checkActive()
+                for (offset in 1..maxOffset) {
+                    val j = (i + offset) % members.size
+                    if (members.size == offset * 2 && i > j) continue
+                    val left = minOf(members[i], members[j])
+                    val right = maxOf(members[i], members[j])
                     val key = left.toLong() * size + right
                     if (key in explicitPairs) continue
                     val match = candidates.getOrPut(key) { TagMatch(left, right, 0.0, tagId, weight) }
@@ -328,11 +394,14 @@ internal object CognitiveMapEngine {
     }
 
     private fun buildVectors(
-        notes: List<NoteEntity>,
+        notes: List<CognitiveMapCandidate>,
+        texts: Map<String, String>,
         tagIdsByNote: Map<String, List<String>>,
         tagsById: Map<String, TagEntity>,
+        checkActive: () -> Unit,
     ): List<Map<String, Double>> {
         val frequencies = notes.map { note ->
+            checkActive()
             val terms = mutableMapOf<String, Double>()
             fun addTokens(text: String, weight: Double) {
                 for (token in LocalRetrievalEngine.tokenizeForIndex(text)) {
@@ -340,7 +409,7 @@ internal object CognitiveMapEngine {
                 }
             }
             addTokens(note.title.orEmpty(), 2.0)
-            addTokens(note.searchText, 1.0)
+            addTokens(texts[note.id].orEmpty(), 1.0)
             for (id in tagIdsByNote[note.id].orEmpty()) addTokens(tagsById.getValue(id).name, 2.0)
             terms
         }
@@ -358,7 +427,7 @@ internal object CognitiveMapEngine {
     private data class TopicGroup(val members: List<Int>, val centroid: Map<String, Double>)
 
     // Spherical k-means, with farthest-first seeds and stable tie-breaking in note ID order.
-    private fun cluster(vectors: List<Map<String, Double>>, k: Int): List<TopicGroup> {
+    private fun cluster(vectors: List<Map<String, Double>>, k: Int, checkActive: () -> Unit): List<TopicGroup> {
         val assignments = IntArray(vectors.size) { -1 }
         val bestSeedSimilarity = DoubleArray(vectors.size) { -1.0 }
         var centroids = List(k) { group ->
@@ -373,6 +442,7 @@ internal object CognitiveMapEngine {
         }
         var groups = emptyList<TopicGroup>()
         for (iteration in 0 until 20) {
+            checkActive()
             val members = List(k) { mutableListOf<Int>() }
             val similarities = DoubleArray(vectors.size)
             var changed = false
@@ -455,9 +525,10 @@ internal object CognitiveMapEngine {
 
     private data class Point(val x: Double, val y: Double)
 
-    private fun repel(points: Array<Point>, clusters: List<CognitiveMapCluster>) {
+    private fun repel(points: Array<Point>, clusters: List<CognitiveMapCluster>, checkActive: () -> Unit) {
         val gridWidth = (1.0 / NODE_SPACING).toInt() + 1
         repeat(15) {
+            checkActive()
             val grid = arrayOfNulls<MutableList<Int>>(gridWidth * gridWidth)
             for ((i, point) in points.withIndex()) {
                 val cell = (point.x / NODE_SPACING).toInt() + gridWidth * (point.y / NODE_SPACING).toInt()

@@ -194,6 +194,13 @@ class ExternalNoteImporterTest {
     }
 
     @Test
+    fun singleNoteMustFitInTheAndroidDatabaseReadWindow() {
+        val archive = zipFile("long-note.md" to "a".repeat(1_100_000), compression = Deflater.NO_COMPRESSION)
+        val error = assertThrows(BackupValidationException::class.java) { preview(archive, "bundle.zip") }
+        assertTrue(error.message.orEmpty().contains("「long-note」的单条笔记过大"))
+    }
+
+    @Test
     fun zipRejectsDecodedTextOverTheCumulativePreviewBudget() {
         val whitespace = " ".repeat(6_000_001)
         val file = zipFile("notes/one.md" to whitespace, "notes/two.md" to whitespace, compression = Deflater.NO_COMPRESSION)

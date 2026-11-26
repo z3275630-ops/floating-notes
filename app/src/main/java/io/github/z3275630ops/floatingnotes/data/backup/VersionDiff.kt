@@ -130,8 +130,11 @@ internal object VersionDiff {
         attachmentIdMap: Map<String, String>,
         reminderIdMap: Map<String, String> = emptyMap(),
         occurrenceIdMap: Map<String, String> = emptyMap(),
+        clearTaskIds: Boolean = false,
     ): Pair<String, Boolean> {
-        if (noteIdMap.isEmpty() && attachmentIdMap.isEmpty() && reminderIdMap.isEmpty() && occurrenceIdMap.isEmpty()) {
+        if (!clearTaskIds && noteIdMap.isEmpty() && attachmentIdMap.isEmpty() &&
+            reminderIdMap.isEmpty() && occurrenceIdMap.isEmpty()
+        ) {
             return documentJson to false
         }
         val root = MiniJson.parseObject(documentJson)
@@ -166,13 +169,19 @@ internal object VersionDiff {
             } else if (type == "checkbox") {
                 val remId = obj["reminder_id"] as? String
                 val mappedRemId = remId?.let { reminderIdMap[it] }
-                if (mappedRemId != null && mappedRemId != remId) {
-                    updated = (updated ?: LinkedHashMap(obj)).apply { put("reminder_id", mappedRemId) }
+                if (clearTaskIds && remId != null) {
+                    updated = LinkedHashMap(obj).apply { remove("reminder_id") }
+                    changed = true
+                } else if (mappedRemId != null && mappedRemId != remId) {
+                    updated = LinkedHashMap(obj).apply { put("reminder_id", mappedRemId) }
                     changed = true
                 }
                 val occId = obj["occurrence_id"] as? String
                 val mappedOccId = occId?.let { occurrenceIdMap[it] }
-                if (mappedOccId != null && mappedOccId != occId) {
+                if (clearTaskIds && occId != null) {
+                    updated = (updated ?: LinkedHashMap(obj)).apply { remove("occurrence_id") }
+                    changed = true
+                } else if (mappedOccId != null && mappedOccId != occId) {
                     updated = (updated ?: LinkedHashMap(obj)).apply { put("occurrence_id", mappedOccId) }
                     changed = true
                 }

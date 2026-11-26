@@ -449,7 +449,10 @@ internal object EditorBlockOps {
         val remaining = beforeCursor + afterCursor
         val block = if (isToggleTitle || original.text == remaining) original else original.copy(
             text = remaining,
-            marks = adjustMarksForTextEdit(original.marks, original.text, remaining, beforeCursor.length),
+            marks = adjustMarksForTextEdit(
+                original.marks, original.text, remaining, beforeCursor.length,
+                replacedRange = beforeCursor.length until (original.text.length - afterCursor.length),
+            ),
         )
         val updated = blocks.toMutableList()
 
@@ -548,6 +551,63 @@ internal object EditorBlockOps {
                 BlockEditOutcome(updated, right.id, 0)
             }
         }
+    }
+
+    fun insertMultilineText(
+        blocks: List<NoteBlock>,
+        blockIndex: Int,
+        previous: TextFieldValue,
+        next: TextFieldValue,
+        marks: List<NoteTextMark>,
+    ): BlockEditOutcome? {
+        val block = blocks.getOrNull(blockIndex) ?: return null
+        if (block.type == "callout" || block.type == "toggle" || !block.editable) return null
+        val start = previous.selection.min
+        val oldEnd = previous.selection.max
+        val end = oldEnd + next.text.length - previous.text.length
+        if (end <= start || !next.selection.collapsed || next.selection.end != end ||
+            !next.text.regionMatches(0, previous.text, 0, start) ||
+            !next.text.regionMatches(end, previous.text, oldEnd, previous.text.length - oldEnd)
+        ) return null
+        if (next.text.indexOf('\n', start).let { it < 0 || it >= end }) return null
+
+        val inserted = mutableListOf<NoteBlock>()
+        var partStart = 0
+        fun addPart(partEnd: Int) {
+            val text = next.text.substring(partStart, partEnd)
+            val partMarks = normalizeMarks(
+                marks.mapNotNull { mark ->
+                    val left = maxOf(mark.start, partStart)
+                    val right = minOf(mark.end, partEnd)
+                    if (left < right) NoteTextMark(mark.type, left - partStart, right - partStart) else null
+                },
+                text,
+            )
+            val part = if (inserted.isEmpty()) {
+                block.copy(text = text, marks = partMarks)
+            } else {
+                when (block.type) {
+                    "bullet" -> NoteBlock.bullet(text = text, indent = block.indent, marks = partMarks)
+                    "numbered" -> NoteBlock.numbered(text = text, indent = block.indent, marks = partMarks)
+                    "checkbox" -> NoteBlock.checkbox(text = text, indent = block.indent, marks = partMarks)
+                    "quote" -> NoteBlock.quote(text = text, indent = block.indent, marks = partMarks)
+                    else -> NoteBlock.paragraph(text = text, indent = if (block.type == "heading") 0 else block.indent, marks = partMarks)
+                }
+            }
+            inserted.add(part)
+        }
+        for (position in start until end) {
+            if (next.text[position] == '\n') {
+                val partEnd = if (position > start && next.text[position - 1] == '\r') position - 1 else position
+                addPart(partEnd)
+                partStart = position + 1
+            }
+        }
+        addPart(next.text.length)
+        val result = blocks.toMutableList()
+        result[blockIndex] = inserted.first()
+        result.addAll(blockIndex + 1, inserted.drop(1))
+        return BlockEditOutcome(result, inserted.last().id, end - partStart)
     }
 
     fun applyBackspaceAtStart(
@@ -799,6 +859,17 @@ internal object EditorBlockOps {
         )
     }
 
+    fun sweepBlockSelection(
+        blockIds: List<String>,
+        baseline: Set<String>,
+        anchor: Int,
+        current: Int,
+    ): Set<String> {
+        if (anchor !in blockIds.indices || current !in blockIds.indices) return baseline
+        val range = blockIds.subList(minOf(anchor, current), maxOf(anchor, current) + 1)
+        return if (blockIds[anchor] in baseline) baseline - range.toSet() else baseline + range
+    }
+
     fun toggleBlockSelection(selectedIds: Set<String>, blockId: String): Set<String> =
         if (blockId in selectedIds) selectedIds - blockId else selectedIds + blockId
 
@@ -980,12 +1051,24 @@ internal class BlockDragController {
     private var sourceTopInRootPx by mutableFloatStateOf(0f)
     var listTopInRootPx by mutableFloatStateOf(0f)
 
+    var preparedBlockId by mutableStateOf<String?>(null)
+        private set
+
+    fun prepare(blockId: String) {
+        if (!isDragging) preparedBlockId = blockId
+    }
+
+    fun clearPreparation(blockId: String) {
+        if (preparedBlockId == blockId) preparedBlockId = null
+    }
+
     val isDragging: Boolean get() = draggingBlockId != null
     val dragOffsetY: Float get() = lastPointerRootY - grabOffsetY - sourceTopInRootPx
     val pointerViewportY: Float get() = lastPointerRootY - listTopInRootPx
 
     fun start(blockId: String, index: Int, pointerRootY: Float, sourceTopInRootPx: Float) {
         if (index < 0 || !pointerRootY.isFinite() || !sourceTopInRootPx.isFinite()) return
+        clearPreparation(blockId)
         grabOffsetY = pointerRootY - sourceTopInRootPx
         lastPointerRootY = pointerRootY
         this.sourceTopInRootPx = sourceTopInRootPx
@@ -1092,11 +1175,36 @@ internal class EditorEngineState(private val session: EditorSession) {
 
     fun blockForInput(blockId: String): EditorBlock? = session.blocks.getOrNull(indexOfBlock(blockId))
 
+    fun moveCaretToAdjacentField(blockId: String, inToggleTitle: Boolean, forward: Boolean): Boolean {
+        val index = indexOfBlock(blockId)
+        val current = session.blocks.getOrNull(index)?.documentBlock() ?: return false
+        val movingWithinToggle = current.type == "toggle" && !current.collapsed && (forward == inToggleTitle)
+        val target = if (movingWithinToggle) {
+            current
+        } else {
+            val candidates = if (forward) (index + 1)..session.blocks.lastIndex else (index - 1) downTo 0
+            val targetIndex = candidates.firstOrNull { session.blocks[it].editable } ?: return false
+            session.blocks[targetIndex].documentBlock()
+        }
+        val targetTitle = target.type == "toggle" && when {
+            movingWithinToggle -> !inToggleTitle
+            else -> forward || target.collapsed
+        }
+        val offset = when {
+            forward -> 0
+            targetTitle -> target.title.length
+            else -> target.text.length
+        }
+        applyFocusSelection(target, targetTitle, TextRange(offset), restoreInputFocus = false)
+        requestFocus(target.id, targetTitle, showKeyboard = false)
+        return true
+    }
+
     fun tfvStateFor(block: EditorBlock): MutableState<TextFieldValue> {
         val existing = tfvMap[block.id]
         val blockText = block.text.text.toString()
         if (existing != null) {
-            if (existing.value.text != blockText) {
+            if (existing.value.composition == null && existing.value.text != blockText) {
                 val safeSel = clampSelection(existing.value.selection, blockText.length)
                 existing.value = TextFieldValue(blockText, safeSel)
             }
@@ -1110,7 +1218,7 @@ internal class EditorEngineState(private val session: EditorSession) {
         val docTitle = block.documentBlock().title
         val existing = titleTfvMap[block.id]
         if (existing != null) {
-            if (existing.value.text != docTitle) {
+            if (existing.value.composition == null && existing.value.text != docTitle) {
                 existing.value = TextFieldValue(docTitle, clampSelection(existing.value.selection, docTitle.length))
             }
             return existing
@@ -1138,7 +1246,7 @@ internal class EditorEngineState(private val session: EditorSession) {
     fun requestFocus(
         blockId: String,
         toggleTitle: Boolean = false,
-        showKeyboard: Boolean = false,
+        showKeyboard: Boolean = true,
     ) {
         focusSeq += 1
         pendingFocus = PendingBlockFocus(
@@ -1152,6 +1260,7 @@ internal class EditorEngineState(private val session: EditorSession) {
     fun applyOutcome(
         outcome: BlockEditOutcome,
         recordUndoBefore: EditorSnapshot? = null,
+        restoreInputFocus: Boolean = true,
     ) {
         if (recordUndoBefore != null && outcome.blocks != recordUndoBefore.blocks) {
             undoStack.recordStructuralChange(recordUndoBefore)
@@ -1161,7 +1270,9 @@ internal class EditorEngineState(private val session: EditorSession) {
         if (focusId != null) {
             val targetDoc = outcome.blocks.firstOrNull { it.id == focusId }
             if (targetDoc != null) {
-                if (targetDoc.editable) applyFocusSelection(targetDoc, outcome.focusToggleTitle, outcome.selection)
+                if (targetDoc.editable) {
+                    applyFocusSelection(targetDoc, outcome.focusToggleTitle, outcome.selection, restoreInputFocus)
+                }
             }
         }
         if (outcome.statusHint != null) {
@@ -1170,7 +1281,15 @@ internal class EditorEngineState(private val session: EditorSession) {
         refreshUndoFlags()
     }
 
-    fun performUndo(focusedBlockId: String?, focusToggleTitle: Boolean): String? {
+    fun isComposing(blockId: String?, toggleTitle: Boolean): Boolean =
+        blockId != null && (if (toggleTitle) titleTfvMap else tfvMap)[blockId]?.value?.composition != null
+
+    fun performUndo(
+        focusedBlockId: String?,
+        focusToggleTitle: Boolean,
+        restoreInputFocus: Boolean = focusedBlockId != null,
+    ): String? {
+        if (isComposing(focusedBlockId, focusToggleTitle)) return null
         val current = snapshot(focusedBlockId, focusToggleTitle)
         return when (val result = undoStack.undo(current)) {
             is UndoRedoOutcome.AtBoundary -> {
@@ -1179,14 +1298,19 @@ internal class EditorEngineState(private val session: EditorSession) {
                 result.message
             }
             is UndoRedoOutcome.Applied -> {
-                restoreSnapshot(result.snapshot)
+                restoreSnapshot(result.snapshot, restoreInputFocus)
                 refreshUndoFlags()
                 null
             }
         }
     }
 
-    fun performRedo(focusedBlockId: String?, focusToggleTitle: Boolean): String? {
+    fun performRedo(
+        focusedBlockId: String?,
+        focusToggleTitle: Boolean,
+        restoreInputFocus: Boolean = focusedBlockId != null,
+    ): String? {
+        if (isComposing(focusedBlockId, focusToggleTitle)) return null
         val current = snapshot(focusedBlockId, focusToggleTitle)
         return when (val result = undoStack.redo(current)) {
             is UndoRedoOutcome.AtBoundary -> {
@@ -1195,14 +1319,14 @@ internal class EditorEngineState(private val session: EditorSession) {
                 result.message
             }
             is UndoRedoOutcome.Applied -> {
-                restoreSnapshot(result.snapshot)
+                restoreSnapshot(result.snapshot, restoreInputFocus)
                 refreshUndoFlags()
                 null
             }
         }
     }
 
-    private fun restoreSnapshot(snap: EditorSnapshot) {
+    private fun restoreSnapshot(snap: EditorSnapshot, restoreInputFocus: Boolean) {
         pendingFocus = null
         val liveBlocks = session.blocks.associateBy { it.id }
         val restored = snap.blocks.map { block ->
@@ -1217,10 +1341,18 @@ internal class EditorEngineState(private val session: EditorSession) {
                 block
             }
         }
-        applyOutcome(BlockEditOutcome(restored, snap.focusedBlockId, snap.cursorOffset, snap.focusToggleTitle, selection = snap.selection))
+        applyOutcome(
+            BlockEditOutcome(restored, snap.focusedBlockId, snap.cursorOffset, snap.focusToggleTitle, selection = snap.selection),
+            restoreInputFocus = restoreInputFocus,
+        )
     }
 
-    private fun applyFocusSelection(doc: NoteBlock, toggleTitle: Boolean, selection: TextRange) {
+    private fun applyFocusSelection(
+        doc: NoteBlock,
+        toggleTitle: Boolean,
+        selection: TextRange,
+        restoreInputFocus: Boolean,
+    ) {
         val block = blockForInput(doc.id) ?: return
         val title = doc.type == "toggle" && (toggleTitle || doc.collapsed)
         val state = if (title) titleTfvStateFor(block) else tfvStateFor(block)
@@ -1229,7 +1361,7 @@ internal class EditorEngineState(private val session: EditorSession) {
             state.value = state.value.copy(selection = range, composition = null)
         }
         if (!title && block.text.selection != range) block.text.edit { this.selection = range }
-        requestFocus(doc.id, title)
+        if (restoreInputFocus) requestFocus(doc.id, title)
     }
 
     fun replaceSessionBlocks(targetBlocks: List<NoteBlock>) {

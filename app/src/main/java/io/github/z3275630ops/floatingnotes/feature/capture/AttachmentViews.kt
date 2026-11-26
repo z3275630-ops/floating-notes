@@ -81,6 +81,7 @@ internal fun AttachmentRow(
     insertTranscript: (String) -> Boolean,
     aiCleanEnabled: Boolean = false,
     aiCleaning: Boolean = false,
+    editable: Boolean = true,
     cleanedTranscriptPreview: String? = null,
     extractedTodoPreviews: List<String> = emptyList(),
     aiCleanNotice: String? = null,
@@ -167,7 +168,7 @@ internal fun AttachmentRow(
                     )
                 }
             }
-            if (AttachmentKind.fromMime(item?.mime) == AttachmentKind.Audio) {
+            if (editable && AttachmentKind.fromMime(item?.mime) == AttachmentKind.Audio) {
                 TextButton(
                     onClick = { showTranscription = true },
                     enabled = enabled,
@@ -179,7 +180,7 @@ internal fun AttachmentRow(
                     )
                 }
             }
-            TextButton(
+            if (editable) TextButton(
                 onClick = remove,
                 enabled = enabled,
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),

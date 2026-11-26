@@ -19,6 +19,13 @@ class EditorDragAndFocusUnitTest {
     private val ids = listOf("a", "b", "c", "d")
 
     @Test
+    fun sweepSelectionCanReverseAndDeselectWithoutTouchingOutsideRows() {
+        assertEquals(setOf("a", "b", "c", "d"), EditorBlockOps.sweepBlockSelection(ids, setOf("a"), 1, 3))
+        assertEquals(setOf("a", "b"), EditorBlockOps.sweepBlockSelection(ids, setOf("a"), 1, 1))
+        assertEquals(setOf("d"), EditorBlockOps.sweepBlockSelection(ids, setOf("a", "b", "d"), 1, 0))
+    }
+
+    @Test
     fun absolutePointerCoordinatesAreInvariantUnderMovingHandleAndAutoScroll() {
         val drag = BlockDragController().apply { listTopInRootPx = 80f }
         val handleOrigin = 100f
@@ -250,6 +257,17 @@ class EditorDragAndFocusUnitTest {
         assertEquals("10:15", redo.reminderLocalTime)
         assertEquals("10:15", redo.pendingReminderTime)
         assertEquals(true, redo.pendingScheduleChanged)
+    }
+
+    @Test
+    fun enterDeletingTheFirstOfTwoIdenticalCharactersKeepsTheSurvivorsFormatting() {
+        val markedFirst = NoteBlock.paragraph(
+            text = "甲甲乙",
+            marks = listOf(NoteTextMark(NoteMarkType.BOLD, 0, 1)),
+        )
+        val result = EditorBlockOps.applyEnter(listOf(markedFirst), 0, "", "甲乙")
+        assertEquals(listOf("", "甲乙"), result.blocks.map { it.text })
+        assertEquals(emptyList<NoteTextMark>(), result.blocks.last().marks)
     }
 
     @Test

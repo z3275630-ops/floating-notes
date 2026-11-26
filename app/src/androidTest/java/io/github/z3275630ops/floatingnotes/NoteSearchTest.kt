@@ -145,6 +145,14 @@ class NoteSearchTest {
         Unit
     }
 
+    @Test fun smartSearchFindsLiteralInsideAnOlderAsciiWord() = runBlocking {
+        memory { db ->
+            db.notes().insertNotes(listOf(note("old", "runtime").copy(updatedAt = "2020-01-01T00:00:00Z")))
+            (1..2_000).map { note("new-$it", "无关内容 $it") }.chunked(100).forEach { db.notes().insertNotes(it) }
+            assertEquals(listOf("old"), SearchRepository(db).observeSmart("time", NoteScope(), 51).first().map { it.id })
+        }
+    }
+
     @Test fun measureTenThousandNotesWithSmallResultPages() = runBlocking {
         memory { db ->
             db.withTransaction {

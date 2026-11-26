@@ -62,6 +62,33 @@ internal class BackupManager(
 
     fun stagingDirForRestore(restoreId: String): File = File(journalDir, "staging/$restoreId")
     private fun extractDirForRestore(restoreId: String): File = File(journalDir, "extract/$restoreId")
+    // The attachment store ignores names ending in .part.
+    private fun stagedDraftExtras(restoreId: String) = File(stagingDirForRestore(restoreId), "draft-extras.part")
+    private val draftExtrasDir get() = File(context.filesDir, "draft_extras")
+
+    private fun stageDraftExtras(restoreId: String, draftId: String, extras: String?) {
+        if (!BackupCodec.isSafeAttachmentId(draftId)) {
+            if (!extras.isNullOrBlank()) throw BackupValidationException("草稿标识无效，无法恢复附加信息")
+            return
+        }
+        if (extras == null && !File(draftExtrasDir, "$draftId.json").isFile) return
+        writeAtomicText(File(stagedDraftExtras(restoreId), "$draftId.json"), extras ?: "{}")
+    }
+
+    private fun promoteDraftExtras(restoreId: String) {
+        val staged = stagedDraftExtras(restoreId).listFiles()?.filter { it.isFile }.orEmpty()
+        if (staged.isEmpty()) return
+        if (!draftExtrasDir.isDirectory && !draftExtrasDir.mkdirs()) throw IOException("无法写入草稿附加信息")
+        for (file in staged) Os.rename(file.path, File(draftExtrasDir, file.name).path)
+    }
+
+    private fun remapDraftTags(extras: String?, tagIdMap: Map<String, String>): String? {
+        if (extras == null) return null
+        val data = LinkedHashMap(MiniJson.parseObject(extras))
+        val tags = (data["pending_tag_ids"] as? List<*>).orEmpty()
+        data["pending_tag_ids"] = tags.filterIsInstance<String>().mapNotNull(tagIdMap::get).distinct()
+        return MiniJson.encode(data)
+    }
 
     suspend fun activeLeaseIds(): Set<String> = withContext(Dispatchers.IO) {
         val retained = HashSet<String>()
@@ -99,6 +126,7 @@ internal class BackupManager(
                     stagingFolder = stageDir,
                     allowOverwrite = journal.mode == RestoreMode.REPLACE_ALL,
                 )
+                promoteDraftExtras(journal.id)
             }
             if (sentinelId != null) {
                 runCatching { database.agent().deleteAction(sentinelId) }
@@ -141,9 +169,9 @@ internal class BackupManager(
         now: Instant = Instant.now(),
     ): BackupManifest = withContext(Dispatchers.IO) {
         journalDir.mkdirs()
-        val snapshot = captureSnapshot(now)
-        writeLeases(snapshot.attachments.map { it.id })
         try {
+            val snapshot = captureSnapshot(now)
+            writeLeases(snapshot.attachments.map { it.id })
             val manifest = BackupCodec.writeBackupZip(
                 snapshot = snapshot,
                 targetZipFile = targetZipFile,
@@ -154,6 +182,8 @@ internal class BackupManager(
             )
             BackupCodec.validateArchiveStreaming(targetZipFile)
             manifest
+        } catch (err: OutOfMemoryError) {
+            throw BackupValidationException("设备可用内存不足，无法生成完整备份或还原前的回滚包", err)
         } finally {
             leasesFile.delete()
         }
@@ -249,17 +279,22 @@ internal class BackupManager(
         candidateZip: File,
         sourceLabel: String,
     ): RestorePreflight {
-        val parsed = BackupCodec.readAndValidateArchive(candidateZip, attachmentStagingDir = null)
-        val existingNoteIds = database.notes().allNotes().mapTo(HashSet()) { it.id }
-        val conflictCount = parsed.snapshot.notes.count { it.id in existingNoteIds }
+        val recordDir = File(preflightDir, "${candidateZip.name}.records")
+        val (manifest, conflictCount) = try {
+            val parsed = BackupCodec.readAndValidateArchive(candidateZip, recordStagingDir = recordDir)
+            val existingNoteIds = database.notes().allNoteIds().toHashSet()
+            parsed.manifest to parsed.snapshot.notes.count { it.id in existingNoteIds }
+        } finally {
+            recordDir.deleteRecursively()
+        }
         stagedPreflightArchive = candidateZip
         stagedPreflightSource = sourceLabel
-        val counts = parsed.manifest.counts
+        val counts = manifest.counts
         return RestorePreflight(
             sourceUri = sourceLabel,
-            exportedAt = parsed.manifest.exportedAt,
-            schemaVersion = parsed.manifest.backupSchemaVersion,
-            dbSchemaVersion = parsed.manifest.dbSchemaVersion,
+            exportedAt = manifest.exportedAt,
+            schemaVersion = manifest.backupSchemaVersion,
+            dbSchemaVersion = manifest.dbSchemaVersion,
             totalNotes = counts.notes,
             trashedNotes = counts.trashedNotes,
             versionCount = counts.versions,
@@ -305,7 +340,10 @@ internal class BackupManager(
 
         try {
             journalDir.mkdirs()
-            val parsed = BackupCodec.readAndValidateArchive(archiveFile, attachmentStagingDir = extractDir)
+            val recordDir = File(extractDir, "records.part")
+            val parsed = BackupCodec.readAndValidateArchive(
+                archiveFile, attachmentStagingDir = extractDir, recordStagingDir = recordDir,
+            )
             val attachmentIdMap = HashMap<String, String>(parsed.manifest.attachments.size)
             val reservedIds = HashSet<String>(existingById.keys).apply {
                 parsed.manifest.attachments.forEach { add(it.id) }
@@ -385,8 +423,6 @@ internal class BackupManager(
                     stagingFolder = stagingDir,
                 )
             }
-            extractDir.deleteRecursively()
-
             writeJournal(
                 RestoreJournalRecord(
                     id = restoreId,
@@ -438,7 +474,9 @@ internal class BackupManager(
                 stagingFolder = stagingDir,
                 allowOverwrite = mode == RestoreMode.REPLACE_ALL,
             )
+            promoteDraftExtras(restoreId)
             runCatching { database.agent().deleteAction(restoreCommitActionId(restoreId)) }
+            extractDir.deleteRecursively()
             stagingDir.deleteRecursively()
             pendingRestoreFile.delete()
             // Remove older rollback snapshots once new restore & rollback finished safely.
@@ -461,7 +499,13 @@ internal class BackupManager(
                 activeRemindersToSchedule = dbOutcome.activeReminders,
                 cancelledReminderIds = dbOutcome.cancelledReminderIds,
             )
-        } catch (err: Exception) {
+        } catch (failure: Throwable) {
+            val err = when (failure) {
+                is kotlinx.coroutines.CancellationException -> throw failure
+                is OutOfMemoryError -> BackupValidationException("设备可用内存不足，无法完成恢复", failure)
+                is Exception -> failure
+                else -> throw failure
+            }
             if (dbCommitted) {
                 // Keep stagingDir & pending_restore.json intact so next launch finishes Q053 promotion.
                 runCatching { extractDir.deleteRecursively() }
@@ -551,19 +595,25 @@ internal class BackupManager(
             orgDao.clearAllNotebooks()
             searchDao.clearAll()
 
-            val notes = snapshot.notes.map { it.toEntity() }
-            val noteIds = notes.mapTo(HashSet()) { it.id }
+            val noteIds = HashSet<String>()
+            val deletedNoteIds = HashSet<String>()
+            for (batch in snapshot.notes.asSequence().chunked(RESTORE_DOCUMENT_BATCH_SIZE)) {
+                val notes = batch.map { it.toEntity() }
+                for (note in notes) {
+                    noteIds.add(note.id)
+                    if (note.deletedAt != null) deletedNoteIds.add(note.id)
+                }
+                notesDao.insertNotes(notes)
+                taskDao.insertTasks(rebuildTaskIndexForNotes(notes))
+            }
             val tags = snapshot.tags.map { TagEntity(it.id, it.parentId, it.name, it.nameKey) }
             val tagIds = tags.mapTo(HashSet()) { it.id }
             val notebooks = snapshot.notebooks.map { NotebookEntity(it.id, it.name, it.nameKey) }
             val notebookIds = notebooks.mapTo(HashSet()) { it.id }
-            val deletedNoteIds = notes.asSequence().filter { it.deletedAt != null }.mapTo(HashSet()) { it.id }
-
-            notes.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertNotes(it) }
             tags.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertTags(it) }
             notebooks.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { orgDao.insertNotebooks(it) }
 
-            val versions = snapshot.versions.filter { it.noteId in noteIds }.map {
+            val versions = snapshot.versions.asSequence().filter { it.noteId in noteIds }.map {
                 NoteVersionEntity(
                     noteId = it.noteId,
                     revision = it.revision,
@@ -574,10 +624,14 @@ internal class BackupManager(
                     attachmentRefs = it.attachmentRefs,
                 )
             }
-            versions.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertVersions(it) }
+            for (batch in versions.chunked(RESTORE_DOCUMENT_BATCH_SIZE)) notesDao.insertVersions(batch)
 
-            val drafts = snapshot.drafts.map { it.toEntity() }
-            drafts.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertDrafts(it) }
+            for (batch in snapshot.drafts.asSequence().chunked(RESTORE_DOCUMENT_BATCH_SIZE)) {
+                notesDao.insertDrafts(batch.map {
+                    stageDraftExtras(restoreId, it.id, it.extrasJson)
+                    it.toEntity()
+                })
+            }
 
             val noteTags = snapshot.noteTags
                 .filter { it.noteId in noteIds && it.tagId in tagIds }
@@ -596,9 +650,6 @@ internal class BackupManager(
 
             val searches = snapshot.savedSearches.map { SavedSearch(it.id, it.name, it.keyword, it.scopeJson) }
             searches.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { searchDao.insertAll(it) }
-
-            val tasks = rebuildTaskIndexForNotes(notes)
-            tasks.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { taskDao.insertTasks(it) }
 
             val normalizedReminders = ArrayList<ReminderEntity>(snapshot.reminders.size)
             val activeToSchedule = ArrayList<ReminderEntity>()
@@ -638,15 +689,15 @@ internal class BackupManager(
             )
 
             DbRestoreSummary(
-                importedNotes = notes.size,
+                importedNotes = noteIds.size,
                 skippedOrRenamedNotes = 0,
                 activeReminders = activeToSchedule,
                 cancelledReminderIds = oldReminderIds,
                 pausedPastDueReminders = pausedPastDue,
             )
         } else {
-            val existingNotes = notesDao.allNotes().associateBy { it.id }
-            val existingDraftSlots = notesDao.allDrafts().mapTo(HashSet()) { it.slot }
+            val existingNotes = notesDao.restoreNoteMetadata().associateBy { it.id }
+            val existingDraftSlots = notesDao.draftSlots().toHashSet()
             val existingTags = orgDao.tags()
             val existingTagById = existingTags.associateBy { it.id }.toMutableMap()
             val existingTagByKey = existingTags.associateBy { it.parentId to it.nameKey }.toMutableMap()
@@ -778,7 +829,15 @@ internal class BackupManager(
             }
 
             // Pass 2: rewrite embedded reference targets, attachment IDs & task IDs inside documentJson.
-            val notesToInsert = ArrayList<NoteEntity>()
+            val notesToInsert = ArrayList<NoteEntity>(RESTORE_DOCUMENT_BATCH_SIZE)
+            val insertedNoteIds = HashSet<String>()
+            val deletedInsertedNoteIds = HashSet<String>()
+            suspend fun flushNotes() {
+                if (notesToInsert.isEmpty()) return
+                notesDao.insertNotes(notesToInsert)
+                taskDao.insertTasks(rebuildTaskIndexForNotes(notesToInsert))
+                notesToInsert.clear()
+            }
             var importedCount = 0
             var skippedOrRenamed = 0
 
@@ -821,16 +880,14 @@ internal class BackupManager(
                 } else {
                     notesToInsert.add(normalizedEntity)
                 }
+                insertedNoteIds.add(targetNoteId)
+                if (normalizedEntity.deletedAt != null) deletedInsertedNoteIds.add(targetNoteId)
                 importedCount++
+                if (notesToInsert.size == RESTORE_DOCUMENT_BATCH_SIZE) flushNotes()
             }
-            notesToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertNotes(it) }
+            flushNotes()
 
-            val insertedNoteIds = notesToInsert.mapTo(HashSet()) { it.id }
-            val deletedInsertedNoteIds = notesToInsert.asSequence()
-                .filter { it.deletedAt != null }
-                .mapTo(HashSet()) { it.id }
-
-            val versionsToInsert = snapshot.versions
+            val versionsToInsert = snapshot.versions.asSequence()
                 .filter { it.noteId !in skippedNoteIds && noteIdMap[it.noteId] in insertedNoteIds }
                 .map {
                     val (rewrittenVerDoc, verChanged) = VersionDiff.rewriteDocumentIds(
@@ -854,30 +911,30 @@ internal class BackupManager(
                         },
                     )
                 }
-            versionsToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertVersions(it) }
+            for (batch in versionsToInsert.chunked(RESTORE_DOCUMENT_BATCH_SIZE)) notesDao.insertVersions(batch)
 
-            val draftsToInsert = ArrayList<DraftEntity>()
+            val restoredNoteIds = noteIdMap.values.toHashSet()
+            val draftsToInsert = mutableListOf<DraftEntity>()
             for (d in snapshot.drafts) {
-                if (d.noteId in skippedNoteIds) continue
-                val hasSavedNoteMapping = noteIdMap.containsKey(d.noteId)
-                val mappedNoteId = noteIdMap[d.noteId] ?: if (
-                    d.noteId in existingNotes || d.noteId in noteIdMap.values
-                ) {
-                    newId()
-                } else {
-                    d.noteId
-                }
-                val baseSlot = if (d.slot == "note:${d.noteId}" && mappedNoteId != d.noteId) {
-                    "note:$mappedNoteId"
+                val savedNoteId = noteIdMap[d.noteId]
+                val baseSlot = if (d.slot == "note:${d.noteId}" && savedNoteId != null) {
+                    "note:$savedNoteId"
                 } else {
                     d.slot
                 }
-                val (mappedSlot, mappedSourceType) = if (baseSlot in existingDraftSlots) {
-                    val shareSlot = "capture:restore-${newId()}"
-                    shareSlot to (if (!hasSavedNoteMapping && d.sourceType == "manual") "share" else d.sourceType)
-                } else {
-                    baseSlot to (if (!hasSavedNoteMapping && baseSlot.startsWith("capture:")) "share" else d.sourceType)
+                val slotOccupied = baseSlot in existingDraftSlots
+                val extras = remapDraftTags(d.extrasJson, tagIdMap)
+                if (slotOccupied) {
+                    val local = notesDao.draft(baseSlot)
+                    if (local != null && local.noteId == (savedNoteId ?: d.noteId) && local.documentJson == d.documentJson &&
+                        readDraftExtras(local.id) == extras
+                    ) continue
                 }
+                val separate = slotOccupied || (savedNoteId == null &&
+                    (d.noteId in existingNotes || d.noteId in restoredNoteIds))
+                val mappedNoteId = if (separate) newId() else savedNoteId ?: d.noteId
+                val mappedSlot = if (separate) "capture:restore-${newId()}" else baseSlot
+                val mappedSource = if (mappedSlot.startsWith("capture:")) "share" else d.sourceType
                 existingDraftSlots.add(mappedSlot)
                 val (rewrittenDraftDoc, _) = VersionDiff.rewriteDocumentIds(
                     documentJson = d.documentJson,
@@ -885,18 +942,28 @@ internal class BackupManager(
                     attachmentIdMap = attachmentIdMap,
                     reminderIdMap = reminderIdMap,
                     occurrenceIdMap = occIdMap,
+                    clearTaskIds = separate,
                 )
-                draftsToInsert.add(
-                    d.toEntity().copy(
-                        id = newId(),
-                        slot = mappedSlot,
-                        noteId = mappedNoteId,
-                        documentJson = rewrittenDraftDoc,
-                        sourceType = mappedSourceType,
-                    ),
-                )
+                val draftId = newId()
+                stageDraftExtras(restoreId, draftId, extras)
+                draftsToInsert.add(d.toEntity().copy(
+                    id = draftId,
+                    slot = mappedSlot,
+                    noteId = mappedNoteId,
+                    baseRevision = when {
+                        separate -> 0L
+                        d.noteId in skippedNoteIds -> existingNotes.getValue(mappedNoteId).revision
+                        else -> d.baseRevision
+                    },
+                    documentJson = rewrittenDraftDoc,
+                    sourceType = mappedSource,
+                ))
+                if (draftsToInsert.size == RESTORE_DOCUMENT_BATCH_SIZE) {
+                    notesDao.insertDrafts(draftsToInsert)
+                    draftsToInsert.clear()
+                }
             }
-            draftsToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { notesDao.insertDrafts(it) }
+            if (draftsToInsert.isNotEmpty()) notesDao.insertDrafts(draftsToInsert)
 
             val noteTagsToInsert = snapshot.noteTags
                 .filter { it.noteId !in skippedNoteIds }
@@ -934,9 +1001,6 @@ internal class BackupManager(
                 .filter { it.id !in existingSearchIds }
                 .map { SavedSearch(it.id, it.name, it.keyword, it.scopeJson) }
             searchesToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { searchDao.insertAll(it) }
-
-            val tasksToInsert = rebuildTaskIndexForNotes(notesToInsert)
-            tasksToInsert.chunked(RESTORE_INSERT_BATCH_SIZE).forEach { taskDao.insertTasks(it) }
 
             val remindersToInsert = ArrayList<ReminderEntity>()
             val activeToSchedule = ArrayList<ReminderEntity>()
@@ -1261,6 +1325,12 @@ internal class BackupManager(
         mediaMask = mediaMask,
     )
 
+    private fun readDraftExtras(id: String): String? {
+        if (!BackupCodec.isSafeAttachmentId(id)) return null
+        val file = File(draftExtrasDir, "$id.json")
+        return file.takeIf { it.isFile }?.readText(StandardCharsets.UTF_8)?.takeUnless { it == "{}" }
+    }
+
     private fun DraftEntity.toBackupRecord() = BackupDraftRecord(
         id = id,
         slot = slot,
@@ -1271,6 +1341,7 @@ internal class BackupManager(
         updatedAt = updatedAt,
         sourceType = sourceType,
         sourceUrl = sourceUrl,
+        extrasJson = readDraftExtras(id),
     )
 
     private fun BackupDraftRecord.toEntity() = DraftEntity(
@@ -1346,6 +1417,7 @@ internal class BackupManager(
     companion object {
         private const val RESTORE_COMMIT_RUN_ID = "__system_restore__"
         private const val RESTORE_INSERT_BATCH_SIZE = 500
+        private const val RESTORE_DOCUMENT_BATCH_SIZE = 8
 
         internal fun restoreCommitActionId(restoreId: String): String = "__restore_commit__:$restoreId"
     }

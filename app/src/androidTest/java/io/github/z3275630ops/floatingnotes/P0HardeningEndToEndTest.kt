@@ -72,6 +72,7 @@ class P0HardeningEndToEndTest {
         val org: OrganizationRepository,
         val attachments: AttachmentStore,
         val backup: BackupManager,
+        val filesDir: File,
         val discovery: DiscoveryRepository,
         val agent: AgentRepository,
     )
@@ -83,12 +84,15 @@ class P0HardeningEndToEndTest {
         val store = AttachmentStore(appContext, attachmentsDir) { 10L * 1024L * 1024L * 1024L }
         val notes = NotesRepository(db)
         val org = OrganizationRepository(db)
-        val backup = BackupManager(appContext, db, store)
+        val backupContext = object : android.content.ContextWrapper(appContext) {
+            override fun getFilesDir(): File = rootDir
+        }
+        val backup = BackupManager(backupContext, db, store)
         val prefs = ExplorePreferences(appContext, prefsName = "e2e_p0_${newId()}")
         val discovery = DiscoveryRepository(db, notes, prefs)
         val agent = AgentRepository(db, notes, org, discovery)
         try {
-            block(Env(db, notes, org, store, backup, discovery, agent))
+            block(Env(db, notes, org, store, backup, rootDir, discovery, agent))
         } finally {
             db.close()
         }
@@ -270,6 +274,52 @@ class P0HardeningEndToEndTest {
             assertNotNull(promoted)
             assertArrayEquals(bytes, env.attachments.original(promoted!!).readBytes())
             assertNull(env.db.agent().actionById(BackupManager.restoreCommitActionId(restoreId)))
+        }
+    }
+
+    @Test
+    fun shardedMergeKeepsDraftForIdenticalSavedNoteAndRemapsPendingTags() = runBlocking {
+        val archive = temp.newFile("same-note-with-draft.zip")
+        lateinit var original: NoteEntity
+        lateinit var checkbox: NoteBlock
+        withTempEnv { src ->
+            checkbox = NoteBlock.checkbox("旧正文")
+            val first = NoteDocument(listOf(checkbox))
+            original = src.notes.commit(src.notes.newDraft("seed").copy(documentJson = first.encode(), editSeq = 1))
+            val next = NoteDocument(listOf(checkbox.copy(text = "尚未提交的改动")))
+            val draft = src.notes.newDraft("note:${original.id}", original).copy(documentJson = next.encode(), editSeq = 1)
+            src.notes.checkpoint(draft)
+            val tagId = src.org.createTag("待绑定")
+            File(src.filesDir, "draft_extras/${draft.id}.json").apply {
+                parentFile?.mkdirs()
+                writeText(MiniJson.encode(mapOf(
+                    "pending_tag_ids" to listOf(tagId),
+                    "pending_schedules" to listOf(mapOf(
+                        "block_id" to checkbox.id, "pending_reminder_time" to "09:30", "recurrence" to "WEEKLY",
+                    )),
+                )))
+            }
+            // Cross the production threshold so this exercises the disk-backed v2 restore path.
+            src.db.notes().insertNotes((1..200).map {
+                original.copy(id = "fixture-$it", lastDraftId = "fixture-draft-$it")
+            })
+            assertEquals(2, src.backup.exportFullBackupToFile(archive).backupSchemaVersion)
+        }
+        withTempEnv { dst ->
+            dst.db.notes().insertNotes(listOf(original.copy(revision = 4)))
+            val localTagId = dst.org.createTag("待绑定")
+            assertEquals(1, dst.backup.preflightBackupFile(archive).conflictNoteCount)
+            val restored = dst.backup.executeRestore(RestoreMode.MERGE_KEEP_CONFLICTS, autoBackupBeforeRestore = false)
+            assertTrue(restored.outcome is RestoreOutcome.Success)
+            val draft = dst.notes.loadDraft("note:${original.id}")!!
+            assertEquals(4L, draft.baseRevision)
+            assertEquals("尚未提交的改动", NoteDocument.decode(draft.documentJson).text)
+            assertEquals("旧正文", dst.notes.loadNote(original.id)!!.searchText)
+            val extras = MiniJson.parseObject(File(dst.filesDir, "draft_extras/${draft.id}.json").readText())
+            assertEquals(listOf(localTagId), extras["pending_tag_ids"])
+            val schedule = (extras["pending_schedules"] as List<*>).single() as Map<*, *>
+            assertEquals("09:30", schedule["pending_reminder_time"])
+            assertEquals(checkbox.id, schedule["block_id"])
         }
     }
 

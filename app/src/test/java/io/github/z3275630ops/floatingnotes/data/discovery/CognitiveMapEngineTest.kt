@@ -4,6 +4,7 @@ import io.github.z3275630ops.floatingnotes.data.local.NoteEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteLinkEntity
 import io.github.z3275630ops.floatingnotes.data.local.NoteTagEntity
 import io.github.z3275630ops.floatingnotes.data.local.TagEntity
+import io.github.z3275630ops.floatingnotes.feature.explore.mapClusterLabelY
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -17,6 +18,30 @@ import kotlin.math.hypot
 class CognitiveMapEngineTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun denseTagGraphIsBoundedCancelableAndFitsSmallDrawSurfaces() {
+        val seed = topicalNotes().first()
+        val notes = List(800) { seed.copy(id = "dense-$it") }
+        val tags = listOf(tag("shared", "共享标签"))
+        val memberships = notes.map { NoteTagEntity(it.id, "shared") }
+        val graph = CognitiveMapEngine.buildMap(
+            notes, tags, memberships, emptyList(), mode = CognitiveMapMode.RELATIONSHIP_GRAPH,
+        )
+        assertEquals(800, graph.nodes.size)
+        assertTrue(graph.edges.isNotEmpty())
+        assertTrue(graph.edges.size <= 800)
+        val candidates = notes.map { CognitiveMapCandidate(it.id, it.title, it.createdAt, it.updatedAt) }
+        val input = CognitiveMapEngine.prepareMap(candidates, tags, memberships, emptyList(), null, false)
+        var checkpoints = 0
+        org.junit.Assert.assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+            CognitiveMapEngine.buildMap(input, emptyMap(), emptyMap(), CognitiveMapMode.RELATIONSHIP_GRAPH) {
+                if (++checkpoints == 12) throw kotlinx.coroutines.CancellationException()
+            }
+        }
+        assertNull(mapClusterLabelY(10f, 35f, 18f))
+        assertEquals(18f, mapClusterLabelY(0f, 36f, 18f))
+    }
 
     @Test
     fun layoutIsReproducibleEvenWhenInputsAreReordered() {

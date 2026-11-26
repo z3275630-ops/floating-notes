@@ -808,10 +808,12 @@ internal object LocalRetrievalEngine {
         return sb.toString()
     }
 
-    fun displayNoteTitle(note: NoteEntity): String {
-        val t = note.title?.trim()
+    fun displayNoteTitle(note: NoteEntity): String = displayNoteTitle(note.title, note.searchText)
+
+    fun displayNoteTitle(title: String?, text: String): String {
+        val t = title?.trim()
         if (!t.isNullOrEmpty()) return t
-        val firstLine = note.searchText.lineSequence().firstOrNull { it.isNotBlank() }?.trim()
+        val firstLine = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()
         return if (!firstLine.isNullOrEmpty()) safeUtf16Slice(firstLine, 0, 48) else "无标题笔记"
     }
 

@@ -17,6 +17,8 @@ import io.github.z3275630ops.floatingnotes.data.discovery.ReviewEventEntity
 import io.github.z3275630ops.floatingnotes.data.discovery.ReviewSessionEntity
 import io.github.z3275630ops.floatingnotes.data.discovery.WalkSessionEntity
 import io.github.z3275630ops.floatingnotes.data.discovery.WalkStepEntity
+import io.github.z3275630ops.floatingnotes.data.discovery.CognitiveMapCandidate
+import io.github.z3275630ops.floatingnotes.data.discovery.CognitiveMapText
 import kotlinx.coroutines.flow.Flow
 
 @Entity(
@@ -90,6 +92,16 @@ internal data class OutboxEntity(
     @ColumnInfo(name = "base_server_revision") val baseServerRevision: Long?,
     val payload: String,
     @ColumnInfo(name = "created_at") val createdAt: String,
+)
+
+internal data class RestoreNoteMetadata(
+    val id: String,
+    val title: String?,
+    @ColumnInfo(name = "content_hash") val contentHash: String,
+    @ColumnInfo(name = "deleted_at") val deletedAt: String?,
+    @ColumnInfo(name = "archived_at") val archivedAt: String?,
+    @ColumnInfo(name = "local_revision") val revision: Long,
+    val pinned: Boolean,
 )
 
 internal data class NoteFtsMeta(
@@ -236,6 +248,29 @@ internal abstract class NotesDao(private val database: NotesDatabase) {
 
     @Query("SELECT * FROM notes")
     abstract suspend fun allNotes(): List<NoteEntity>
+
+    @Query("SELECT id FROM notes")
+    abstract suspend fun allNoteIds(): List<String>
+
+    @Query("SELECT id, title, content_hash, deleted_at, archived_at, local_revision, pinned FROM notes")
+    abstract suspend fun restoreNoteMetadata(): List<RestoreNoteMetadata>
+
+    @Query("""
+        SELECT id, title, created_at, updated_at FROM notes
+        WHERE deleted_at IS NULL AND archived_at IS NULL AND ai_policy != 'exclude'
+        AND (length(trim(search_text, char(9, 10, 11, 12, 13, 32, 160, 12288))) > 0
+             OR length(trim(title)) > 0 OR media_mask != 0)
+    """)
+    abstract suspend fun cognitiveMapCandidates(): List<CognitiveMapCandidate>
+
+    @Query("""
+        SELECT id, substr(search_text, 1, 16384) AS text FROM notes
+        WHERE id IN (:ids) AND deleted_at IS NULL AND archived_at IS NULL AND ai_policy != 'exclude'
+    """)
+    abstract suspend fun cognitiveMapText(ids: List<String>): List<CognitiveMapText>
+
+    @Query("SELECT slot FROM drafts")
+    abstract suspend fun draftSlots(): List<String>
 
     @Query("SELECT * FROM drafts")
     abstract suspend fun allDrafts(): List<DraftEntity>
